@@ -1021,7 +1021,11 @@
                 <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#1a4a6a;">FIRMWARE</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
 
-                <div style="position:absolute; left:10px; top:46px; right:10px;
+                <div style="position:absolute; left:10px; top:38px; right:10px;
+                     color:#6a9ab0; font-size:10px;">
+                    Running: <span id="ota-running-build">—</span>
+                </div>
+                <div style="position:absolute; left:10px; top:56px; right:10px;
                      color:#ff9900; font-size:10px; line-height:1.55;">
                     &#9888; Device will reboot after flashing.<br>
                     Do not cut power during the update.
@@ -3542,6 +3546,9 @@
 
     // ── OTA firmware update ───────────────────────────────────────────────────
     function otaReset() {
+        const rb = document.getElementById('ota-running-build');
+        if (rb) rb.textContent = (state.buildDate && state.buildTime)
+            ? state.buildDate + '  ' + state.buildTime : '—';
         document.getElementById('ota-filename').textContent = 'No file selected';
         document.getElementById('ota-progress-fill').style.width = '0%';
         document.getElementById('ota-progress-pct').textContent = '';
