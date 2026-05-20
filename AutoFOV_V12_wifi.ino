@@ -196,7 +196,6 @@ static const ScreenMapEntry kScreenMap[] = {
     { BRIGHTNESS_SETTINGS, "screen-brightness" },
     { SCREEN_TIMEOUT,      "screen-timeout"    },
     { SENSOR_INFO,         "screen-sensorinfo" },
-    { BT_INFO,             "screen-btinfo"     },
     { MEM_INFO,            "screen-memory"     },
     { FOV_INFO,            "screen-fovinfo"    },
     { CAL_GRAPH,           "screen-calgraph"   },
@@ -521,10 +520,6 @@ void wifiLoop() {
 static void startPortalMode() {
     wifiServerMode = WMODE_PORTAL;
 
-    // patched3 DEBUG: instrumented AP bring-up.  After the BLE-init-order fix
-    // (wifiSetup now runs BEFORE NimBLEDevice::init), pure WIFI_AP should
-    // succeed — WiFi grabs the controller first and registers with coex.
-
     Serial.printf("[WiFi] === startPortalMode entry  heap=%u ===\n", ESP.getFreeHeap());
     Serial.flush();
 
@@ -649,9 +644,6 @@ struct StaConnectArgs {
 
 static void staConnectTask(void* arg) {
     StaConnectArgs* args = (StaConnectArgs*)arg;
-    // WiFi.mode(WIFI_STA) and setAutoReconnect are called in startStaMode()
-    // before this task spawns so the coex layer is registered before BLE init.
-
     // Apply static IP before begin() if the user configured one
     if (!args->staticIP.isEmpty()) {
         IPAddress ip, gw, subnet(255, 255, 255, 0), dns(8, 8, 8, 8);
@@ -689,11 +681,6 @@ static void staConnectTask(void* arg) {
                       WiFi.status(), RECONNECT_INTERVAL_MS / 1000);
     }
 
-    // Wait for setup() to finish before starting the server.
-    // BLE init drops heap to ~73 KB; httpServer.begin() needs another ~20 KB.
-    // Running both concurrently exhausted the heap and caused a boot loop.
-    while (!setupComplete) { vTaskDelay(pdMS_TO_TICKS(20)); }
-
     // startFullServer registers handlers + calls httpServer.begin().
     // Doesn't touch TFT — safe from Core 0.
     startFullServer();
@@ -706,11 +693,6 @@ static void startStaMode(const String& ssid, const String& pass,
                           const String& staticIP, const String& gateway) {
     wifiServerMode = WMODE_STA;
 
-    // Call WiFi.mode() HERE, synchronously, before the task spawns.
-    // NimBLEDevice::init() must run after WiFi.mode() so both peripherals
-    // register with the coex scheduler in the correct order.  Moving this
-    // out of staConnectTask ensures setup() can call bleInitDeferred()
-    // immediately after wifiSetup() returns without any race.
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
 
@@ -867,7 +849,7 @@ static void startFullServer() {
 //   obj, stepIndex, imgs, brightness, ledEnabled, ledDuty,
 //   sensorSleep, highRefl, dimMs, sleepMs, theme, tint,
 //   calWidth, demarcDist, calPoints, calStart, calCapture, calUndoPoint,
-//   resetAll, resetBonds, testAlert, ir, nav
+//   resetAll, testAlert, ir, nav
 // ─────────────────────────────────────────────────────────────────────────────
 static void handleWifiCommand(const char* key, const char* val) {
     float fVal = atof(val);
@@ -1095,26 +1077,9 @@ static void handleWifiCommand(const char* key, const char* val) {
         String out; buildFullStateJson(out);
         wsServer.textAll(out);
 
-    // ── Reset Bluetooth bonds (restarts device) ───────────────────────────────
-    // patched3: no-op if NimBLE was never initialized.
-    } else if (strcmp(key, "resetBonds") == 0) {
-        if (NimBLEDevice::getServer() != nullptr) {
-            NimBLEDevice::deleteAllBonds();
-            delay(200);
-            ESP.restart();
-        } else {
-            Serial.println("[WiFi] resetBonds ignored — NimBLE not initialised");
-        }
-
-    // ── BLE test alert (sends HID F12 keypress) ───────────────────────────────
-    // patched3: extra guard on keyboardInput (null until BLE is up).
+    // ── Test alert (beeps all connected WebSocket clients) ───────────────────
     } else if (strcmp(key, "testAlert") == 0) {
-        wifiNotifyTestAlert();   // beep all dashboards — independent of BLE
-        if (keyboardInput != nullptr && btConnHandle != 0xFFFF) {
-            sendTriggerKeystroke();   // leads with a wake report — see main tab
-        } else {
-            Serial.println("[WiFi] testAlert ignored — BLE not ready");
-        }
+        wifiNotifyTestAlert();
 
     // ── IR remote (MJKZZ stacking controller) ────────────────────────────────
     //    val = button name; fires the matching NEC code over the IR LED.
@@ -1243,16 +1208,6 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     float   signal  = (hst & 0xFFFFFF) / 1000.0f;
     float   ambient = (amb & 0xFFFFFF) / 1000.0f;
 
-    // BT
-    bool btConn = (NimBLEDevice::getServer() != nullptr &&
-                   NimBLEDevice::getServer()->getConnectedCount() > 0);
-    int8_t  btRSSI = 0;
-    uint16_t btMTU = 0;
-    if (btConn && btConnHandle != 0xFFFF) {
-        ble_gap_conn_rssi(btConnHandle, &btRSSI);
-        btMTU = NimBLEDevice::getServer()->getPeerMTU(btConnHandle);
-    }
-
     // FOV — use the 5-sample averaged distance so the connect snapshot matches
     // the value the ~30 Hz fast-telemetry stream sends (buildFastTelemJson).
     float avgDist = sensorAvgDist.load(std::memory_order_acquire) / 10.0f;
@@ -1283,22 +1238,6 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["sleepMs"]       = (uint32_t)sleepTimeoutMs;
     doc["theme"]         = currentThemeIndex;
     doc["tint"]          = themeIntensity;
-
-    // ── Bluetooth ────────────────────────────────────────────────────────────
-    // patched3: guard against uninitialized NimBLE — getAddress() and
-    // getNumBonds() can hang/crash if NimBLEDevice::init() was never called
-    // (currently disabled while we work out heap budget).
-    bool bleReady = (NimBLEDevice::getServer() != nullptr);
-    doc["btConnected"]   = btConn ? 1 : 0;
-    // NimBLEAddress::toString() returns a temporary std::string; .c_str() of it
-    // would dangle because ArduinoJson stores a const char* by reference (no
-    // copy). Assign a String so ArduinoJson copies the bytes immediately.
-    doc["btMac"]         = bleReady ? String(NimBLEDevice::getAddress().toString().c_str())
-                                    : String("00:00:00:00:00:00");
-    doc["btBonds"]       = bleReady ? NimBLEDevice::getNumBonds() : 0;
-    doc["btDevices"]     = btConn ? 1 : 0;
-    doc["btRSSI"]        = btConn ? (int)btRSSI : 0;
-    doc["btMTU"]         = btMTU;
 
     // ── Calibration fit ───────────────────────────────────────────────────────
     doc["isCustomCalib"] = isCustomCalib ? 1 : 0;
@@ -1380,12 +1319,6 @@ static void buildFastTelemJson(String& out) {
     float mult = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
     float fov  = valid ? (mult * (avgDist * CTRLX + CTRLY)) : 0.0f;
 
-    int8_t btRSSI = 0;
-    bool btConn = (NimBLEDevice::getServer() != nullptr &&
-                   NimBLEDevice::getServer()->getConnectedCount() > 0);
-    if (btConn && btConnHandle != 0xFFFF)
-        ble_gap_conn_rssi(btConnHandle, &btRSSI);
-
     // Short keys save ~30 bytes/frame at 30 Hz.  HTML applyFullState() unpacks
     // them back to long names at the top of the function.
     StaticJsonDocument<448> doc;
@@ -1397,7 +1330,6 @@ static void buildFastTelemJson(String& out) {
     doc["ss"] = status;                                          // sensorStatus
     doc["t"]  = shutterActive ? 1 : 0;                          // trigger
     doc["wr"] = (int)WiFi.RSSI();                                // wifiRSSI
-    if (btConn) doc["br"] = (int)btRSSI;                        // btRSSI
     // V12: vibration monitor — dominant Hz, vertical + horizontal RMS mg,
     // suggested wait ms, state.
     doc["vd"]  = roundf(vibDominant.load() / 10.0f * 10.0f) / 10.0f;
@@ -1522,22 +1454,13 @@ static void buildSettingsJson(String& out) {
     serializeJson(doc, out);
 }
 
-// Slow telemetry — 5 s memory stats + BT connectivity changes
+// Slow telemetry — 5 s memory stats
 static void buildSlowTelemJson(String& out) {
-    bool btConn = (NimBLEDevice::getServer() != nullptr &&
-                   NimBLEDevice::getServer()->getConnectedCount() > 0);
-    uint16_t btMTU = 0;
-    if (btConn && btConnHandle != 0xFFFF)
-        btMTU = NimBLEDevice::getServer()->getPeerMTU(btConnHandle);
-
-    StaticJsonDocument<320> doc;
+    StaticJsonDocument<256> doc;
     doc["freeHeap"]      = ESP.getFreeHeap()    / 1024;
     doc["lowestFree"]    = ESP.getMinFreeHeap() / 1024;
     doc["psramFree"]     = ESP.getFreePsram()   / 1024;
     doc["psramTotal"]    = ESP.getPsramSize()   / 1024;
-    doc["btConnected"]   = btConn ? 1 : 0;
-    doc["btDevices"]     = btConn ? 1 : 0;
-    doc["btMTU"]         = btMTU;
     doc["wifiSSID"]      = WiFi.SSID();
     doc["obj"]           = currentobj;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
@@ -1571,10 +1494,7 @@ void wifiNotifyStackComplete() {
     wsServer.textAll("{\"stackDone\":1}");
 }
 
-// Called when the TEST ALERT button is pressed — on the device BT_INFO screen
-// or the web dashboard. Pings connected dashboards to play the alert beep: a
-// reliable, BLE-free confirmation channel (the BLE HID key can still miss its
-// first press on a long-idle link). Fires regardless of BLE connection state.
+// Pings connected dashboards to play the alert beep.
 void wifiNotifyTestAlert() {
     if (wsServer.count() == 0) return;
     wsServer.textAll("{\"beep\":1}");

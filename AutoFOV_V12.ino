@@ -6,16 +6,12 @@
 #include <vl53l4cx_class.h>
 #include <Preferences.h>
 #include <atomic>
-#include <NimBLEDevice.h>
-#include <NimBLEHIDDevice.h>
-#include <host/ble_gap.h>   // for ble_gap_conn_rssi
 
-// patched3: WiFi / web-server headers pulled in HERE (not in the _wifi tab)
-// so that the Arduino preprocessor's auto-generated forward declarations —
-// which it injects above the combined translation unit's first non-#include
-// line — can see types like AsyncWebSocket and AsyncWebSocketClient that
-// appear in the wifi tab's onWsEvent / startStaMode signatures.
+// WiFi / web-server headers pulled in HERE (not in the _wifi tab) so that the
+// Arduino preprocessor's auto-generated forward declarations can see types like
+// AsyncWebSocket / AsyncWebSocketClient that appear in the wifi tab's signatures.
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <DNSServer.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -385,9 +381,9 @@ PSRAMCanvas16 objSprite(240, 67);
 #define VIB_BIN_HZ       (VIB_SAMPLE_RATE / VIB_FFT_SIZE)  // 0.8125 Hz per bin
 #define VIB_HOP          128                          // FFT every 128 new samples (75% overlap)
 #define VIB_RAW_LEN      8192                         // raw ring — ~19.7 s look-back (Phase 2)
-// Band-RMS warning thresholds (mg) — provisional, tune against real bench data.
-#define VIB_RMS_MODERATE 6.0f
-#define VIB_RMS_STRONG   20.0f
+// Band-RMS warning thresholds (mg).
+#define VIB_RMS_MODERATE 2.0f
+#define VIB_RMS_STRONG   8.0f
 #define VIB_HORIZ_EMA    0.002f    // horizontal-energy EMA weight (~1.2 s @ 416 Hz, ≈ FFT window)
 // Narrowband-tonal promotion. A persistent tonal — a dryer at 26 Hz, a stepper
 // holding torque, a desk fan — can push the rig 1-3 µm without ever crossing
@@ -398,7 +394,7 @@ PSRAMCanvas16 objSprite(240, 67);
 // within +-VIB_TONAL_BIN_TOL bins for VIB_TONAL_FRAMES consecutive frames,
 // promote CALM -> MODERATE.  Hann coherent gain + the 4/N FFT scaling already
 // applied below mean dst[domBin] in deci-mg IS the peak sinusoid amplitude.
-#define VIB_TONAL_PEAK_MG  1.5f    // dominant-bin peak amplitude, mg
+#define VIB_TONAL_PEAK_MG  0.5f    // dominant-bin peak amplitude, mg
 #define VIB_TONAL_FRAMES   3       // consecutive FFT frames of stability needed
 #define VIB_TONAL_BIN_TOL  1       // allow +-1 bin (~+-0.8 Hz) drift per frame
 // VIB_SPECTRUM screen geometry.
@@ -680,10 +676,6 @@ Button btnSensorHiRef (10, 210, 220, 38, "HIGH REFLECTIVITY: OFF", COLOR_DARKGRE
 // patched3: X close (was the "GO BACK" button) — steps back to MAIN.
 Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 
-// --- BT_INFO screen ---
-Button btnBtInfoReset(20, 275, 200, 36, "RESET BONDS",   COLOR_MAROON, TFT_WHITE, 1, true);
-Button btnBtInfoTest(20, 232, 200, 36,  "TEST ALERT",    COLOR_PURPLE, TFT_WHITE, 1, true);
-Button btnBtInfoBack(205, 2, 33, 33,    "X",             0x4208,       COLOR_RED, 2, true);
 
 // --- WIFI_INFO screen (patched3) — opened from WiFi zone in header (x=93..151, y=0..42) ---
 Button btnWifiInfoForget(20, 275, 200, 36, "FORGET WiFi",  COLOR_MAROON, TFT_WHITE, 1, true);
@@ -796,7 +788,6 @@ enum DisplayMode {
   CAL_REVIEW,         // V17:  review/edit captured calibration points
   BRIGHTNESS_SETTINGS,// V17b: screen+LED brightness controls
   SENSOR_INFO,        // V17b: TOF sensor details + sleep toggle
-  BT_INFO,            // V17b: BT status, reset, test
   MEM_INFO,           // V17b: memory and system info
   CAL_GRAPH,          // V17b: calibration scatter plot + regression line
   ABOUT,              // V11:  about / version / developer info, opened from main-screen calib label
@@ -853,14 +844,8 @@ unsigned long samplingStartTime = 0;
 long samplingSum = 0;
 int samplingCount = 0;
 
-NimBLEHIDDevice* hid;
-NimBLECharacteristic* keyboardInput = nullptr;   // patched3: explicit nullptr (NimBLE init may be skipped)
 const unsigned long MIN_ACTIVE_DURATION = 20000;
 const unsigned long SILENCE_DURATION = 5000;
-// HID usage ID for the trigger keystroke. 0x45 = F12 on a standard HID keyboard.
-// Change here to remap the trigger key globally (both the camera sequence and
-// the TEST ALERT button use this value).
-constexpr uint8_t HID_KEY_TRIGGER = 0x45;
 bool isSequenceActive = false;
 // patched3: file-scope so the wifi tab can push it to fast-telemetry JSON.
 // Was previously a function-local `static bool lastCircleState` inside the
@@ -870,29 +855,6 @@ bool shutterActive = false;
 unsigned long firstPulseTime = 0;
 unsigned long lastPulseTime = 0;
 
-// BLE trigger retry: if BLE was not connected at stack-complete time, the
-// press/release report is queued here and replayed as soon as BLE reconnects
-// (or abandoned after 60 s).
-bool btTriggerPending = false;
-unsigned long btTriggerPendingMs = 0;
-
-// BLE keep-alive: null HID report sent every BLE_KEEPALIVE_MS whenever a BLE
-// host is connected so iOS/Android don't park the idle HID link. A parked link
-// drops the first report sent after it — which made stack-complete and the
-// TEST ALERT keystroke miss on the first try.
-// V12 fix: dropped from 5 s → 1500 ms.  iOS parks the HID link more
-// aggressively than 5 s — at 5 s the first stack-complete F12 was reliably
-// lost until the user pressed TEST ALERT once to "warm" the link.  1.5 s keeps
-// the link out of the deepest park bucket on both iOS and Android.
-constexpr unsigned long BLE_KEEPALIVE_MS = 1500;
-unsigned long lastBLEKeepAliveMs = 0;
-
-bool lastBTState = false;
-bool forceBTRedraw = true;
-int16_t btRSSI = 0;          // last measured RSSI (dBm), 0 = unknown
-uint16_t btConnHandle = 0xFFFF; // active connection handle for RSSI query
-bool isClearingBonds = false;
-
 // patched3: deferred WiFi-forget timer. When the user taps FORGET WiFi we want
 // to show a "CLEARING..." flash for ~600 ms before rebooting, but blocking the
 // loop with delay() also blocks touch and any other loop-driven refresh.  We
@@ -900,12 +862,7 @@ bool isClearingBonds = false;
 // 0 = no pending forget.
 uint32_t wifiForgetAtMs = 0;
 
-bool     bleInitDone        = false;
-// Set true at the end of setup() so the WiFi task won't call startFullServer()
-// until BLE init and all other setup allocations are complete.
-volatile bool setupComplete = false;
-
-// patched3: WIFI_INFO live-refresh timer (mirrors lastBtInfoUpdate pattern).
+// patched3: WIFI_INFO live-refresh timer.
 unsigned long lastWifiInfoUpdate = 0;
 
 // patched3: header WiFi-indicator RSSI poll timer (MAIN screen only).
@@ -948,8 +905,7 @@ unsigned long lastModeChangeMs = 0;  // menu-transition guard timestamp
 // timer when the user navigates between screens. Names match the screen they
 // drive; lastCalibDistUpdate (above) is kept for the top-strip distance update.
 unsigned long lastSensorInfoUpdate = 0;
-unsigned long lastBtInfoUpdate = 0;
-unsigned long lastVibSpecUpdate = 0;   // V12: VIB_SPECTRUM live-refresh timer
+unsigned long lastVibSpecUpdate = 0;
 float lastAvgFov = -1;
 uint16_t lastDistance = 0xFFFF;
 
@@ -962,17 +918,14 @@ void drawPointEntryUI();
 void drawConfirmUI();
 
 
-void drawBrightnessSettingsUI();           // V17b
-void drawSensorInfoUI();                   // V17b
-void drawBtInfoUI();                       // V17b
-void refreshBrightnessSettingsValues(bool force); // V17b
-void handleBrightnessSettingsTouch(TS_Point p, int adj); // V17b
-void handleSensorInfoTouch(TS_Point p);    // V17b
-void refreshSensorInfoValues();            // V17b: live data rows on sensor screen
-void handleBtInfoTouch(TS_Point p);        // V17b
-void drawMemInfoUI();                      // V17b
-void handleMemInfoTouch(TS_Point p);        // V17b
-void refreshBtInfoStatus();                // V17b: live BT status update
+void drawBrightnessSettingsUI();
+void drawSensorInfoUI();
+void refreshBrightnessSettingsValues(bool force);
+void handleBrightnessSettingsTouch(TS_Point p, int adj);
+void handleSensorInfoTouch(TS_Point p);
+void refreshSensorInfoValues();
+void drawMemInfoUI();
+void handleMemInfoTouch(TS_Point p);
 void drawAboutUI();                        // V11:  about / developer screen
 void handleAboutTouch(TS_Point p);         // V11
 void drawScreenTimeoutUI();                // V11:  timeouts + theme picker
@@ -1000,16 +953,14 @@ void applyTheme(int idx);                  // V11
 void loadDisplayPrefs();                   // V11: load timeouts + theme from NVS
 void saveDisplayPrefs();                   // V11: persist timeouts + theme to NVS
 void fireTriggerLed(bool on);              // V17b: centralised active-low LED drive
-void sendTriggerKeystroke();               // wake-then-send BLE HID F12 keystroke
 void drawWifiInfoUI();                     // patched3: WiFi status screen
 void refreshWifiInfoValues();              // patched3: live row refresh
 void handleWifiInfoTouch(TS_Point p);      // patched3
 void wifiForgetAndRestart();               // patched3: defined in patched3_wifi.ino
 const char* wifiGetPortalCode();           // patched3: random WPA2 code shown on TFT during setup
-void wifiNotifyStackComplete();            // patched3: BLE-free stack-done WS event
+void wifiNotifyStackComplete();            // stack-done WebSocket event
 void wifiNotifyTestAlert();                // pings webview beep on TEST ALERT press
-void redrawCurrentScreen();                // patched3: full repaint of currentMode
-void bleInitDeferred();                    // NimBLE bring-up — called from setup()
+void redrawCurrentScreen();                // full repaint of currentMode
 void wifiPushSettings();                   // push buildSettingsJson to all WS clients
 
 
@@ -1032,12 +983,6 @@ void wifiPushSettings();                   // push buildSettingsJson to all WS c
 // ─────────────────────────────────────────────────────────────────────────────
 // V17b: SENSOR_INFO screen
 // Shows MCPS, signal %, status description, on/off toggle for TOF sensor.
-// ─────────────────────────────────────────────────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// V17b: BT_INFO screen
-// Shows connection status, device address, reset bonds, test alert.
 // ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1880,8 +1825,6 @@ void finalizeCalibration();
 void resetToFactory();
 void updateDisplay();
 void drawGearIcon(int cx, int cy, uint16_t color, uint16_t bgCol);
-void drawBTIcon(int x, int y, uint16_t bgColor);
-void clearBluetoothBonds();
 void wakeScreen();
 void registerActivity();
 void saveStackSettings();
@@ -1911,36 +1854,6 @@ void fireTriggerLed(bool on) {
   }
 }
 
-// Send one trigger keystroke (F12 / HID_KEY_TRIGGER) over BLE HID.
-//
-// An idle BLE HID link is parked by the phone's host, so the first report
-// after a long idle is routinely dropped — which is why an active stack pings
-// a null report every BLE_KEEPALIVE_MS (see loop()). Callers without that
-// keep-alive (the TEST ALERT button, the post-reconnect retry) would otherwise
-// lose their first keystroke. So lead with two spaced "wake" null reports —
-// the first un-parks the link, the second confirms it's awake — before the
-// real key-down / key-up pair.
-//
-// V12 fix: bumped wake from 1×null + 300 ms to 2×null totalling 500 ms.  At
-// 300 ms the FIRST stack-complete after boot still lost its F12 on iOS, even
-// with the 1.5 s keep-alive — iOS needed a longer warm-up before the host
-// would forward a real key report.  See the lastBLEKeepAliveMs comment.
-//
-// Caller must have already confirmed a live BLE connection. The ~550 ms total
-// delay is fine for these one-shot, user-/event-driven sends.
-void sendTriggerKeystroke() {
-  if (keyboardInput == nullptr) return;
-  uint8_t nullReport[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  uint8_t press[8]      = {0x00, 0x00, HID_KEY_TRIGGER, 0, 0, 0, 0, 0};
-
-  keyboardInput->setValue(nullReport, 8); keyboardInput->notify();  // un-park
-  delay(200);
-  keyboardInput->setValue(nullReport, 8); keyboardInput->notify();  // second wake — host has fully re-attached by now
-  delay(300);
-  keyboardInput->setValue(press, 8);      keyboardInput->notify();  // key down
-  delay(50);
-  keyboardInput->setValue(nullReport, 8); keyboardInput->notify();  // key up
-}
 
 void drawBrightnessSettingsUI() {
   tft.fillScreen(THEME_BG);
@@ -3043,131 +2956,6 @@ void handleSensorInfoTouch(TS_Point p) {
   }
 }
 
-void refreshBtInfoStatus() {
-  // patched3: bail early if NimBLE wasn't initialised — drawBtInfoUI already
-  // painted the "DISABLED" message; nothing live to refresh.
-  NimBLEServer* pServer = NimBLEDevice::getServer();
-  if (pServer == nullptr) return;
-  bool connected = (pServer->getConnectedCount() > 0);
-  int  nPeers    = pServer->getConnectedCount();
-
-  // Status row via sprite
-  const char* connTxt = connected ? "CONNECTED" : "Ready to pair";
-  uint16_t    connCol = connected ? COLOR_PUREGREEN : COLOR_RED;
-  distSprite.fillScreen(THEME_BG);
-  distSprite.setTextSize(1);
-  distSprite.setFont(&FreeSans9pt7b);
-  distSprite.setTextColor(themedText(COLOR_LIGHTGREY));
-  distSprite.setCursor(10, 24); distSprite.print("Status:");
-  distSprite.setTextColor(connCol);
-  int16_t x1, y1; uint16_t w, h;
-  distSprite.getTextBounds(connTxt, 0, 0, &x1, &y1, &w, &h);
-  distSprite.setCursor(230 - w - x1, 24); distSprite.print(connTxt);
-  tft.drawRGBBitmap(0, 106, distSprite.getBuffer(), 240, 30);
-
-  // Devices row
-  if (connected) {
-    char buf[20]; snprintf(buf, sizeof(buf), "%d device%s", nPeers, nPeers == 1 ? "" : "s");
-    distSprite.fillScreen(THEME_BG);
-    distSprite.setTextColor(themedText(COLOR_LIGHTGREY));
-    distSprite.setCursor(10, 24); distSprite.print("Devices:");
-    distSprite.setTextColor(themedText(TFT_WHITE));
-    distSprite.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-    distSprite.setCursor(230 - w - x1, 24); distSprite.print(buf);
-    tft.drawRGBBitmap(0, 136, distSprite.getBuffer(), 240, 30);
-  } else {
-    tft.fillRect(0, 136, 240, 30, THEME_BG);
-  }
-
-  // RSSI row (only when connected)
-  if (connected && btConnHandle != 0xFFFF) {
-    int8_t rssi = 0;
-    if (ble_gap_conn_rssi(btConnHandle, &rssi) == 0) btRSSI = rssi;
-    char rssiBuf[24];
-    uint16_t mtu = NimBLEDevice::getServer()->getPeerMTU(btConnHandle);
-    uint16_t rssiCol = (btRSSI > -65) ? COLOR_PUREGREEN : (btRSSI > -80) ? COLOR_YELLOW : COLOR_ORANGE;
-    snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm", (int)btRSSI);
-    distSprite.fillScreen(THEME_BG);
-    distSprite.setFont(&FreeSans9pt7b);
-    distSprite.setTextColor(themedText(COLOR_LIGHTGREY));
-    distSprite.setCursor(10, 24); distSprite.print("RSSI:");
-    distSprite.setTextColor(rssiCol);
-    distSprite.getTextBounds(rssiBuf, 0, 0, &x1, &y1, &w, &h);
-    distSprite.setCursor(230 - w - x1, 24); distSprite.print(rssiBuf);
-    tft.drawRGBBitmap(0, 166, distSprite.getBuffer(), 240, 30);
-
-    // MTU row
-    char mtuBuf[16]; snprintf(mtuBuf, sizeof(mtuBuf), "%d bytes", mtu);
-    distSprite.fillScreen(THEME_BG);
-    distSprite.setTextColor(themedText(COLOR_LIGHTGREY));
-    distSprite.setCursor(10, 24); distSprite.print("MTU:");
-    distSprite.setTextColor(themedText(TFT_WHITE));
-    distSprite.getTextBounds(mtuBuf, 0, 0, &x1, &y1, &w, &h);
-    distSprite.setCursor(230 - w - x1, 24); distSprite.print(mtuBuf);
-    tft.drawRGBBitmap(0, 196, distSprite.getBuffer(), 240, 30);
-  } else {
-    // Clear those rows when not connected
-    tft.fillRect(0, 136, 240, 84, THEME_BG);
-  }
-
-  // TEST ALERT button: re-draw with correct enabled state
-  btnBtInfoTest.draw(tft, "TEST ALERT",
-    connected ? COLOR_PURPLE : (uint16_t)0x1082,
-    connected ? TFT_WHITE : COLOR_DARKGREY);
-}
-
-void drawBtInfoUI() {
-  tft.fillScreen(THEME_BG);
-  drawLeftBoxedText("BLUETOOTH", 5, 5, COLOR_DARKBLUE);
-
-  // Guard: BLE init runs in setup() but may fail in portal mode.
-  bool bleReady = (NimBLEDevice::getServer() != nullptr);
-  if (!bleReady) {
-    sensorRow("Status:", "INITIALISING…", COLOR_DARKGREY, 42);
-    btnBtInfoBack.draw(tft);
-    return;
-  }
-
-  // Static rows at top (MAC and bond count never change)
-  NimBLEAddress addr = NimBLEDevice::getAddress();
-  char addrStr[20]; snprintf(addrStr, sizeof(addrStr), "%s", addr.toString().c_str());
-  sensorRow("MAC:", addrStr, COLOR_LIGHTGREY, 42);
-
-  int bondCount = NimBLEDevice::getNumBonds();
-  char bondBuf[20]; snprintf(bondBuf, sizeof(bondBuf), "%d stored", bondCount);
-  sensorRow("Bonds:", bondBuf, bondCount > 0 ? COLOR_GREENYELLOW : COLOR_DARKGREY, 74);
-
-  // Live rows drawn via refreshBtInfoStatus (status y=106, devices y=136, RSSI y=166, MTU y=196)
-  refreshBtInfoStatus();
-
-  // btnBtInfoTest drawn by refreshBtInfoStatus — not drawn here to avoid flicker
-  btnBtInfoReset.draw(tft);
-  btnBtInfoBack.draw(tft);
-}
-
-void handleBtInfoTouch(TS_Point p) {
-  if (btnBtInfoTest.contains(p.x, p.y)) {
-    wifiNotifyTestAlert();   // beep any connected dashboards — independent of BLE
-    NimBLEServer* pServer = NimBLEDevice::getServer();
-    if (pServer != nullptr && pServer->getConnectedCount() > 0) {
-      sendTriggerKeystroke();
-      btnBtInfoTest.draw(tft, "SENT!", COLOR_GREENYELLOW, TFT_BLACK);
-      delay(500);
-    } else {
-      btnBtInfoTest.draw(tft, "NO CONNECTION", 0x1082, COLOR_DARKGREY);
-      delay(600);
-    }
-    drawBtInfoUI();
-    return;
-  }
-  if (btnBtInfoReset.contains(p.x, p.y)) {
-    clearBluetoothBonds(); // reboots
-    return;
-  }
-  if (btnBtInfoBack.contains(p.x, p.y)) {
-    currentMode = MAIN; drawMainScreen();
-  }
-}
 
 // ─── patched3: WiFi indicator + WIFI_INFO screen ─────────────────────────────
 
@@ -3175,7 +2963,7 @@ void handleBtInfoTouch(TS_Point p) {
 // Draws 4 signal bars + a status label.  Called from drawMainScreen() and from
 // the wifi tab whenever the connection state changes (refreshWifiIndicator).
 void drawWifiIndicator() {
-  const int ZX = 93,  ZW = 59,  ZH = 42;
+  const int ZX = 0,   ZW = 32,  ZH = 42;
   const int BAR_BASE = 38;                   // bottom y of the tallest bar
   const int BAR_W = 5, BAR_GAP = 3;
   const int ICON_W = 4 * BAR_W + 3 * BAR_GAP;  // 29 px
@@ -3307,70 +3095,6 @@ void handleWifiInfoTouch(TS_Point p) {
   }
 }
 
-// patched3: ServerCallbacks moved here so bleInitDeferred() can reference it.
-// Used to live just above setup() — moved up because bleInitDeferred() is
-// defined ahead of setup() now and needs the full class definition (not just
-// a forward decl) to call `new ServerCallbacks()`.
-class ServerCallbacks: public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
-    pServer->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 600);
-    btConnHandle = connInfo.getConnHandle();
-    NimBLEDevice::startAdvertising();
-  }
-
-  void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
-    btConnHandle = 0xFFFF;
-    btRSSI = 0;
-    if (isClearingBonds) return;
-    vTaskDelay(pdMS_TO_TICKS(500));
-    NimBLEDevice::startAdvertising();
-  }
-};
-
-// bleInitDeferred() — does the full NimBLE bring-up (init + server + HID +
-// advertising).  Called from loop() once WiFi has settled (associated or
-// definitively failed past the grace window).  Safe to call exactly once;
-// guarded by the `bleInitDone` flag from the loop side.
-void bleInitDeferred() {
-  Serial.printf("[BLE] Deferred init starting (free heap: %u)\n", ESP.getFreeHeap());
-  Serial.flush();
-
-  NimBLEDevice::init("ESP_Cam");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC);
-
-  NimBLEServer* pServer = NimBLEDevice::createServer();
-  pServer->setCallbacks(new ServerCallbacks());
-
-  NimBLEDevice::setSecurityAuth(true, true, true);
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
-  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-
-  hid = new NimBLEHIDDevice(pServer);
-  keyboardInput = hid->getInputReport(1);
-  hid->setManufacturer("Custom");
-  hid->setPnp(0x02, 0xe502, 0xa111, 0x0210);
-  hid->setHidInfo(0x00, 0x01);
-  hid->setReportMap((uint8_t*)keyboardReportMap, sizeof(keyboardReportMap));
-
-  hid->startServices();
-  pServer->start();
-  hid->setBatteryLevel(100);
-
-  NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->setAppearance(961);
-  pAdvertising->addServiceUUID(hid->getHidService()->getUUID());
-  pAdvertising->setName("ESP_Cam");   // must be explicit in NimBLE 2.x; init() sets GATT name only
-  pAdvertising->setMinInterval(0x20);
-  pAdvertising->setMaxInterval(0x40);
-  bool advOk = pAdvertising->start(0);
-  Serial.printf("[BLE] Advertising start: %s\n", advOk ? "OK" : "FAILED");
-  Serial.flush();
-
-  Serial.printf("[BLE] Init complete — free heap: %u\n", ESP.getFreeHeap());
-  Serial.flush();
-}
 
 // redrawCurrentScreen() — full repaint of the currently-active mode.
 // Used by the deferred WS theme/tint repaint (see displayNeedsRedraw poll
@@ -3393,7 +3117,6 @@ void redrawCurrentScreen() {
     case CAL_REVIEW:         drawCalReviewUI(); break;
     case BRIGHTNESS_SETTINGS:drawBrightnessSettingsUI(); break;
     case SENSOR_INFO:        drawSensorInfoUI(); break;
-    case BT_INFO:            drawBtInfoUI(); break;
     case MEM_INFO:           drawMemInfoUI(); break;
     case CAL_GRAPH:          drawCalGraphUI(); break;
     case ABOUT:              drawAboutUI(); break;
@@ -3982,9 +3705,6 @@ void vibTask(void *pvParameters) {
   }
 }
 
-// patched3: ServerCallbacks moved up to be visible to bleInitDeferred().
-// (definition lives at the spot just above bleInitDeferred — see earlier).
-
 void setup() {
   Serial.begin(115200);
   delay(3000);
@@ -4012,25 +3732,14 @@ void setup() {
   tft.fillScreen(THEME_BG);
   Serial.println("[BOOT] TFT init OK"); Serial.flush();
 
-  // patched3: WiFi MUST init before NimBLE on ESP32-S3.  NimBLEDevice::init()
-  // claims the BT controller without registering with the WiFi/BT coexistence
-  // layer the way Arduino's btStart() path does — if BLE comes up first, the
-  // shared 2.4 GHz radio is locked out and subsequent WiFi.mode() returns 0.
-  // Bringing WiFi up first lets the coex scheduler register both peripherals
-  // in the correct order.
   Serial.printf("[BOOT] WiFi init — free heap before: %u\n", ESP.getFreeHeap());
   Serial.flush();
   wifiSetup();
+  if (MDNS.begin("autofov")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("[mDNS] autofov.local registered");
+  }
   Serial.printf("[BOOT] WiFi init done — free heap after: %u\n", ESP.getFreeHeap());
-  Serial.flush();
-
-  // BLE init runs here, immediately after wifiSetup().
-  // WiFi.mode() was called synchronously inside startStaMode() / startPortalMode()
-  // before wifiSetup() returned, so the coex scheduler has both peripherals
-  // registered in the right order.  No deferred 10s wait needed.
-  // patched3: portal mode now safe for BLE — coex order fixed above.
-  bleInitDeferred();
-  bleInitDone = true;
   Serial.flush();
 
   preferences.begin("calib", false);
@@ -4186,10 +3895,6 @@ void setup() {
     drawMainScreen();
   }
 
-  // patched3: wifiSetup() now runs BEFORE NimBLE init (see comment above) —
-  // not called here anymore.  See the BLE-coexistence note around line 2310.
-
-  setupComplete = true;
   Serial.println("[BOOT] setup() complete — entering loop()"); Serial.flush();
 }
 
@@ -4219,8 +3924,7 @@ void wakeScreen() {
       case CAL_REVIEW:          drawCalReviewUI(); break;
       case BRIGHTNESS_SETTINGS: drawBrightnessSettingsUI(); break;
       case SENSOR_INFO:         drawSensorInfoUI(); break;
-      case BT_INFO:             drawBtInfoUI(); break;
-      case MEM_INFO:           drawMemInfoUI(); break;  // already present
+      case MEM_INFO:            drawMemInfoUI(); break;
       case CAL_GRAPH:          drawCalGraphUI(); break;
       case ABOUT:              drawAboutUI(); break;
       case SCREEN_TIMEOUT:     drawScreenTimeoutUI(); break;
@@ -4310,17 +4014,6 @@ void loop() {
   // patched3: drain WiFi command queue + push telemetry (non-blocking)
   wifiLoop();
 
-  // Retry a pending BLE HID trigger that couldn't fire at stack-complete time
-  // because BLE was momentarily disconnected.  Clears after send or after 60 s.
-  if (btTriggerPending && !isSequenceActive) {
-    NimBLEServer* pBleRetry = NimBLEDevice::getServer();
-    if (pBleRetry != nullptr && pBleRetry->getConnectedCount() > 0) {
-      sendTriggerKeystroke();
-      btTriggerPending = false;
-    } else if ((unsigned long)(millis() - btTriggerPendingMs) > 60000) {
-      btTriggerPending = false;
-    }
-  }
 
   if (currentMode != CAL_SAMPLING) {
     unsigned long idle = millis() - lastActivityTime;
@@ -4420,43 +4113,15 @@ void loop() {
     if (!isSequenceActive) {
       isSequenceActive = true;
       firstPulseTime = pulseTime;
-      btTriggerPending = false;  // new stack cancels any stale pending retry
-      lastBLEKeepAliveMs = pulseTime;
-      vibStackStartSeq.fetch_add(1, std::memory_order_relaxed);  // V12: reset settle log
+      vibStackStartSeq.fetch_add(1, std::memory_order_relaxed);
     }
     lastPulseTime = pulseTime;
     registerActivity();
   }
 
-  // Send a null HID report every 5 s whenever a BLE host is connected so the
-  // phone never parks the idle HID link. A parked link drops the first report
-  // sent after it, which otherwise made stack-complete and the TEST ALERT
-  // keystroke miss on the first press (see sendTriggerKeystroke()).
-  if (keyboardInput != nullptr) {
-    NimBLEServer* pKA = NimBLEDevice::getServer();
-    if (pKA != nullptr && pKA->getConnectedCount() > 0 &&
-        (unsigned long)(millis() - lastBLEKeepAliveMs) >= BLE_KEEPALIVE_MS) {
-      uint8_t nullReport[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-      keyboardInput->setValue(nullReport, 8);
-      keyboardInput->notify();
-      lastBLEKeepAliveMs = millis();
-    }
-  }
-
   if (isSequenceActive && ((unsigned long)(millis() - lastPulseTime) >= SILENCE_DURATION)) {
     unsigned long totalActiveTime = (unsigned long)(lastPulseTime - firstPulseTime);
     if (totalActiveTime >= MIN_ACTIVE_DURATION) {
-      NimBLEServer* pBleServer = NimBLEDevice::getServer();
-      if (pBleServer != nullptr && pBleServer->getConnectedCount() > 0) {
-        sendTriggerKeystroke();
-      } else {
-        // BLE dropped during the stack — retry once it reconnects (within 30 s)
-        btTriggerPending = true;
-        btTriggerPendingMs = millis();
-      }
-      // WiFi-side notification — fires regardless of BLE state so the stacker
-      // app on a phone (or any open browser tab) gets a system notification
-      // even when BLE pairing is broken/unavailable.
       wifiNotifyStackComplete();
       // V12: ask vibTask to compute the aggregate suggested wait, then persist.
       vibStackDoneSeq.fetch_add(1, std::memory_order_relaxed);
@@ -4591,7 +4256,6 @@ void loop() {
           case CAL_REVIEW:          handleCalReviewTouch(p); break;
           case BRIGHTNESS_SETTINGS: handleBrightnessSettingsTouch(p, adj); break;
           case SENSOR_INFO:         handleSensorInfoTouch(p); break;
-          case BT_INFO:             handleBtInfoTouch(p); break;
           case MEM_INFO:           handleMemInfoTouch(p); break;
           case CAL_GRAPH:          handleCalGraphTouch(p); break;
           case ABOUT:              handleAboutTouch(p); break;
@@ -4611,14 +4275,9 @@ void loop() {
     }
   }
   
-  // V17b: live refresh for SENSOR_INFO and BT_INFO screens
   if (currentMode == SENSOR_INFO && ((unsigned long)(millis() - lastSensorInfoUpdate) > 500)) {
     refreshSensorInfoValues();
     lastSensorInfoUpdate = millis();
-  }
-  if (currentMode == BT_INFO && ((unsigned long)(millis() - lastBtInfoUpdate) > 1000)) {
-    refreshBtInfoStatus();
-    lastBtInfoUpdate = millis();
   }
 
   // patched3: live refresh for WIFI_INFO (RSSI / SSID / IP / mode rows).
@@ -4662,7 +4321,6 @@ void loop() {
       currentMode != STACK_CALC && currentMode != STACK_TIME &&
       currentMode != FOV_INFO && currentMode != CAL_REVIEW &&
       currentMode != BRIGHTNESS_SETTINGS && currentMode != SENSOR_INFO &&
-      currentMode != BT_INFO &&
       currentMode != MEM_INFO &&
       currentMode != IR_CONTROL &&
       currentMode != CAL_CONFIRM &&
@@ -4701,16 +4359,6 @@ void loop() {
     updateDisplay();
     drawSignalHealthBar(lastStatus, lastMCPS, 44, 12, false); 
 
-    // Status errors shown in TOF Sensor menu only
-    bool currentBTState = (NimBLEDevice::getServer() != nullptr && NimBLEDevice::getServer()->getConnectedCount() > 0);
-    if (currentBTState != lastBTState || forceBTRedraw) {
-      // Iconic-style BT badge: white rune on a Bluetooth-brand blue rounded-rect
-      // when connected (RGB565 0x041F ≈ #0082FC), red when not. Position unchanged.
-      drawBTIcon(8, 7, currentBTState ? 0x041F : COLOR_MAROON);
-      lastBTState = currentBTState;
-      forceBTRedraw = false;
-    }
-
     lastDisplayUpdate = millis();
   }
   
@@ -4723,13 +4371,11 @@ void loop() {
 
 void handleMainTouch(TS_Point p) {
   // Top-strip tappable zones (y=0..42):
-  // BT badge:     x=0..32   → BT_INFO screen  (icon now spans x=8..30)
+  // WiFi badge:   x=0..32   → WIFI_INFO screen
   // Signal bar:   x=33..90  → SENSOR_INFO screen
-  // WiFi zone:    x=93..151 → WIFI_INFO screen (patched3)
   if (p.y < 42) {
-    if (p.x < 32)  { currentMode = BT_INFO;    drawBtInfoUI();    return; }
+    if (p.x < 32)  { currentMode = WIFI_INFO;   drawWifiInfoUI();   return; }
     if (p.x < 90)  { currentMode = SENSOR_INFO; drawSensorInfoUI(); return; }
-    if (p.x >= 93 && p.x < 152) { currentMode = WIFI_INFO; drawWifiInfoUI(); return; }
   }
 
   if (p.y > Y_POS && p.y < (Y_POS + BOX_SIZE)) {
@@ -5025,28 +4671,6 @@ void handleCalReviewTouch(TS_Point p) {
 
 // --- Drawing & Logic ---
 
-void clearBluetoothBonds() {
-  isClearingBonds = true;
-  btnBtInfoReset.draw(tft, "CLEARING...", COLOR_MAROON, TFT_WHITE);
-  
-  NimBLEServer* pServer = NimBLEDevice::getServer();
-  if (pServer != nullptr) {
-    std::vector<uint16_t> peerIds = pServer->getPeerDevices();
-    for(size_t i = 0; i < peerIds.size(); i++) {
-      pServer->disconnect(peerIds[i]);
-    }
-  }
-  
-  vTaskDelay(pdMS_TO_TICKS(500));
-  NimBLEDevice::deleteAllBonds();
-  vTaskDelay(pdMS_TO_TICKS(200));
-
-  saveAllSettings();
-
-  btnBtInfoReset.draw(tft, "REBOOTING...", COLOR_MAROON, TFT_WHITE);
-  delay(800);
-  esp_restart();
-}
 
 void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite) {
   // Continuous filled bar — same colour logic as before but smooth (no gaps)
@@ -5213,7 +4837,6 @@ void drawMainScreen() {
   readIndex = 0;
   totalDist = 0;
   
-  forceBTRedraw = true;
   lastAvgFov = -1; lastDistance = 0xFFFF; lastDisplayUpdate = 0; 
 }
 
@@ -5879,64 +5502,6 @@ void drawGearIcon(int cx, int cy, uint16_t color, uint16_t bgCol) {
   tft.fillCircle(cx, cy, 3, bgCol);
 }
 
-void drawBTIcon(int x, int y, uint16_t bgColor) {
-  // Bluetooth logo: white rune centered on a colored rounded-rect "oval".
-  // bgColor sets the background tint (blue when connected, red when not),
-  // matching the iconic look of the Bluetooth SIG mark while preserving
-  // the connection-state cue. Rune is drawn with filled triangles so the
-  // diagonals look crisp rather than the single-pixel staircase of drawLine.
-  //
-  // Bounding box: 22×30, top-left at (x, y).
-  const int BG_W = 22, BG_H = 30;
-
-  // Clear behind. The rounded-rect oval doesn't fill its corners, so on a
-  // light or non-black theme the surrounding pixels need to match the screen
-  // bg — otherwise a black square peeks out through the corner gaps.
-  tft.fillRect(x, y, BG_W, BG_H, THEME_BG);
-
-  // Rounded-rect background — corner radius ≈ width/3 to read as oval-ish at this scale
-  tft.fillRoundRect(x, y, BG_W, BG_H, 7, bgColor);
-
-  // ── White rune, centered in the background ──
-  // Geometry tuned so the prongs meet the spine at the standard 1/4 and 3/4 marks.
-  // Spine: 2px wide vertical bar.
-  // Diagonals: drawn as filled quadrilaterals (two triangles each) for clean edges.
-  const int cx = x + BG_W / 2;       // spine center-x
-  const int top = y + 5;             // rune top  (5px top padding)
-  const int bot = y + BG_H - 5;      // rune bot  (5px bot padding)
-  const int mid = (top + bot) / 2;   // vertical midpoint
-  const int q1  = top + (bot - top) / 4;     // upper crossing height
-  const int q3  = bot - (bot - top) / 4;     // lower crossing height
-  const int rightX = cx + 5;         // how far the prongs reach right
-  const uint16_t W = TFT_WHITE;
-
-  // Spine (2px wide, top → bottom)
-  tft.fillRect(cx - 1, top, 2, bot - top + 1, W);
-
-  // Helper: draw a 2px-thick line as two filled triangles forming a thin quad.
-  // Adafruit_GFX has no thick-line primitive, so we approximate with a quad
-  // (two triangles) offset by 1px in y. This gives a smooth 2px stroke at any
-  // angle without the staircase artifacts of drawLine.
-  auto thickLine = [&](int x0, int y0, int x1, int y1) {
-    tft.fillTriangle(x0, y0,     x1, y1,     x1, y1 + 1, W);
-    tft.fillTriangle(x0, y0,     x0, y0 + 1, x1, y1 + 1, W);
-  };
-
-  // Upper-right prong: spine top → right peak at q1
-  thickLine(cx, top, rightX, q1);
-  // Upper diagonal: right peak (q1) → spine at midpoint  (forms top-right of bowtie)
-  thickLine(rightX, q1, cx, mid);
-  // Upper-left cross: right peak (q1) reaches across to LEFT side at q3 — the
-  // characteristic Bluetooth crossover.
-  thickLine(cx - 5, q3, rightX, q1);
-
-  // Lower-right prong: spine bottom → right peak at q3
-  thickLine(cx, bot, rightX, q3);
-  // Lower diagonal: right peak (q3) → spine midpoint
-  thickLine(rightX, q3, cx, mid);
-  // Lower-left cross: right peak (q3) → LEFT side at q1
-  thickLine(cx - 5, q1, rightX, q3);
-}
 
 void drawCaptureSaveButton(Button& btn, uint16_t boxCol, uint16_t textCol) {
   tft.fillRect(btn.x, btn.y, btn.w, btn.h, boxCol); 

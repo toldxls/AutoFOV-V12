@@ -352,17 +352,14 @@
 
             <!-- ===================== MAIN SCREEN ===================== -->
             <div id="screen-main" class="screen active">
-                <div id="bt-rune" onclick="switchScreen('screen-btinfo')">
-                    <svg width="22" height="30" viewBox="0 0 22 30">
-                        <rect id="bt-rune-bg" width="22" height="30" rx="7" fill="#780000"/>
-                        <line x1="11" y1="5"  x2="11" y2="25" stroke="white" stroke-width="2"/>
-                        <line x1="11" y1="5"  x2="16" y2="10" stroke="white" stroke-width="2"/>
-                        <line x1="16" y1="10" x2="11" y2="15" stroke="white" stroke-width="2"/>
-                        <line x1="11" y1="15" x2="16" y2="20" stroke="white" stroke-width="2"/>
-                        <line x1="16" y1="20" x2="11" y2="25" stroke="white" stroke-width="2"/>
-                        <line x1="6"  y1="10" x2="16" y2="20" stroke="white" stroke-width="2"/>
-                        <line x1="6"  y1="20" x2="16" y2="10" stroke="white" stroke-width="2"/>
+                <div id="wifi-badge" onclick="switchScreen('screen-wifiinfo')" title="WiFi Info" style="position:absolute;left:3px;top:4px;width:32px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;">
+                    <svg width="22" height="22" viewBox="0 0 22 22">
+                        <path id="wifi-badge-arc3" d="M2,11 Q11,2 20,11" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
+                        <path id="wifi-badge-arc2" d="M5,14 Q11,7 17,14" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
+                        <path id="wifi-badge-arc1" d="M8,17 Q11,13 14,17" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
+                        <circle id="wifi-badge-dot" cx="11" cy="20" r="2" fill="#555"/>
                     </svg>
+                    <div id="wifi-badge-kbs" style="font-size:6px;color:#787878;letter-spacing:0.2px;display:none;text-align:center;line-height:1;white-space:nowrap;"></div>
                 </div>
 
                 <div id="tof-menu-zone" onclick="switchScreen('screen-sensorinfo')">
@@ -372,20 +369,7 @@
 
                 <!-- FOV Info zone: two purple bullets flanking text -->
                 <!-- WiFi status zone: top-middle x=93..151 -->
-                <div id="wifi-zone" onclick="switchScreen('screen-wifiinfo')"
-                     style="position:absolute; left:93px; top:0; width:59px; height:42px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;">
-                    <!-- 4-bar signal strength indicator -->
-                    <svg id="wifi-bars" width="20" height="14" viewBox="0 0 20 14">
-                        <rect id="wbar-1" x="0"  y="10" width="3" height="4"  fill="#404040" rx="0.5"/>
-                        <rect id="wbar-2" x="5"  y="7"  width="3" height="7"  fill="#404040" rx="0.5"/>
-                        <rect id="wbar-3" x="10" y="4"  width="3" height="10" fill="#404040" rx="0.5"/>
-                        <rect id="wbar-4" x="15" y="0"  width="3" height="14" fill="#404040" rx="0.5"/>
-                    </svg>
-                    <div id="wifi-zone-label" style="font-size:8px; color: var(--text-disabled); letter-spacing:0.5px;">NO WIFI</div>
-                    <div id="wifi-zone-pps"   style="font-size:7px; color: var(--text-disabled); display:none;"></div>
-                </div>
-
-                <div id="btn-fov-info" onclick="switchScreen('screen-fovinfo')">
+<div id="btn-fov-info" onclick="switchScreen('screen-fovinfo')">
                     <div class="fov-bullet" style="left: 3px;"></div>
                     <div class="gfx-text" style="left: 9px; top: 10px; color: var(--accent-magenta); font-size: 10px; text-align: center;">FOV<br>Info</div>
                     <div class="fov-bullet" style="left: 33px;"></div>
@@ -638,43 +622,6 @@
 
             </div>
 
-            <!-- ===================== BLUETOOTH INFO ===================== -->
-            <div id="screen-btinfo" class="screen">
-                <div class="title-stripe" style="left: 5px; top: 5px; width: 100px;">BLUETOOTH</div>
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
-
-                <!-- Static rows (MAC, Bonds) -->
-                <div class="gfx-text" style="left: 20px; top: 42px; color: var(--text-disabled);">MAC:</div>
-                <div class="gfx-text" style="right: 15px; top: 42px; color: var(--text-muted);" id="bt-mac">—</div>
-                <div class="gfx-text" style="left: 20px; top: 74px; color: var(--text-disabled);">Bonds:</div>
-                <div class="gfx-text" style="right: 15px; top: 74px; color: var(--accent-green);" id="bt-bonds">—</div>
-
-                <!-- Live rows (Status, Devices, RSSI, MTU) — shown/hidden by JS -->
-                <div class="bt-row" style="top: 106px;">
-                    <div class="gfx-text" style="left: 10px; top: 6px; color: var(--text-disabled);">Status:</div>
-                    <div id="btinfo-status" class="gfx-text" style="right: 15px; top: 6px; color: #FF0000;">Ready to pair</div>
-                </div>
-                <div id="bt-devices-row" class="bt-row" style="top: 136px; display: none;">
-                    <div class="gfx-text" style="left: 10px; top: 6px; color: var(--text-disabled);">Devices:</div>
-                    <div id="bt-devices" class="gfx-text" style="right: 15px; top: 6px; color: var(--text-primary);">1 device</div>
-                </div>
-                <div id="bt-rssi-row" class="bt-row" style="top: 166px; display: none;">
-                    <div class="gfx-text" style="left: 10px; top: 6px; color: var(--text-disabled);">RSSI:</div>
-                    <div id="bt-rssi" class="gfx-text" style="right: 15px; top: 6px; color: #00FF00;">-55 dBm</div>
-                </div>
-                <div id="bt-mtu-row" class="bt-row" style="top: 196px; display: none;">
-                    <div class="gfx-text" style="left: 10px; top: 6px; color: var(--text-disabled);">MTU:</div>
-                    <div id="bt-mtu" class="gfx-text" style="right: 15px; top: 6px; color: var(--text-primary);">244 bytes</div>
-                </div>
-
-                <div id="btn-bt-test" class="gfx-btn"
-                     style="left: 20px; top: 232px; width: 200px; height: 36px; background: #101010; color: var(--text-disabled);"
-                     onclick="btTestAlert()">TEST ALERT</div>
-
-                <div class="gfx-btn"
-                     style="left: 20px; top: 275px; width: 200px; height: 36px; background: #780000;"
-                     onclick="btResetBonds()">RESET BONDS</div>
-            </div>
 
             <!-- ===================== ABOUT ===================== -->
             <div id="screen-about" class="screen">
@@ -1059,6 +1006,11 @@
                 <div class="gfx-btn"
                      style="left:125px; top:210px; width:105px; height:38px; background:#780000; font-size:11px;"
                      onclick="disconnectWifi()">DISCONNECT</div>
+
+                <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
+                <div class="gfx-btn"
+                     style="left:55px; top:268px; width:130px; height:38px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:11px;"
+                     onclick="sendCommand('testAlert','1')">TEST ALERT</div>
             </div>
 
             <!-- ===================== CONFIRM MODAL ===================== -->
@@ -1207,7 +1159,6 @@
         calRunPx: 1920,
         calPointsCaptured: 0,
         capturedPoints: [],
-        btConnected: false,
         // Calibration fit results (filled from device telemetry)
         fovSlope: null, fovIntercept: null, calibError: null, calibR2: null,
         // Sensor live readings
@@ -1289,7 +1240,6 @@
         if (id === 'screen-timeout')     updateTimeoutUI();
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
         if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
-        if (id === 'screen-btinfo')      updateBtInfoUI(state.btConnected);
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { updateFovInfoUI(); drawCalGraph(); }
         if (id === 'screen-memory')      updateMemoryUI();
@@ -1321,8 +1271,9 @@
     let vibPanelOpen = false;
     let vibSpecYMax  = 100;                // smoothed spectrum y-ceiling (deci-mg)
     let vibCursorX   = -1;                 // hover x on the spectrum canvas (-1 = none)
-    let vibTrend     = [];                 // [{t,v,h}] rolling RMS history
-    let vibTrendLast = 0;
+    let vibTrend        = [];              // [{t,v,h}] rolling RMS history
+    let vibTrendLast    = 0;
+    let vibTrendDispMax = 0;             // sticky Y-ceiling: fast rise, slow decay
     let vibWfInit    = false;
 
     // ── Spectrum peak-hold (smooths the panel trace) ────────────────────────
@@ -1579,6 +1530,7 @@
     //    real motion. Honest for large-amplitude / low-frequency sway.
     const VIB_DISP_K       = 248.5 / 10;     // (mg→µm) × (deci-mg→mg)
     const VIB_DISP_MIN_BIN = 4;              // bin 4 ≈ 3.25 Hz
+    const VIB_SPEC_LOG_MIN = 0.01;           // µm log-scale floor
     let vibUnitsUm = false;
     function vibDispStats(spec, base) {
         if (!spec || !spec.length) return { peakUm: 0, peakHz: 0, rmsUm: 0 };
@@ -1601,9 +1553,10 @@
         vibUnitsUm = !vibUnitsUm;
         const btn = document.getElementById('vibp-units');
         if (btn) btn.textContent = vibUnitsUm ? 'µm' : 'mg';
-        vibSpecYMax = vibUnitsUm ? 5 : 3;     // reset; auto-scale re-fits quickly
+        vibSpecYMax     = vibUnitsUm ? 0.5 : 3; // reset; auto-scale re-fits quickly
+        vibTrendDispMax = 0;                     // reset sticky ceiling for new units
         vibDrawSpectrum();
-        vibDrawTrend();                       // µm/mg toggle now applies here too
+        vibDrawTrend();                          // µm/mg toggle now applies here too
     }
 
     function vibOpenPanel() {
@@ -1692,17 +1645,29 @@
         const combBase = vibUnitsUm ? (vibBaseV || null) : null;
         const combAvg  = toDisp(vibCombRoll, combBase);
         const units = vibUnitsUm ? 'µm' : 'mg';
-        let peak = vibUnitsUm ? 2 : 1;
+        let peak = vibUnitsUm ? VIB_SPEC_LOG_MIN : 1;
         if (v)       for (let k = cutoff; k < n; k++) if (v[k]       > peak) peak = v[k];
         if (h)       for (let k = cutoff; k < n; k++) if (h[k]       > peak) peak = h[k];
         if (combAvg) for (let k = cutoff; k < n; k++) if (combAvg[k] > peak) peak = combAvg[k];
         if (updateScale) {
             if (peak > vibSpecYMax) vibSpecYMax = peak;
-            else vibSpecYMax += (peak - vibSpecYMax) * 0.08;
+            // µm decays faster so the log axis snaps to the actual signal level quickly.
+            else vibSpecYMax += (peak - vibSpecYMax) * (vibUnitsUm ? 0.15 : 0.08);
         }
         const yMax = vibSpecYMax, x0 = mL, y0 = mT + ph;
         const binX = b => x0 + b / (n - 1) * pw;
-        const valY = m => y0 - Math.min(1, m / yMax) * ph;
+        // In µm mode use a log Y-axis so the 1/f² amplified low-freq peaks don't
+        // collapse everything else to the baseline.  Linear stays for mg.
+        let valY;
+        let _lMin, _lSpan;
+        if (vibUnitsUm) {
+            _lMin  = Math.log10(VIB_SPEC_LOG_MIN);
+            _lSpan = Math.log10(Math.max(yMax, VIB_SPEC_LOG_MIN * 10)) - _lMin; // ≥ 1 decade
+            valY = m => m <= 0 ? y0 : y0 - Math.max(0, Math.min(1,
+                (Math.log10(Math.max(m, VIB_SPEC_LOG_MIN)) - _lMin) / _lSpan)) * ph;
+        } else {
+            valY = m => y0 - Math.min(1, m / yMax) * ph;
+        }
         // grid + axes
         g.font = '10px monospace'; g.lineWidth = 1;
         g.strokeStyle = '#15302a'; g.fillStyle = '#5e8c7e';
@@ -1714,13 +1679,24 @@
         }
         g.fillText('Hz', x0 + pw / 2, y0 + 14);
         g.textAlign = 'right'; g.textBaseline = 'middle';
-        for (let i = 0; i <= 4; i++) {
-            const y = mT + ph * i / 4;
-            g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + pw, y); g.stroke();
-            const lab = yMax * (4 - i) / 4;
-            g.fillText(lab.toFixed(lab < 10 ? 1 : 0), x0 - 5, y);
+        if (vibUnitsUm) {
+            for (const v of [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]) {
+                if (v < VIB_SPEC_LOG_MIN * 0.9 || v > yMax * 1.5) continue;
+                const y = y0 - (Math.log10(v) - _lMin) / _lSpan * ph;
+                if (y < mT - 2 || y > y0 + 2) continue;
+                g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + pw, y); g.stroke();
+                g.fillText(v < 1 ? v.toFixed(v < 0.1 ? 2 : 1) : v.toFixed(0), x0 - 5, y);
+            }
+        } else {
+            for (let i = 0; i <= 4; i++) {
+                const y = mT + ph * i / 4;
+                g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + pw, y); g.stroke();
+                const lab = yMax * (4 - i) / 4;
+                g.fillText(lab.toFixed(lab < 10 ? 1 : 0), x0 - 5, y);
+            }
         }
         g.textAlign = 'left'; g.fillText(units, 4, mT);
+        if (vibUnitsUm) { g.font = '9px monospace'; g.fillText('log', 4, mT + 11); g.font = '10px monospace'; }
         // vertical trace — filled area (peak-hold envelope) + thin live overlay
         if (v) {
             g.beginPath(); g.moveTo(binX(cutoff), y0);
@@ -1812,16 +1788,21 @@
         const mL = 46;                            // y-axis gutter (mirrors trend/spectrum panes)
         const pw = W - mL;
         if (pw < 10 || H < 10) return;
-        // Lazily (re)allocate the backing canvas at the heatmap-region size.
-        if (!vibWfBack || vibWfBack.width !== pw || vibWfBack.height !== H) {
+        // Number of spectrum bins — compute early so the backing canvas is exactly
+        // n pixels wide (one pixel per bin).  Stretching n→pw at composite time
+        // via drawImage avoids the px-repeat blockiness of mapping pw pixels to
+        // 256 bins while still filling the full panel width.
+        const n = (vibSpec && vibSpec.length) ? vibSpec.length : 256;
+        // Lazily (re)allocate the backing canvas at n×H (bin-exact width).
+        if (!vibWfBack || vibWfBack.width !== n || vibWfBack.height !== H) {
             vibWfBack = document.createElement('canvas');
-            vibWfBack.width  = pw;
+            vibWfBack.width  = n;
             vibWfBack.height = H;
             vibWfInit = false;
         }
         const bg = vibWfBack.getContext('2d');
         if (!vibWfInit) {
-            bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, pw, H);
+            bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, n, H);
             g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
             vibWfRows = [];
             vibWfInit = true;
@@ -1835,10 +1816,10 @@
         // (~120k) calls per slider tick and made the slider feel "chuggy".
         if (vibWfSensApplied !== vibWfSensitivity) {
             vibWfSensApplied = vibWfSensitivity;
-            bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, pw, H);
+            bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, n, H);
             const rows = Math.min(vibWfRows.length, H);
             if (rows > 0) {
-                const img    = bg.createImageData(pw, rows);
+                const img    = bg.createImageData(n, rows);
                 const buf    = img.data;
                 const denom  = Math.max(30, vibWfRefMax);
                 const gain   = vibWfSensitivity;
@@ -1846,12 +1827,8 @@
                 for (let r = 0; r < rows; r++) {
                     const fr = vibWfRows[r].frame;
                     if (!fr) continue;
-                    const flen   = fr.length;
-                    const rowOff = r * pw * 4;
-                    for (let x = 0; x < pw; x++) {
-                        // Bin index by integer truncation — equivalent to the
-                        // Math.floor(x / pw * flen) the fillRect loop used.
-                        const b = (x * flen / pw) | 0;
+                    const rowOff = r * n * 4;
+                    for (let b = 0; b < n; b++) {
                         let f = (fr[b] || 0) * invDen * gain;
                         if (f < 0) f = 0; else if (f > 1) f = 1;
                         // Inlined vibHeatWf — same breakpoints, no string
@@ -1861,7 +1838,7 @@
                         else if (f < 0.55) { const t = (f - 0.10) / 0.45; R = 0;       G = (t * 255) | 0; B = 0; }
                         else if (f < 0.85) { const t = (f - 0.55) / 0.30; R = (t * 255) | 0; G = 255;     B = 0; }
                         else               { const t = (f - 0.85) / 0.15; R = 255;     G = 255;     B = (t * 220) | 0; }
-                        const o = rowOff + (x << 2);
+                        const o = rowOff + (b << 2);
                         buf[o] = R; buf[o + 1] = G; buf[o + 2] = B; buf[o + 3] = 255;
                     }
                 }
@@ -1872,10 +1849,9 @@
         // and record this frame in a parallel ring so the hover readout can
         // resolve "row → wall-clock age + bin amplitude N seconds ago".
         if (newFrame && vibSpec && vibSpec.length) {
-            bg.drawImage(vibWfBack, 0, 0, pw, H - 1, 0, 1, pw, H - 1);
+            bg.drawImage(vibWfBack, 0, 0, n, H - 1, 0, 1, n, H - 1);
             vibWfRows.unshift({ t: performance.now(), frame: Float32Array.from(vibSpec) });
             while (vibWfRows.length > Math.max(VIB_WF_MAX_ROWS, H)) vibWfRows.pop();
-            const n = vibSpec.length;
             // Asymmetric EMA reference: rise quickly so a real transient still
             // gets headroom, decay slowly so a single bump doesn't collapse
             // the contrast of every later silent row.
@@ -1883,15 +1859,17 @@
             for (let b = 2; b < n; b++) if (vibSpec[b] > frameMx) frameMx = vibSpec[b];
             const a = frameMx > vibWfRefMax ? VIB_WF_REF_ATTACK : VIB_WF_REF_RELEASE;
             vibWfRefMax += (frameMx - vibWfRefMax) * a;
-            for (let x = 0; x < pw; x++) {
-                const b = Math.floor(x / pw * n);
+            for (let b = 0; b < n; b++) {
                 bg.fillStyle = vibWfTint(vibSpec[b]);
-                bg.fillRect(x, 0, 1, 1);
+                bg.fillRect(b, 0, 1, 1);
             }
         }
-        // Composite: gutter background, heatmap from backing, then axis + cursor.
+        // Composite: gutter background, then stretch n-wide heatmap to fill pw.
+        // imageSmoothingEnabled=false → crisp per-bin columns, no blending blur.
         g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
-        g.drawImage(vibWfBack, mL, 0);
+        g.imageSmoothingEnabled = false;
+        g.drawImage(vibWfBack, mL, 0, pw, H);
+        g.imageSmoothingEnabled = true;
         g.font = '10px monospace'; g.lineWidth = 1;
         g.fillStyle = '#5e8c7e'; g.textAlign = 'right'; g.textBaseline = 'middle';
         const now = performance.now();
@@ -1916,6 +1894,31 @@
             }
         } else {
             g.fillText('now', mL - 5, 0);
+        }
+        // ── Filmstrip: time-integrated spectrum at the bottom of the waterfall ──
+        // For each frequency column, averages every visible waterfall row's bin value
+        // and maps to the same green heat palette — bright green = sustained energy,
+        // dark = occasional, black = silent.
+        const filmH = 7;
+        if (vibWfRows.length > 0 && pw > 0) {
+            const n = (vibSpec && vibSpec.length) ? vibSpec.length : 256;
+            const rowCnt = Math.min(vibWfRows.length, H - filmH);
+            const binAvg = new Float32Array(n);
+            for (let r = 0; r < rowCnt; r++) {
+                const fr = vibWfRows[r].frame;
+                if (!fr) continue;
+                const len = Math.min(n, fr.length);
+                for (let b = 0; b < len; b++) binAvg[b] += fr[b];
+            }
+            if (rowCnt > 0) for (let b = 0; b < n; b++) binAvg[b] /= rowCnt;
+            const filmY = H - filmH;
+            g.strokeStyle = '#1a3c3a'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(mL, filmY - 0.5); g.lineTo(W, filmY - 0.5); g.stroke();
+            for (let x = 0; x < pw; x++) {
+                const b = Math.min(n - 1, (x * n / pw) | 0);
+                g.fillStyle = vibWfTint(binAvg[b]);
+                g.fillRect(mL + x, filmY, 1, filmH);
+            }
         }
         // Hover crosshair + readout
         if (vibWfCursorX >= mL && vibWfCursorY >= 0 && vibWfCursorY < H) {
@@ -1991,12 +1994,18 @@
         const vKey = vibUnitsUm ? 'vUm' : 'v';
         const hKey = vibUnitsUm ? 'hUm' : 'h';
         const units = vibUnitsUm ? 'µm' : 'mg';
-        let mx = vibUnitsUm ? 2 : 5;
+        let rawMx = vibUnitsUm ? 2 : 5;
         for (const s of vibTrend) {
             const sv = s[vKey] || 0, sh = s[hKey] || 0;
-            if (sv > mx) mx = sv;
-            if (sh > mx) mx = sh;
+            if (sv > rawMx) rawMx = sv;
+            if (sh > rawMx) rawMx = sh;
         }
+        // Sticky ceiling: jumps immediately to new peaks, decays slowly so spikes
+        // don't make old data instantly compress or expand on the next frame.
+        vibTrendDispMax = rawMx > vibTrendDispMax
+            ? rawMx
+            : vibTrendDispMax + (rawMx - vibTrendDispMax) * 0.03;
+        const mx = Math.max(rawMx, vibTrendDispMax);
         g.font = '10px monospace'; g.lineWidth = 1;
         g.strokeStyle = '#15302a'; g.fillStyle = '#5e8c7e';
         g.textAlign = 'right'; g.textBaseline = 'middle';
@@ -2015,16 +2024,20 @@
         const vy = m => mT + ph - Math.min(1, m / mx) * ph;
         const line = key => {
             g.beginPath();
-            let started = false, ema = 0;
+            let emaStarted = false, ema = 0, drawStarted = false;
             for (const s of vibTrend) {
+                // Accumulate EMA from ALL samples so the filter is warm by the
+                // time we reach the left edge — prevents position jumps as old
+                // samples drop off and a new one becomes the leftmost visible.
+                const val = s[key] || 0;
+                ema = emaStarted ? ema * 0.75 + val * 0.25 : val;
+                emaStarted = true;
                 const x = tx(s.t);
                 if (x < mL - 2) continue;
-                const val = s[key] || 0;
-                ema = started ? ema * 0.75 + val * 0.25 : val;
-                if (!started) { g.moveTo(x, vy(ema)); started = true; }
+                if (!drawStarted) { g.moveTo(x, vy(ema)); drawStarted = true; }
                 else g.lineTo(x, vy(ema));
             }
-            if (started) g.stroke();
+            if (drawStarted) g.stroke();
         };
         g.lineWidth = 1.4;
         g.strokeStyle = '#36d6ff'; line(vKey);
@@ -2919,7 +2932,7 @@
     // ─────────────────────────────────────────────────────────────────────────
     (function () {
         const PRESS_SEL = '.gfx-btn, .stack-row, .theme-swatch, #btn-gear, ' +
-                          '#bt-rune, #tof-menu-zone, #wifi-zone, #btn-fov-info, ' +
+                          '#bt-rune, #tof-menu-zone, #wifi-badge, #btn-fov-info, ' +
                           '#calib-block';
         const MIN_PRESS_MS = 110;
         let pressedEl = null, pressedAt = 0;
@@ -3383,45 +3396,6 @@
         if (nEl) nEl.innerText = 'n=' + pts.length + (state.isCustomCalib ? '' : ' (factory)');
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // BT INFO
-    // ─────────────────────────────────────────────────────────────────────────
-    function updateBtInfoUI(connected) {
-        state.btConnected = connected;
-        // Update BT rune badge on main screen
-        document.getElementById('bt-rune-bg').setAttribute('fill', connected ? '#006400' : '#780000');
-        const status = document.getElementById('btinfo-status');
-        status.innerText    = connected ? 'CONNECTED' : 'Ready to pair';
-        status.style.color  = connected ? '#00FF00'   : '#FF0000';
-
-        document.getElementById('bt-devices-row').style.display = connected ? 'block' : 'none';
-        document.getElementById('bt-rssi-row').style.display    = connected ? 'block' : 'none';
-        document.getElementById('bt-mtu-row').style.display     = connected ? 'block' : 'none';
-
-        const testBtn = document.getElementById('btn-bt-test');
-        testBtn.style.background = connected ? '#A800F8' : '#101010';
-        testBtn.style.color      = connected ? '#FFF'    : '#787878';
-    }
-
-    function btTestAlert() {
-        if (!state.btConnected) return;
-        const btn = document.getElementById('btn-bt-test');
-        btn.innerText = 'SENT!';
-        btn.style.background = '#ADFF2F';
-        btn.style.color = '#000';
-        setTimeout(() => {
-            btn.innerText = 'TEST ALERT';
-            btn.style.background = '#A800F8';
-            btn.style.color = '#FFF';
-        }, 600);
-        sendCommand('testAlert', 1);
-    }
-
-    function btResetBonds() {
-        showConfirm('Reset all Bluetooth bonds?\nDevice will restart.', () => {
-            sendCommand('resetBonds', 1);
-        });
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // CONFIRM MODAL
@@ -3488,19 +3462,19 @@
             const el = document.getElementById('wbar-' + i);
             if (el) el.setAttribute('fill', i <= bars ? barCol : '#404040');
         }
-        const label  = document.getElementById('wifi-zone-label');
-        const ppsEl  = document.getElementById('wifi-zone-pps');
-        if (connected) {
-            label.style.color = barCol;
-            label.innerText   = 'WIFI';
-            if (ppsEl) { ppsEl.style.display = 'block'; ppsEl.style.color = '#787878';
-                         ppsEl.innerText = pktRateDisplay + '/s'; }
-        } else if (reconnectTimer) {
-            label.style.color = '#FFA500'; label.innerText = 'RETRY…';
-            if (ppsEl) ppsEl.style.display = 'none';
+        // WiFi badge (top-left, where BT rune used to live) — mirrors bar colour
+        const badgeCol = connected ? barCol : '#555';
+        ['wifi-badge-arc1','wifi-badge-arc2','wifi-badge-arc3','wifi-badge-dot'].forEach(id => {
+            const el = document.getElementById(id); if (el) el.setAttribute(connected ? 'stroke' : 'fill', badgeCol);
+            if (el && id === 'wifi-badge-dot') el.setAttribute('fill', badgeCol);
+            if (el && id !== 'wifi-badge-dot') el.setAttribute('stroke', badgeCol);
+        });
+        const kbsEl = document.getElementById('wifi-badge-kbs');
+        if (connected && pktRateDisplay > 0) {
+            const kbs = (pktBytesDisplay / 1024).toFixed(1);
+            if (kbsEl) { kbsEl.style.display = 'block'; kbsEl.style.color = barCol; kbsEl.innerText = kbs + ' KB/s'; }
         } else {
-            label.style.color = '#787878'; label.innerText = 'NO WIFI';
-            if (ppsEl) ppsEl.style.display = 'none';
+            if (kbsEl) kbsEl.style.display = 'none';
         }
     }
 
@@ -3668,7 +3642,6 @@
         if (data.ss !== undefined) data.sensorStatus  = data.ss;
         if (data.t  !== undefined) data.trigger       = data.t;
         if (data.wr !== undefined) data.wifiRSSI      = data.wr;
-        if (data.br !== undefined) data.btRSSI        = data.br;
 
         // ── V12 vibration monitor ──
         if (data.vd  !== undefined) state.vibDom   = data.vd;
@@ -3831,20 +3804,6 @@
         // TEST ALERT button (device or web) — BLE-free beep confirmation.
         if (data.beep) playAlertBeeps();
 
-        // ── BT ──
-        if (data.btConnected !== undefined) updateBtInfoUI(!!data.btConnected);
-        if (data.btMac   !== undefined) document.getElementById('bt-mac').innerText   = data.btMac;
-        if (data.btBonds !== undefined) document.getElementById('bt-bonds').innerText = data.btBonds + ' stored';
-        if (data.btRSSI  !== undefined) {
-            const col = data.btRSSI > -65 ? '#00FF00' : data.btRSSI > -80 ? '#FFFF00' : '#FFA500';
-            const el = document.getElementById('bt-rssi');
-            el.innerText = data.btRSSI + ' dBm'; el.style.color = col;
-        }
-        if (data.btMTU !== undefined) document.getElementById('bt-mtu').innerText = data.btMTU + ' bytes';
-        if (data.btDevices !== undefined) {
-            document.getElementById('bt-devices').innerText =
-                data.btDevices + (data.btDevices === 1 ? ' device' : ' devices');
-        }
 
         // ── Calibration status badge (main screen + state flag) ──
         if (data.isCustomCalib !== undefined) {
