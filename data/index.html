@@ -3579,6 +3579,7 @@
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
+        xhr.setRequestHeader('X-OTA-Password', 'autofov-ota');
 
         xhr.upload.onprogress = e => {
             if (!e.lengthComputable) return;

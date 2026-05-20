@@ -59,6 +59,7 @@ static const uint32_t  RECONNECT_INTERVAL_MS = 30000UL;  // retry every 30 s
 static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor push — matches VL53L4CX timing budget 1:1
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
+static const char*     OTA_PASSWORD        = "autofov-ota";  // change this
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -850,6 +851,12 @@ static void startFullServer() {
         [](AsyncWebServerRequest* req, const String& filename,
            size_t index, uint8_t* data, size_t len, bool final) {
             if (!index) {
+                // Reject if the X-OTA-Password header doesn't match
+                if (!req->hasHeader("X-OTA-Password") ||
+                    req->header("X-OTA-Password") != OTA_PASSWORD) {
+                    req->send(401, "text/plain", "Unauthorized");
+                    return;
+                }
                 otaInProgress = true;
                 Serial.printf("[OTA] start: %s\n", filename.c_str());
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
