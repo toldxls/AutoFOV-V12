@@ -814,6 +814,36 @@ static void startFullServer() {
         ESP.restart();
     });
 
+    // Serve individual signature .bin files — the web dashboard fetches these
+    // to overlay a saved spectrum in the panel.  URL: /vibsig/<name>.bin
+    // Regex routes require -DASYNCWEBSERVER_REGEX, which the Arduino IDE does
+    // not pass through.  Use a wildcard prefix route and re-join a sanitized
+    // basename onto "/vibsig/" so a request like /vibsig/..%2fwifi can never
+    // wander outside the directory.
+    httpServer.on("/vibsig/*", HTTP_GET, [](AsyncWebServerRequest* req) {
+        String url = req->url();
+        int slash = url.lastIndexOf('/');
+        String base = (slash >= 0) ? url.substring(slash + 1) : url;
+        if (!base.length() || !base.endsWith(".bin")) {
+            req->send(400, "text/plain", "Bad name"); return;
+        }
+        // Whitelist matches vibRename's sanitiser plus the trailing ".bin".
+        for (size_t i = 0; i < base.length(); i++) {
+            char c = base[i];
+            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+            if (!ok) { req->send(400, "text/plain", "Bad name"); return; }
+        }
+        // No "..", no embedded slash (already excluded by the whitelist, but
+        // belt-and-braces in case the loop is loosened later).
+        if (base.indexOf("..") >= 0 || base.indexOf('/') >= 0) {
+            req->send(400, "text/plain", "Bad name"); return;
+        }
+        String path = "/vibsig/" + base;
+        if (!LittleFS.exists(path)) { req->send(404, "text/plain", "Not found"); return; }
+        req->send(LittleFS, path, "application/octet-stream");
+    });
+
     // CORS preflight — browsers send OPTIONS before any cross-origin POST with
     // a JSON body.  Catch every unknown route and reply 204 with the headers
     // already attached by DefaultHeaders.  Real 404s still get a body.
@@ -1444,7 +1474,17 @@ void wifiPushVibSigList() {
                 const char* slash = strrchr(fn, '/');
                 const char* base = slash ? slash + 1 : fn;
                 if (!first) out += ',';
-                out += '"'; out += base; out += '"';
+                // Defensive JSON escape — vibRename sanitises names to
+                // [A-Za-z0-9_-] today, but escape " \ and skip control chars
+                // so a future loosening can't break the WS payload.
+                out += '"';
+                for (const char* p = base; *p; ++p) {
+                    unsigned char c = (unsigned char)*p;
+                    if (c < 0x20) continue;
+                    if (c == '"' || c == '\\') out += '\\';
+                    out += (char)c;
+                }
+                out += '"';
                 first = false;
             }
             e.close();

@@ -835,12 +835,13 @@
                 <div class="gfx-text" id="vib-state" style="left: 125px; top: 7px; font-size: 10px; font-weight: bold; letter-spacing: 1px; color: #3ddb7a;">CALM</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
 
-                <div class="gfx-text" id="vib-readout"  style="left: 12px; top: 40px; font-size: 12px; color: var(--accent-green);">dominant -- Hz</div>
-                <div class="gfx-text" id="vib-readout2" style="left: 12px; top: 60px; width: 222px; font-size: 10px; color: var(--text-muted);">rec WAIT <span id="vib-rec" style="color:var(--accent-green);">--</span> &middot; now <input id="vib-curwait" type="number" min="0" max="20000" step="50" style="width:46px;background:#0c2b2e;color:#e3f7c9;border:1px solid #1f3a33;font-size:10px;" onchange="vibSetWait()">ms &middot; <span id="vib-delta"></span></div>
+                <div class="gfx-text" id="vib-readout"  style="left: 12px; top: 34px; font-size: 12px; line-height: 14px; color: var(--accent-green);">dominant -- Hz</div>
+                <div class="gfx-text" id="vib-readout-peak" style="left: 12px; top: 52px; font-size: 10px; line-height: 12px; color: #7ab4a2; display:none;"></div>
+                <div class="gfx-text" id="vib-readout2" style="left: 12px; top: 68px; width: 222px; font-size: 10px; line-height: 12px; color: var(--text-muted);">rec WAIT <span id="vib-rec" style="color:var(--accent-green);">--</span> &middot; now <input id="vib-curwait" type="number" min="0" max="20000" step="50" style="width:36px;background:#0c2b2e;color:#e3f7c9;border:1px solid #1f3a33;font-size:10px;" onchange="vibSetWait()">ms &middot; <span id="vib-delta"></span></div>
 
                 <canvas id="vib-canvas" width="452" height="184" title="Tap to open the full analyzer"
                         onclick="vibOpenPanel()"
-                        style="position:absolute; left:7px; top:80px; width:226px; height:92px; background:#06120f; border:1px solid #1f3a33; cursor:pointer;"></canvas>
+                        style="position:absolute; left:7px; top:82px; width:226px; height:92px; background:#06120f; border:1px solid #1f3a33; cursor:pointer;"></canvas>
 
                 <div class="gfx-btn" style="left: 12px; top: 180px; width: 96px; height: 30px; background-color: #A800F8;"
                      onclick="sendCommand('vibReLock',1)">RE-LOCK</div>
@@ -855,7 +856,8 @@
                 <div class="gfx-btn" style="left: 7px; top: 252px; width: 226px; height: 22px; background-color: #1a3c3a; border:1px solid #2a5e58; font-size: 10px;"
                      onclick="switchScreen('screen-vib-wait')">WAIT ANALYSIS &#9654;</div>
 
-                <div id="vib-siglist" style="position:absolute; left:7px; top:278px; width:226px; height:38px;
+                <div style="position:absolute; left:7px; top:278px; width:226px; font-size:9px; color:var(--text-disabled);">SIGNATURES — tap ▶ to overlay in analyzer</div>
+                <div id="vib-siglist" style="position:absolute; left:7px; top:290px; width:226px; height:28px;
                      overflow-y:auto; font-size:11px; color:var(--text-muted);"></div>
             </div>
 
@@ -1136,8 +1138,11 @@
       </div>
       <div id="vibp-body">
         <div class="vibp-pane">
-          <div class="vibp-cap">SPECTRUM &nbsp; <b style="color:#36d6ff">&#9646; vertical</b>
-            &nbsp; <b style="color:#ff5bd0">&#9646; horizontal</b> &nbsp; &mdash; hover to read a bin</div>
+          <div class="vibp-cap">SPECTRUM &nbsp; <b style="color:#36d6ff">&#9646; V</b>
+            &nbsp; <b style="color:#ff5bd0">&#9646; H</b>
+            &nbsp; <b style="color:#00c8b4">&#9135;&#9135; V+H 5 s avg</b>
+            &nbsp; <b id="vibp-sig-cap" style="color:#ffd700;display:none;cursor:pointer;" onclick="vibClearSigOverlay()" title="Click to clear overlay"></b>
+            &nbsp; &mdash; hover to read a bin</div>
           <canvas id="vibp-spec"></canvas>
         </div>
         <div class="vibp-pane">
@@ -1156,8 +1161,9 @@
           <canvas id="vibp-wf"></canvas>
         </div>
         <div class="vibp-pane">
-          <div class="vibp-cap">RMS TREND &nbsp; <b style="color:#36d6ff">vertical</b>
-            &nbsp; <b style="color:#ff5bd0">horizontal</b> &nbsp; &mdash; last 90 s</div>
+          <div class="vibp-cap">RMS TREND &nbsp; <b style="color:#36d6ff">vertical</b> <span id="vibp-trend-v-avg" style="color:#36d6ff; font-size:9px;"></span>
+            &nbsp; <b style="color:#ff5bd0">horizontal</b> <span id="vibp-trend-h-avg" style="color:#ff5bd0; font-size:9px;"></span>
+            &nbsp; &mdash; last 90 s</div>
           <canvas id="vibp-trend"></canvas>
         </div>
       </div>
@@ -1435,6 +1441,31 @@
         return avg;
     }
 
+    // ── Combined 5-second rolling max(V,H) spectrum ───────────────────────
+    //   Replaces the four-line V primary / V live / H primary / H live
+    //   approach with a single trace: per-bin max(V,H) fed into a 5 s EMA.
+    //   A transient on either axis lifts the bin and stays visible for ~5 s
+    //   before decaying, which is clearer than simultaneous overlapping lines.
+    const VIB_COMB_TAU_MS = 5000;
+    let vibCombRoll = null, vibCombT = 0;
+    function vibCombUpdate(vs, hs, now) {
+        const n = (vs && vs.length) ? vs.length : (hs && hs.length) ? hs.length : 0;
+        if (!n) return vibCombRoll;
+        if (!vibCombRoll || vibCombRoll.length !== n) {
+            vibCombRoll = new Float32Array(n);
+            for (let i = 0; i < n; i++)
+                vibCombRoll[i] = Math.max(vs ? vs[i] : 0, hs ? hs[i] : 0);
+            vibCombT = now;
+            return vibCombRoll;
+        }
+        const dt = vibCombT ? (now - vibCombT) : 0;
+        const a = dt > 0 ? (1 - Math.exp(-dt / VIB_COMB_TAU_MS)) : 0;
+        for (let i = 0; i < n; i++)
+            vibCombRoll[i] += (Math.max(vs ? vs[i] : 0, hs ? hs[i] : 0) - vibCombRoll[i]) * a;
+        vibCombT = now;
+        return vibCombRoll;
+    }
+
     // ── Per-bin noise-floor EMA (acceleration domain, deci-mg) ─────────────
     //   The µm spectrum applies K/f² to every bin — that rolls high-freq noise
     //   down hard, but persistent broadband acceleration (motor hum, stack
@@ -1641,21 +1672,20 @@
         // spikes.  The running-avg is far more stable for sustained displacement.
         const vPrimSrc = vibUnitsUm ? (vibAvgV  || vibHoldV || vibSpec)  : (vibHoldV || vibSpec);
         const hPrimSrc = vibUnitsUm ? (vibAvgH  || vibHoldH || vibSpecH) : (vibHoldH || vibSpecH);
-        const vSecSrc  = vibUnitsUm ? (vibHoldV || vibSpec)               : vibAvgV;
-        const hSecSrc  = vibUnitsUm ? (vibHoldH || vibSpecH)              : vibAvgH;
         const v     = toDisp(vPrimSrc, vibBaseV);
         const h     = toDisp(hPrimSrc, vibBaseH);
         // Live overlay uses the 2-frame EMA so the thin trace doesn't strobe.
         const vLive = toDisp(vibLiveV || vibSpec,  vibBaseV);
         const hLive = toDisp(vibLiveH || vibSpecH, vibBaseH);
-        const vAvg  = vSecSrc ? toDisp(vSecSrc, vibBaseV)  : null;
-        const hAvg  = hSecSrc ? toDisp(hSecSrc, vibBaseH) : null;
+        // Combined V+H 5 s rolling average — single dashed trace replacing
+        // the separate V-avg (amber) and H-avg (pink) dashed lines.
+        const combBase = vibUnitsUm ? (vibBaseV || null) : null;
+        const combAvg  = toDisp(vibCombRoll, combBase);
         const units = vibUnitsUm ? 'µm' : 'mg';
         let peak = vibUnitsUm ? 2 : 1;
-        if (v)    for (let k = cutoff; k < n; k++) if (v[k]    > peak) peak = v[k];
-        if (h)    for (let k = cutoff; k < n; k++) if (h[k]    > peak) peak = h[k];
-        if (vAvg) for (let k = cutoff; k < n; k++) if (vAvg[k] > peak) peak = vAvg[k];
-        if (hAvg) for (let k = cutoff; k < n; k++) if (hAvg[k] > peak) peak = hAvg[k];
+        if (v)       for (let k = cutoff; k < n; k++) if (v[k]       > peak) peak = v[k];
+        if (h)       for (let k = cutoff; k < n; k++) if (h[k]       > peak) peak = h[k];
+        if (combAvg) for (let k = cutoff; k < n; k++) if (combAvg[k] > peak) peak = combAvg[k];
         if (updateScale) {
             if (peak > vibSpecYMax) vibSpecYMax = peak;
             else vibSpecYMax += (peak - vibSpecYMax) * 0.08;
@@ -1696,17 +1726,6 @@
             for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(vLive[b]));
             g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 0.8; g.stroke();
         }
-        // Slow-average traces (τ = 2.5 s) — dashed so they don't fight the
-        // bold peak-hold envelope visually. Amber for V, light-pink for H.
-        // Sustained narrowband sources (dryer at 26 Hz, fan) accumulate here
-        // even when bin jitter prevents the peak-hold line from latching.
-        if (vAvg) {
-            g.save(); g.setLineDash([4, 3]);
-            g.beginPath(); g.moveTo(binX(cutoff), valY(vAvg[cutoff]));
-            for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(vAvg[b]));
-            g.strokeStyle = '#ffcc44'; g.lineWidth = 1.1; g.stroke();
-            g.restore();
-        }
         // horizontal trace — peak-hold line + thin live overlay
         if (h) {
             g.beginPath(); g.moveTo(binX(cutoff), valY(h[cutoff]));
@@ -1718,13 +1737,29 @@
             for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(hLive[b]));
             g.strokeStyle = 'rgba(255,200,235,0.30)'; g.lineWidth = 0.8; g.stroke();
         }
-        // Slow-average horizontal trace, dashed.
-        if (hAvg) {
+        // Combined V+H 5 s rolling average — single dashed line replacing the
+        // two separate V-avg (amber) and H-avg (pink) dashed lines.
+        if (combAvg) {
             g.save(); g.setLineDash([4, 3]);
-            g.beginPath(); g.moveTo(binX(cutoff), valY(hAvg[cutoff]));
-            for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(hAvg[b]));
-            g.strokeStyle = '#c478b4'; g.lineWidth = 1.1; g.stroke();
+            g.beginPath(); g.moveTo(binX(cutoff), valY(combAvg[cutoff]));
+            for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(combAvg[b]));
+            g.strokeStyle = '#00c8b4'; g.lineWidth = 1.2; g.stroke();
             g.restore();
+        }
+        // Saved-signature overlay — gold dashed line, loaded via vibLoadSig().
+        if (vibSigOverlay && vibSigOverlay.length >= n) {
+            const ov = toDisp(vibSigOverlay, null);
+            if (ov) {
+                g.save(); g.setLineDash([6, 2]);
+                g.beginPath(); g.moveTo(binX(cutoff), valY(ov[cutoff]));
+                for (let b = cutoff + 1; b < n; b++) g.lineTo(binX(b), valY(ov[b]));
+                g.strokeStyle = '#ffd700'; g.lineWidth = 1.5; g.stroke();
+                g.restore();
+                // Label at top-left corner
+                g.font = '10px monospace'; g.fillStyle = '#ffd700';
+                g.textAlign = 'left'; g.textBaseline = 'top';
+                g.fillText('sig: ' + vibSigOverlayName, x0 + 2, mT + 1);
+            }
         }
         // dominant-frequency marker
         const dom = state.vibDom || 0;
@@ -1970,13 +2005,14 @@
         const vy = m => mT + ph - Math.min(1, m / mx) * ph;
         const line = key => {
             g.beginPath();
-            let started = false;
+            let started = false, ema = 0;
             for (const s of vibTrend) {
                 const x = tx(s.t);
                 if (x < mL - 2) continue;
                 const val = s[key] || 0;
-                if (!started) { g.moveTo(x, vy(val)); started = true; }
-                else g.lineTo(x, vy(val));
+                ema = started ? ema * 0.75 + val * 0.25 : val;
+                if (!started) { g.moveTo(x, vy(ema)); started = true; }
+                else g.lineTo(x, vy(ema));
             }
             if (started) g.stroke();
         };
@@ -1984,14 +2020,15 @@
         g.strokeStyle = '#36d6ff'; line(vKey);
         g.strokeStyle = '#ff5bd0'; line(hKey);
 
-        // 10-second moving average — dot + dash pinned to the y-axis
-        const mavMs = 10000;
+        // 5-second moving average — dot + dash pinned to the y-axis
+        const mavMs = 5000;
         let vSum = 0, hSum = 0, mavN = 0;
         for (const s of vibTrend) {
             if (now - s.t > mavMs) continue;
             vSum += s[vKey] || 0; hSum += s[hKey] || 0; mavN++;
         }
         if (mavN > 0) {
+            const vMav = vSum / mavN, hMav = hSum / mavN;
             const drawMavMark = (val, color) => {
                 const y = vy(Math.min(val, mx));
                 g.strokeStyle = color; g.lineWidth = 2;
@@ -1999,8 +2036,19 @@
                 g.fillStyle = color;
                 g.beginPath(); g.arc(mL, y, 3.5, 0, 2 * Math.PI); g.fill();
             };
-            drawMavMark(vSum / mavN, '#36d6ff');
-            drawMavMark(hSum / mavN, '#ff5bd0');
+            drawMavMark(vMav, '#36d6ff');
+            drawMavMark(hMav, '#ff5bd0');
+            const dec = vibUnitsUm ? 1 : 2;
+            const u = units;
+            const ev = document.getElementById('vibp-trend-v-avg');
+            const eh = document.getElementById('vibp-trend-h-avg');
+            if (ev) ev.textContent = vMav.toFixed(dec) + ' ' + u;
+            if (eh) eh.textContent = hMav.toFixed(dec) + ' ' + u;
+        } else {
+            const ev = document.getElementById('vibp-trend-v-avg');
+            const eh = document.getElementById('vibp-trend-h-avg');
+            if (ev) ev.textContent = '';
+            if (eh) eh.textContent = '';
         }
     }
 
@@ -2211,10 +2259,11 @@
         // Canvas buffer is 2× the CSS size to match the bezel's scale(2.0).
         // Scale the context so all drawing coordinates stay in the 226×92 space.
         g.save(); g.scale(2, 2);
+        const lW = W / 2, lH = H / 2;   // logical dimensions after scale
 
         // Margins for axis labels
         const mL = 24, mB = 14, mT = 2, mR = 2;
-        const pw = W - mL - mR, ph = H - mT - mB;
+        const pw = lW - mL - mR, ph = lH - mT - mB;
 
         // Y-axis label
         g.font = '8px monospace'; g.fillStyle = '#4a7a6a';
@@ -2244,7 +2293,8 @@
             g.font = 'bold 9px monospace'; g.fillStyle = 'rgba(0,200,180,0.45)';
             g.textAlign = 'right'; g.textBaseline = 'top';
             g.fillText('▶ ANALYZE', mL + pw - 2, mT + 2);
-            return;
+            g.restore();   // pair the save()+scale(2,2) above — otherwise the
+            return;        // 2× scale leaks into the next call and compounds.
         }
 
         // Primary trace = peak-hold envelope
@@ -2298,14 +2348,15 @@
         const pV = vibScalarHold.v, pH = vibScalarHold.h;
         const pDom = vibScalarHold.dom || state.vibDom || 0;
         const showPeak = (pV > vMg + 0.05) || (pH > hMg + 0.05);
-        const peakStr = showPeak
-            ? ` <span style="color:#7ab4a2;font-size:10px;">(10s ${pDom.toFixed(1)}Hz V ${pV.toFixed(1)} H ${pH.toFixed(1)})</span>`
-            : '';
         if (r1) r1.innerHTML =
             `dominant <span style="display:inline-block;min-width:5ch;text-align:right">${(state.vibDom||0).toFixed(1)}</span> Hz` +
             ` &nbsp; V ${vMg.toFixed(1)} ` +
-            `<span style="color:${hCol}">H ${hMg.toFixed(1)}</span> mg` +
-            peakStr;
+            `<span style="color:${hCol}">H ${hMg.toFixed(1)}</span> mg`;
+        const rp = document.getElementById('vib-readout-peak');
+        if (rp) {
+            rp.style.display = showPeak ? '' : 'none';
+            if (showPeak) rp.textContent = `(10s ${pDom.toFixed(1)} Hz  V ${pV.toFixed(1)}  H ${pH.toFixed(1)})`;
+        }
         const rec = state.vibWait || 0;            // recommended WAIT, ms
         const recEl = document.getElementById('vib-rec');
         if (recEl) recEl.innerText = rec > 0 ? rec + ' ms' : '--';
@@ -2333,6 +2384,32 @@
         state.vibCur = v;                          // immediate delta update
         sendCommand('vibSetWait', v);
     }
+    // ── Signature overlay — load a .bin file, parse the 256-bin spectrum,
+    //    show it as a gold dashed line in the panel spectrum.
+    let vibSigOverlay = null, vibSigOverlayName = '';
+    function vibLoadSig(fn) {
+        fetch('/vibsig/' + fn)
+            .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+            .then(buf => {
+                if (buf.byteLength < 16 + 512) return;
+                // VibSignature layout: char name[16], uint16_t mag[256], ...
+                const mag = new Uint16Array(buf, 16, 256);
+                vibSigOverlay = mag;
+                vibSigOverlayName = fn.replace(/\.bin$/, '');
+                if (!vibPanelOpen) vibOpenPanel();
+                else vibDrawSpectrum();
+                // update caption overlay label
+                const cap = document.getElementById('vibp-sig-cap');
+                if (cap) { cap.textContent = '▶ ' + vibSigOverlayName; cap.style.display = ''; }
+            })
+            .catch(e => alert('Could not load signature: ' + e.message));
+    }
+    function vibClearSigOverlay() {
+        vibSigOverlay = null; vibSigOverlayName = '';
+        const cap = document.getElementById('vibp-sig-cap');
+        if (cap) cap.style.display = 'none';
+        if (vibPanelOpen) vibDrawSpectrum();
+    }
     function vibRenderSigList() {
         const d = document.getElementById('vib-siglist');
         if (!d) return;
@@ -2341,7 +2418,9 @@
             const nm = fn.replace(/\.bin$/, '');
             return `<div style="display:flex;justify-content:space-between;padding:2px 1px;border-bottom:1px solid #1a2e29;">
                     <span style="color:#e3f7c9;">${nm}</span>
-                    <span><a href="#" onclick="vibRename('${fn}');return false;" style="color:#5bf;text-decoration:none;">rename</a>
+                    <span>
+                    <a href="#" onclick="vibLoadSig('${fn}');return false;" style="color:#ffd700;text-decoration:none;" title="Overlay in analyzer">&#9654;</a>
+                    &nbsp; <a href="#" onclick="vibRename('${fn}');return false;" style="color:#5bf;text-decoration:none;">rename</a>
                     &nbsp; <a href="#" onclick="vibDelete('${fn}');return false;" style="color:#f66;text-decoration:none;">del</a></span></div>`;
         }).join('');
     }
@@ -3533,6 +3612,7 @@
             // share a time base.
             if (data.vs !== undefined) vibAvgV = vibAvgUpdate(data.vs, vibAvgV, now);
             if (data.hs !== undefined) vibAvgH = vibAvgUpdate(data.hs, vibAvgH, now);
+            vibCombRoll = vibCombUpdate(data.vs || vibSpec, data.hs || vibSpecH, now);
             vibBaseT = now;
             vibAvgT  = now;
         }

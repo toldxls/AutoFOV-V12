@@ -2282,7 +2282,9 @@ void refreshVibSpectrumValues(bool force) {
     } else {
       for (int b = 0; b < VIB_FFT_BINS; b++) {
         smoothV[b] = (uint16_t)(((uint32_t)smoothV[b] + spec[b]  + 1) >> 1);
-        smoothH[b] = (uint16_t)(((uint32_t)smoothH[b] + specH[b] + 1) >> 1);
+        // α = 0.25 (4-frame effective) for H — reduces the dense multi-peak
+        // pattern that appears at moderate/strong vibration levels.
+        smoothH[b] = (uint16_t)((3u*(uint32_t)smoothH[b] + specH[b] + 2u) >> 2);
       }
     }
   }
@@ -2307,7 +2309,7 @@ void refreshVibSpectrumValues(bool force) {
   distSprite.setTextColor(stCol);
   int16_t stx1, sty1; uint16_t stw, sth;
   distSprite.getTextBounds(stTxt, 0, 0, &stx1, &sty1, &stw, &sth);
-  distSprite.setCursor(234 - (int)stw - stx1, 18); distSprite.print(stTxt);
+  distSprite.setCursor(185 - (int)stw - stx1, 18); distSprite.print(stTxt);
 
   // Line 2 — vertical vs horizontal RMS. Horizontal turns orange when it
   // exceeds vertical: that is the "horizontal mess" the old magnitude DSP hid.
