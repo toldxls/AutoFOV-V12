@@ -1600,7 +1600,7 @@
         if (!c || !vibPanelOpen) return;
         const g = c.getContext('2d'), W = c.width, H = c.height;
         g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
-        const mL = 46, mR = 12, mT = 10, mB = 26;
+        const mL = 46, mR = 12, mT = 10, mB = 32;
         const pw = W - mL - mR, ph = H - mT - mB;
         if (pw < 10 || ph < 10) return;
         const n = (vibSpec && vibSpec.length) ? vibSpec.length : 256;
@@ -1669,7 +1669,7 @@
             valY = m => y0 - Math.min(1, m / yMax) * ph;
         }
         // grid + axes
-        g.font = '10px monospace'; g.lineWidth = 1;
+        g.font = '13px monospace'; g.lineWidth = 1;
         g.strokeStyle = '#15302a'; g.fillStyle = '#5e8c7e';
         g.textAlign = 'center'; g.textBaseline = 'top';
         for (let hz = 0; hz <= 208; hz += 25) {
@@ -1677,7 +1677,7 @@
             g.beginPath(); g.moveTo(x, mT); g.lineTo(x, y0); g.stroke();
             g.fillText(hz, x, y0 + 4);
         }
-        g.fillText('Hz', x0 + pw / 2, y0 + 14);
+        g.fillText('Hz', x0 + pw / 2, y0 + 18);
         g.textAlign = 'right'; g.textBaseline = 'middle';
         if (vibUnitsUm) {
             for (const v of [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]) {
@@ -1696,7 +1696,7 @@
             }
         }
         g.textAlign = 'left'; g.fillText(units, 4, mT);
-        if (vibUnitsUm) { g.font = '9px monospace'; g.fillText('log', 4, mT + 11); g.font = '10px monospace'; }
+        if (vibUnitsUm) { g.font = '11px monospace'; g.fillText('log', 4, mT + 15); g.font = '13px monospace'; }
         // vertical trace — filled area (peak-hold envelope) + thin live overlay
         if (v) {
             g.beginPath(); g.moveTo(binX(cutoff), y0);
@@ -1870,7 +1870,7 @@
         g.imageSmoothingEnabled = false;
         g.drawImage(vibWfBack, mL, 0, pw, H);
         g.imageSmoothingEnabled = true;
-        g.font = '10px monospace'; g.lineWidth = 1;
+        g.font = '13px monospace'; g.lineWidth = 1;
         g.fillStyle = '#5e8c7e'; g.textAlign = 'right'; g.textBaseline = 'middle';
         const now = performance.now();
         if (vibWfRows.length > 1) {
@@ -1899,7 +1899,7 @@
         // For each frequency column, averages every visible waterfall row's bin value
         // and maps to the same green heat palette — bright green = sustained energy,
         // dark = occasional, black = silent.
-        const filmH = 7;
+        const filmH = 7;  // hoisted so the hover block below can reference it
         if (vibWfRows.length > 0 && pw > 0) {
             const n = (vibSpec && vibSpec.length) ? vibSpec.length : 256;
             const rowCnt = Math.min(vibWfRows.length, H - filmH);
@@ -1920,7 +1920,7 @@
                 g.fillRect(mL + x, filmY, 1, filmH);
             }
         }
-        // Hover crosshair + readout
+        // Hover crosshair + readout pinned to bottom of heatmap above filmstrip
         if (vibWfCursorX >= mL && vibWfCursorY >= 0 && vibWfCursorY < H) {
             g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1;
             g.beginPath();
@@ -1953,14 +1953,14 @@
             } else valStr = '— ';
             const ago = r ? ((now - r.t) / 1000) : 0;
             const txt = `${hz.toFixed(1)} Hz   ${valStr}   ${ago.toFixed(1)}s ago`;
-            g.font = '11px monospace'; g.textBaseline = 'top';
-            const tw = g.measureText(txt).width + 12;
-            let bx = vibWfCursorX + 8; if (bx + tw > W) bx = vibWfCursorX - 8 - tw;
-            let by = vibWfCursorY + 6; if (by + 18 > H) by = vibWfCursorY - 6 - 18;
-            g.fillStyle = 'rgba(12,43,46,0.93)'; g.fillRect(bx, by, tw, 18);
-            g.strokeStyle = '#1f3a33'; g.strokeRect(bx, by, tw, 18);
+            // Fixed readout bar just above the filmstrip separator
+            const boxH = 20, boxY = H - filmH - boxH - 2;
+            g.font = '12px monospace'; g.textBaseline = 'middle';
+            const tw = g.measureText(txt).width + 14;
+            g.fillStyle = 'rgba(12,43,46,0.93)'; g.fillRect(mL, boxY, tw, boxH);
+            g.strokeStyle = '#2a5e58'; g.lineWidth = 1; g.strokeRect(mL, boxY, tw, boxH);
             g.fillStyle = '#cfe7df'; g.textAlign = 'left';
-            g.fillText(txt, bx + 6, by + 3);
+            g.fillText(txt, mL + 7, boxY + boxH / 2);
         }
     }
 
@@ -2006,7 +2006,7 @@
             ? rawMx
             : vibTrendDispMax + (rawMx - vibTrendDispMax) * 0.03;
         const mx = Math.max(rawMx, vibTrendDispMax);
-        g.font = '10px monospace'; g.lineWidth = 1;
+        g.font = '13px monospace'; g.lineWidth = 1;
         g.strokeStyle = '#15302a'; g.fillStyle = '#5e8c7e';
         g.textAlign = 'right'; g.textBaseline = 'middle';
         for (let i = 0; i <= 3; i++) {
@@ -2054,10 +2054,10 @@
             const vMav = vSum / mavN, hMav = hSum / mavN;
             const drawMavMark = (val, color) => {
                 const y = vy(Math.min(val, mx));
-                g.strokeStyle = color; g.lineWidth = 2;
-                g.beginPath(); g.moveTo(mL - 8, y); g.lineTo(mL + 5, y); g.stroke();
+                g.strokeStyle = color; g.lineWidth = 3;
+                g.beginPath(); g.moveTo(mL - 18, y); g.lineTo(mL + 10, y); g.stroke();
                 g.fillStyle = color;
-                g.beginPath(); g.arc(mL, y, 3.5, 0, 2 * Math.PI); g.fill();
+                g.beginPath(); g.arc(mL, y, 5.5, 0, 2 * Math.PI); g.fill();
             };
             drawMavMark(vMav, '#36d6ff');
             drawMavMark(hMav, '#ff5bd0');
