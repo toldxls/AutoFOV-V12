@@ -45,6 +45,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include <HTTPClient.h>
 #include "web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
