@@ -1009,8 +1009,69 @@
 
                 <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
                 <div class="gfx-btn"
-                     style="left:55px; top:268px; width:130px; height:38px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:11px;"
+                     style="left:10px; top:268px; width:96px; height:32px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:10px;"
                      onclick="sendCommand('testAlert','1')">TEST ALERT</div>
+                <div class="gfx-btn"
+                     style="left:116px; top:268px; width:114px; height:32px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:10px;"
+                     onclick="switchScreen('screen-ota')">FIRMWARE UPDATE</div>
+            </div>
+
+            <!-- ===================== OTA FIRMWARE UPDATE ===================== -->
+            <div id="screen-ota" class="screen">
+                <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#1a4a6a;">FIRMWARE</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
+
+                <div style="position:absolute; left:10px; top:46px; right:10px;
+                     color:#ff9900; font-size:10px; line-height:1.55;">
+                    &#9888; Device will reboot after flashing.<br>
+                    Do not cut power during the update.
+                </div>
+
+                <div style="position:absolute; left:10px; top:88px; width:220px; height:1px; background:#303030;"></div>
+
+                <!-- Hidden native file input; styled button triggers it -->
+                <input type="file" id="ota-file-input" accept=".bin"
+                       style="display:none;" onchange="otaFileSelected(this)">
+                <div class="gfx-btn"
+                     style="left:10px; top:100px; width:220px; height:34px;
+                            background:#0d2535; border:1px solid #2a5a7a; font-size:11px;"
+                     onclick="document.getElementById('ota-file-input').click()">
+                    CHOOSE .bin FILE
+                </div>
+                <div id="ota-filename"
+                     style="position:absolute; left:10px; top:140px; right:10px;
+                            font-size:10px; color:var(--text-disabled); text-align:center;
+                            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    No file selected
+                </div>
+
+                <div style="position:absolute; left:10px; top:160px; width:220px; height:1px; background:#303030;"></div>
+
+                <div id="ota-flash-btn" class="gfx-btn"
+                     style="left:10px; top:170px; width:220px; height:38px;
+                            background:#003a5a; border:1px solid #005a8a; font-size:12px;
+                            opacity:0.35; pointer-events:none;"
+                     onclick="otaFlash()">
+                    FLASH FIRMWARE
+                </div>
+
+                <!-- Progress bar -->
+                <div style="position:absolute; left:10px; top:220px; width:220px; height:14px;
+                     background:#111; border:1px solid #2a3a3a; border-radius:2px; overflow:hidden;">
+                    <div id="ota-progress-fill"
+                         style="height:100%; width:0%; background:#2a7abf;
+                                transition:width 0.2s; border-radius:2px;"></div>
+                </div>
+                <div id="ota-progress-pct"
+                     style="position:absolute; left:0; top:220px; width:240px;
+                            text-align:center; font-size:10px; color:#5e8c7e; line-height:14px;">
+                </div>
+
+                <div id="ota-status"
+                     style="position:absolute; left:10px; top:244px; right:10px;
+                            font-size:11px; color:var(--text-disabled); text-align:center;">
+                    Ready
+                </div>
             </div>
 
             <!-- ===================== CONFIRM MODAL ===================== -->
@@ -1239,6 +1300,7 @@
         if (id === 'screen-settings')    updateSettingsUI();
         if (id === 'screen-timeout')     updateTimeoutUI();
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
+        if (id === 'screen-ota')         otaReset();
         if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { updateFovInfoUI(); drawCalGraph(); }
@@ -3476,6 +3538,79 @@
         } else {
             if (kbsEl) kbsEl.style.display = 'none';
         }
+    }
+
+    // ── OTA firmware update ───────────────────────────────────────────────────
+    function otaReset() {
+        document.getElementById('ota-filename').textContent = 'No file selected';
+        document.getElementById('ota-progress-fill').style.width = '0%';
+        document.getElementById('ota-progress-pct').textContent = '';
+        const st = document.getElementById('ota-status');
+        st.textContent = 'Ready'; st.style.color = 'var(--text-disabled)';
+        const btn = document.getElementById('ota-flash-btn');
+        btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
+        document.getElementById('ota-file-input').value = '';
+    }
+    function otaFileSelected(input) {
+        const f = input.files[0];
+        if (!f) return;
+        document.getElementById('ota-filename').textContent =
+            f.name + '  (' + (f.size / 1048576).toFixed(2) + ' MB)';
+        document.getElementById('ota-filename').style.color = 'var(--accent-green)';
+        const btn = document.getElementById('ota-flash-btn');
+        btn.style.opacity = ''; btn.style.pointerEvents = '';
+    }
+    function otaFlash() {
+        const input = document.getElementById('ota-file-input');
+        if (!input.files.length) return;
+        const file = input.files[0];
+        const st   = document.getElementById('ota-status');
+        const fill = document.getElementById('ota-progress-fill');
+        const pct  = document.getElementById('ota-progress-pct');
+        const btn  = document.getElementById('ota-flash-btn');
+
+        // Disable button and reset bar for the upload run
+        btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
+        fill.style.width = '0%'; pct.textContent = '';
+        st.style.color = 'var(--text-disabled)'; st.textContent = 'Uploading…';
+
+        const fd = new FormData();
+        fd.append('firmware', file, file.name);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', (wifiBase || '') + '/ota');
+
+        xhr.upload.onprogress = e => {
+            if (!e.lengthComputable) return;
+            const p = Math.round(e.loaded / e.total * 100);
+            fill.style.background = '#2a7abf';
+            fill.style.width = p + '%';
+            pct.textContent = p + '%';
+            st.textContent = p < 100 ? 'Uploading… ' + p + '%' : 'Flashing…';
+        };
+        xhr.onload = () => {
+            if (xhr.status === 200) {
+                fill.style.width = '100%'; fill.style.background = '#2abf6a';
+                pct.textContent = '100%';
+                st.textContent = 'Done! Device is rebooting…';
+                st.style.color = '#3ddb7a';
+                // Reconnect after the device has had time to reboot (~5 s)
+                setTimeout(() => connectWifi(), 6000);
+            } else {
+                st.textContent = 'Error: ' + (xhr.responseText || xhr.status);
+                st.style.color = '#ff4444';
+                fill.style.background = '#7a1a1a';
+                btn.style.opacity = ''; btn.style.pointerEvents = '';
+            }
+        };
+        xhr.onerror = () => {
+            // Connection drop mid-upload can be the device rebooting mid-transfer
+            // (shouldn't happen) or a real network error.
+            st.textContent = 'Connection lost — check device and retry';
+            st.style.color = '#ff9900';
+            btn.style.opacity = ''; btn.style.pointerEvents = '';
+        };
+        xhr.send(fd);
     }
 
     function disconnectWifi() {

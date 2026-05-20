@@ -44,6 +44,7 @@
 #include <AsyncTCP.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <Update.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG
@@ -71,6 +72,7 @@ static uint32_t        lastFastTelemMs     = 0;
 static uint32_t        lastSlowTelemMs     = 0;
 static uint32_t        lastVibPushMs       = 0;       // V12: vibration spectrum stream timer
 static bool            vibWebPanelOpen     = false;   // V12: spectrum stream gated on this
+static volatile bool   otaInProgress       = false;   // suppresses telemetry during OTA flash
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVER OBJECTS
@@ -422,6 +424,7 @@ void wifiLoop() {
     }
 
     // ── Telemetry push ───────────────────────────────────────────────────────
+    if (otaInProgress) return;           // OTA flash in progress — don't clog the WS queue
     if (wsServer.count() == 0) return;   // no connected clients — skip serialisation
 
     // Drop the frame entirely when any client's TX queue is full. Pushing into
@@ -825,6 +828,46 @@ static void startFullServer() {
         if (!LittleFS.exists(path)) { req->send(404, "text/plain", "Not found"); return; }
         req->send(LittleFS, path, "application/octet-stream");
     });
+
+    // ── OTA firmware update ──────────────────────────────────────────────────
+    // Accepts a multipart/form-data POST with the compiled .bin as the "firmware"
+    // field.  Runs entirely on the AsyncTCP task (Core 0); Update.h is safe from
+    // any core.  Telemetry is suppressed via otaInProgress so the WS queue stays
+    // clear during the ~3 s flash window.  Device reboots automatically on success.
+    httpServer.on("/ota", HTTP_POST,
+        // Completion handler — called after the last upload chunk.
+        [](AsyncWebServerRequest* req) {
+            bool ok = !Update.hasError();
+            String msg = ok ? "OK" : String(Update.errorString());
+            AsyncWebServerResponse* resp =
+                req->beginResponse(ok ? 200 : 500, "text/plain", msg);
+            resp->addHeader("Connection", "close");
+            req->send(resp);
+            if (ok) { delay(500); ESP.restart(); }
+            else    { otaInProgress = false; }
+        },
+        // Upload chunk handler — streams the binary into the OTA partition.
+        [](AsyncWebServerRequest* req, const String& filename,
+           size_t index, uint8_t* data, size_t len, bool final) {
+            if (!index) {
+                otaInProgress = true;
+                Serial.printf("[OTA] start: %s\n", filename.c_str());
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
+                }
+            }
+            if (Update.write(data, len) != len) {
+                Serial.printf("[OTA] write error: %s\n", Update.errorString());
+            }
+            if (final) {
+                if (Update.end(true)) {
+                    Serial.printf("[OTA] success: %u bytes\n", index + len);
+                } else {
+                    Serial.printf("[OTA] end error: %s\n", Update.errorString());
+                }
+            }
+        }
+    );
 
     // CORS preflight — browsers send OPTIONS before any cross-origin POST with
     // a JSON body.  Catch every unknown route and reply 204 with the headers
