@@ -1572,6 +1572,8 @@ static void ntfyTask(void* param) {
     HTTPClient http;
     http.begin(client, "http://ntfy.sh/" + *topic);
     http.setTimeout(4000);
+    http.addHeader("X-Priority", "high");
+    http.addHeader("X-Title", "AutoFOV");
     int code = http.POST("Focus stack complete");
     Serial.printf("[NTFY] -> %d\n", code);
     http.end();
