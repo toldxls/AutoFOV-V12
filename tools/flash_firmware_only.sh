@@ -1,22 +1,28 @@
 #!/bin/bash
-# Flash only the firmware binary at 0x10000 — does NOT touch the partition
-# table at 0x8000. Use this instead of Arduino IDE Upload to preserve the
-# dual-OTA partition layout.
+# Full USB recovery flash — partition table + otadata reset + firmware.
+# Use this instead of Arduino IDE Upload, or to recover from a bootloop.
+# Hold BOOT, press RESET, release BOOT to enter bootloader mode first.
 #
 # Usage: bash tools/flash_firmware_only.sh [port]
-# Default port: /dev/cu.usbmodem2101
+# Default port: /dev/cu.usbmodem101
 
 ESPTOOL="/Users/travis/Library/Arduino15/packages/esp32/tools/esptool_py/5.2.0/esptool"
-PORT="${1:-/dev/cu.usbmodem2101}"
-BIN="build/esp32.esp32.adafruit_feather_esp32s3/AutoFOV_V12.ino.bin"
+BOOT_APP0="/Users/travis/Library/Arduino15/packages/esp32/hardware/esp32/3.3.8/tools/partitions/boot_app0.bin"
+PORT="${1:-/dev/cu.usbmodem101}"
+BUILD="build/esp32.esp32.adafruit_feather_esp32s3"
 
-if [ ! -f "$BIN" ]; then
-    echo "ERROR: $BIN not found — compile in Arduino IDE first."
+cd "$(dirname "$0")/.."
+
+if [ ! -f "$BUILD/AutoFOV_V12.ino.bin" ]; then
+    echo "ERROR: firmware binary not found — run bash tools/build.sh first."
     exit 1
 fi
 
 set -e
-echo "Flashing $BIN -> $PORT (0x10000 only, partition table preserved)"
+echo "Flashing partition table + otadata + firmware -> $PORT"
 "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
-    --before default-reset --after hard-reset \
-    write-flash 0x10000 "$BIN"
+    --before no-reset --after hard-reset \
+    write-flash \
+    0xe000  "$BOOT_APP0" \
+    0x8000  "$BUILD/AutoFOV_V12.ino.partitions.bin" \
+    0x10000 "$BUILD/AutoFOV_V12.ino.bin"
