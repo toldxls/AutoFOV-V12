@@ -45,6 +45,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include <HTTPClient.h>
 #include "web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +87,10 @@ static DNSServer       dnsServer;
 // Separate Preferences object for WiFi credentials — namespace "wifi".
 // This is distinct from the main sketch's "calib" and "display" namespaces.
 static Preferences     wifiPrefs;
+
+// AutoRemote / stack-done HTTP notify URL (empty = disabled).
+// Stored in NVS "wifi" namespace, key "arUrl".
+static String stackNotifyUrl = "";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMAND QUEUE
@@ -321,12 +326,13 @@ void wifiSetup() {
     delay(50);
     bool forcePortal = (digitalRead(0) == LOW);
 
-    // Load saved credentials
+    // Load saved credentials and notify URL
     wifiPrefs.begin("wifi", true);   // read-only
-    String ssid     = wifiPrefs.getString("ssid", "");
-    String pass     = wifiPrefs.getString("pass", "");
-    String staticIP = wifiPrefs.getString("ip",   "");
-    String gateway  = wifiPrefs.getString("gw",   "");
+    String ssid     = wifiPrefs.getString("ssid",  "");
+    String pass     = wifiPrefs.getString("pass",  "");
+    String staticIP = wifiPrefs.getString("ip",    "");
+    String gateway  = wifiPrefs.getString("gw",    "");
+    stackNotifyUrl  = wifiPrefs.getString("arUrl", "");
     wifiPrefs.end();
 
     if (forcePortal || ssid.isEmpty()) {
@@ -1237,6 +1243,14 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    responsiveness, not just raw network RTT.
     } else if (strcmp(key, "ping") == 0) {
         wsServer.textAll("{\"pong\":1}");
+
+    // ── AutoRemote notify URL ─────────────────────────────────────────────────
+    } else if (strcmp(key, "arUrl") == 0) {
+        stackNotifyUrl = String(val);
+        wifiPrefs.begin("wifi", false);
+        wifiPrefs.putString("arUrl", stackNotifyUrl);
+        wifiPrefs.end();
+        Serial.printf("[AR] notify URL set: %s\n", stackNotifyUrl.c_str());
     }
 }
 
@@ -1333,6 +1347,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // ── WiFi ─────────────────────────────────────────────────────────────────
     doc["wifiSSID"]   = WiFi.SSID();
     doc["wifiRSSI"]   = (int)WiFi.RSSI();
+    doc["arUrl"]      = stackNotifyUrl;
 
     // ── Vibration signatures ─────────────────────────────────────────────────
     // Include the saved signature filename list so the web client shows them
@@ -1541,9 +1556,24 @@ String wifiGetSSID()     { if (wifiServerMode == WMODE_PORTAL) return String(AP_
 // BLE HID key would have fired).  Pushes a one-shot WS event so the web UI
 // can fire a browser Notification — BLE-free fallback for the stacker prompt.
 // The JS side plays 3 scheduled AudioContext beeps from this single message.
+static void arNotifyTask(void* param) {
+    String* url = static_cast<String*>(param);
+    HTTPClient http;
+    http.begin(*url);
+    http.setTimeout(4000);
+    int code = http.GET();
+    Serial.printf("[AR] notify %s -> %d\n", url->c_str(), code);
+    http.end();
+    delete url;
+    vTaskDelete(nullptr);
+}
+
 void wifiNotifyStackComplete() {
-    if (wsServer.count() == 0) return;
-    wsServer.textAll("{\"stackDone\":1}");
+    if (wsServer.count() > 0) wsServer.textAll("{\"stackDone\":1}");
+    if (stackNotifyUrl.length() > 0) {
+        String* url = new String(stackNotifyUrl);
+        xTaskCreate(arNotifyTask, "arNotify", 4096, url, 1, nullptr);
+    }
 }
 
 // Pings connected dashboards to play the alert beep.

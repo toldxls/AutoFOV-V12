@@ -1009,11 +1009,63 @@
 
                 <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
                 <div class="gfx-btn"
-                     style="left:10px; top:268px; width:96px; height:32px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:10px;"
+                     style="left:10px; top:266px; width:70px; height:30px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:9px;"
                      onclick="sendCommand('testAlert','1')">TEST ALERT</div>
                 <div class="gfx-btn"
-                     style="left:116px; top:268px; width:114px; height:32px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:10px;"
-                     onclick="switchScreen('screen-ota')">FIRMWARE UPDATE</div>
+                     style="left:88px; top:266px; width:80px; height:30px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:9px;"
+                     onclick="switchScreen('screen-ota')">FIRMWARE</div>
+                <div class="gfx-btn"
+                     style="left:176px; top:266px; width:54px; height:30px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:9px;"
+                     onclick="switchScreen('screen-autoremote')">NOTIFY</div>
+            </div>
+
+            <!-- ===================== AUTOREMOTE NOTIFY ====================== -->
+            <div id="screen-autoremote" class="screen">
+                <div class="title-stripe" style="left:5px; top:5px; width:60px; background:#4a2a6a;">NOTIFY</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
+
+                <div style="position:absolute; left:10px; top:40px; right:10px;
+                     color:var(--text-disabled); font-size:10px; line-height:1.6;">
+                    Paste your AutoRemote local WiFi URL.<br>
+                    Found in AutoRemote app &#8594; &#9776; &#8594; Local WiFi.
+                </div>
+
+                <div style="position:absolute; left:10px; top:88px; right:10px;
+                     color:var(--text-disabled); font-size:9px;">URL</div>
+                <input id="ar-url-input" type="url" spellcheck="false"
+                       placeholder="http://192.168.1.x:1817/sendmessage?message=stackdone"
+                       style="position:absolute; left:10px; top:102px; width:220px;
+                              box-sizing:border-box; padding:6px 8px;
+                              background:#0d1f0d; border:1px solid #3a6a3a; border-radius:3px;
+                              color:var(--text-primary); font-size:9px; font-family:monospace;">
+
+                <div style="position:absolute; left:10px; top:138px; right:10px;
+                     color:var(--text-disabled); font-size:9px; line-height:1.5;">
+                    The device will HTTP GET this URL when a focus stack completes.<br>
+                    Leave blank to disable.
+                </div>
+
+                <div style="position:absolute; left:10px; top:186px; width:220px; height:1px; background:#303030;"></div>
+
+                <div class="gfx-btn"
+                     style="left:10px; top:196px; width:105px; height:34px;
+                            background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
+                     onclick="arSave()">SAVE</div>
+                <div class="gfx-btn"
+                     style="left:125px; top:196px; width:105px; height:34px;
+                            background:#1a0d0d; border:1px solid #5a2a2a; font-size:11px;"
+                     onclick="arClear()">CLEAR</div>
+
+                <div id="ar-status"
+                     style="position:absolute; left:10px; top:240px; right:10px;
+                            font-size:10px; color:var(--text-disabled); text-align:center;">
+                </div>
+
+                <div style="position:absolute; left:10px; top:268px; right:10px;
+                     color:#888; font-size:9px; line-height:1.5;">
+                    Tasker profile: AutoRemote &#8594; Message Received<br>
+                    Filter: <span style="color:var(--accent-green); font-family:monospace;">stackdone</span>
+                </div>
             </div>
 
             <!-- ===================== OTA FIRMWARE UPDATE ===================== -->
@@ -1235,7 +1287,7 @@
         buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
-        wifiSSID: null, wifiRSSI: null, latency: null,
+        wifiSSID: null, wifiRSSI: null, latency: null, arUrl: '',
         // isCustomCalib flag (false = factory defaults shown)
         isCustomCalib: false,
     };
@@ -1305,6 +1357,7 @@
         if (id === 'screen-timeout')     updateTimeoutUI();
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
         if (id === 'screen-ota')         otaReset();
+        if (id === 'screen-autoremote')  arScreenInit();
         if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { updateFovInfoUI(); drawCalGraph(); }
@@ -3545,6 +3598,27 @@
         }
     }
 
+    // ── AutoRemote notify config ──────────────────────────────────────────────
+    function arScreenInit() {
+        const inp = document.getElementById('ar-url-input');
+        if (inp) inp.value = state.arUrl || '';
+        const st = document.getElementById('ar-status');
+        if (st) st.textContent = '';
+    }
+    function arSave() {
+        const inp = document.getElementById('ar-url-input');
+        const url = inp ? inp.value.trim() : '';
+        sendCommand('arUrl', url);
+        const st = document.getElementById('ar-status');
+        if (st) { st.textContent = url ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
+        state.arUrl = url;
+    }
+    function arClear() {
+        const inp = document.getElementById('ar-url-input');
+        if (inp) inp.value = '';
+        arSave();
+    }
+
     // ── OTA firmware update ───────────────────────────────────────────────────
     function otaReset() {
         const rb = document.getElementById('ota-running-build');
@@ -4011,6 +4085,10 @@
         if (data.wifiSSID !== undefined) {
             state.wifiSSID = data.wifiSSID;
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
+        }
+        if (data.arUrl !== undefined) {
+            state.arUrl = data.arUrl;
+            if (state.screen === 'screen-autoremote') arScreenInit();
         }
         if (data.wifiRSSI !== undefined) {
             state.wifiRSSI = data.wifiRSSI;
