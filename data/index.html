@@ -1026,49 +1026,44 @@
 
                 <div style="position:absolute; left:10px; top:40px; right:10px;
                      color:var(--text-disabled); font-size:10px; line-height:1.6;">
-                    Paste your AutoRemote local WiFi URL.<br>
-                    Found in AutoRemote app &#8594; &#9776; &#8594; Local WiFi.
+                    Push notification via <span style="color:var(--accent-green);">ntfy.sh</span> (free, no account needed).<br>
+                    Install the ntfy app, subscribe to your topic.
                 </div>
 
-                <div style="position:absolute; left:10px; top:88px; right:10px;
-                     color:var(--text-disabled); font-size:9px;">URL</div>
-                <input id="ar-url-input" type="url" spellcheck="false"
-                       placeholder="http://192.168.1.x:1817/sendmessage?message=stackdone"
-                       style="position:absolute; left:10px; top:102px; width:220px;
+                <div style="position:absolute; left:10px; top:94px; right:10px;
+                     color:var(--text-disabled); font-size:9px;">TOPIC NAME</div>
+                <input id="ntfy-topic-input" type="text" spellcheck="false"
+                       placeholder="e.g.  autofov-travis"
+                       style="position:absolute; left:10px; top:108px; width:220px;
                               box-sizing:border-box; padding:6px 8px;
                               background:#0d1f0d; border:1px solid #3a6a3a; border-radius:3px;
-                              color:var(--text-primary); font-size:9px; font-family:monospace;">
+                              color:var(--text-primary); font-size:12px; font-family:monospace;">
 
-                <div style="position:absolute; left:10px; top:138px; right:10px;
-                     color:var(--text-disabled); font-size:9px; line-height:1.5;">
-                    The device will HTTP GET this URL when a focus stack completes.<br>
-                    Leave blank to disable.
+                <div style="position:absolute; left:10px; top:144px; right:10px;
+                     color:var(--text-disabled); font-size:9px; line-height:1.6;">
+                    Pick any unique name. Device POSTs to<br>
+                    <span style="color:#6abf6a; font-family:monospace;">http://ntfy.sh/YOUR-TOPIC</span><br>
+                    when a stack completes. Leave blank to disable.
                 </div>
 
-                <div style="position:absolute; left:10px; top:186px; width:220px; height:1px; background:#303030;"></div>
+                <div style="position:absolute; left:10px; top:200px; width:220px; height:1px; background:#303030;"></div>
 
                 <div class="gfx-btn"
-                     style="left:10px; top:196px; width:68px; height:34px;
+                     style="left:10px; top:210px; width:68px; height:34px;
                             background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
-                     onclick="arSave()">SAVE</div>
+                     onclick="ntfySave()">SAVE</div>
                 <div class="gfx-btn"
-                     style="left:86px; top:196px; width:68px; height:34px;
+                     style="left:86px; top:210px; width:68px; height:34px;
                             background:#1a0d0d; border:1px solid #5a2a2a; font-size:11px;"
-                     onclick="arClear()">CLEAR</div>
+                     onclick="ntfyClear()">CLEAR</div>
                 <div class="gfx-btn"
-                     style="left:162px; top:196px; width:68px; height:34px;
+                     style="left:162px; top:210px; width:68px; height:34px;
                             background:#1a2a1a; border:1px solid #2a6a2a; font-size:11px;"
-                     onclick="arTest()">TEST</div>
+                     onclick="ntfyTest()">TEST</div>
 
-                <div id="ar-status"
-                     style="position:absolute; left:10px; top:240px; right:10px;
+                <div id="ntfy-status"
+                     style="position:absolute; left:10px; top:254px; right:10px;
                             font-size:10px; color:var(--text-disabled); text-align:center;">
-                </div>
-
-                <div style="position:absolute; left:10px; top:268px; right:10px;
-                     color:#888; font-size:9px; line-height:1.5;">
-                    Tasker profile: AutoRemote &#8594; Message Received<br>
-                    Filter: <span style="color:var(--accent-green); font-family:monospace;">stackdone</span>
                 </div>
             </div>
 
@@ -1291,7 +1286,7 @@
         buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
-        wifiSSID: null, wifiRSSI: null, latency: null, arUrl: '',
+        wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
         // isCustomCalib flag (false = factory defaults shown)
         isCustomCalib: false,
     };
@@ -1361,7 +1356,7 @@
         if (id === 'screen-timeout')     updateTimeoutUI();
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
         if (id === 'screen-ota')         otaReset();
-        if (id === 'screen-autoremote')  arScreenInit();
+        if (id === 'screen-autoremote')  ntfyScreenInit();
         if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { updateFovInfoUI(); drawCalGraph(); }
@@ -3603,39 +3598,32 @@
     }
 
     // ── AutoRemote notify config ──────────────────────────────────────────────
-    function arScreenInit() {
-        const inp = document.getElementById('ar-url-input');
-        if (inp) inp.value = state.arUrl || '';
-        const st = document.getElementById('ar-status');
+    function ntfyScreenInit() {
+        const inp = document.getElementById('ntfy-topic-input');
+        if (inp) inp.value = state.ntfyTopic || '';
+        const st = document.getElementById('ntfy-status');
         if (st) st.textContent = '';
     }
-    function arSave() {
-        const inp = document.getElementById('ar-url-input');
-        const url = inp ? inp.value.trim() : '';
-        const st = document.getElementById('ar-status');
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', (wifiBase || '') + '/ar-url');
-        xhr.onload = () => {
-            if (st) { st.textContent = url ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
-        };
-        xhr.onerror = () => {
-            if (st) { st.textContent = 'Save failed.'; st.style.color = '#bf4a4a'; }
-        };
-        xhr.send(url);
-        state.arUrl = url;
+    function ntfySave() {
+        const inp = document.getElementById('ntfy-topic-input');
+        const topic = inp ? inp.value.trim() : '';
+        sendCommand('ntfyTopic', topic);
+        const st = document.getElementById('ntfy-status');
+        if (st) { st.textContent = topic ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
+        state.ntfyTopic = topic;
     }
-    function arClear() {
-        const inp = document.getElementById('ar-url-input');
+    function ntfyClear() {
+        const inp = document.getElementById('ntfy-topic-input');
         if (inp) inp.value = '';
-        arSave();
+        ntfySave();
     }
-    function arTest() {
-        const st = document.getElementById('ar-status');
-        if (!state.arUrl) {
-            if (st) { st.textContent = 'No URL saved — save first.'; st.style.color = '#bf4a4a'; }
+    function ntfyTest() {
+        const st = document.getElementById('ntfy-status');
+        if (!state.ntfyTopic) {
+            if (st) { st.textContent = 'No topic saved — save first.'; st.style.color = '#bf4a4a'; }
             return;
         }
-        sendCommand('arTest', '1');
+        sendCommand('ntfyTest', '1');
         if (st) { st.textContent = 'Sent — check your phone.'; st.style.color = '#6abf6a'; }
     }
 
@@ -4106,9 +4094,9 @@
             state.wifiSSID = data.wifiSSID;
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
         }
-        if (data.arUrl !== undefined) {
-            state.arUrl = data.arUrl;
-            if (state.screen === 'screen-autoremote') arScreenInit();
+        if (data.ntfyTopic !== undefined) {
+            state.ntfyTopic = data.ntfyTopic;
+            if (state.screen === 'screen-autoremote') ntfyScreenInit();
         }
         if (data.wifiRSSI !== undefined) {
             state.wifiRSSI = data.wifiRSSI;

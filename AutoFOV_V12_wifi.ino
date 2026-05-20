@@ -45,7 +45,6 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
-#include <HTTPClient.h>
 #include "web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,8 +88,9 @@ static DNSServer       dnsServer;
 static Preferences     wifiPrefs;
 
 // AutoRemote / stack-done HTTP notify URL (empty = disabled).
-// Stored in NVS "wifi" namespace, key "arUrl".
-static String stackNotifyUrl = "";
+// ntfy.sh topic for stack-complete push notification (plain HTTP, no TLS).
+// Stored in NVS "wifi" namespace, key "ntfy".
+static String ntfyTopic = "";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMAND QUEUE
@@ -332,7 +332,7 @@ void wifiSetup() {
     String pass     = wifiPrefs.getString("pass",  "");
     String staticIP = wifiPrefs.getString("ip",    "");
     String gateway  = wifiPrefs.getString("gw",    "");
-    stackNotifyUrl  = wifiPrefs.getString("arUrl", "");
+    ntfyTopic       = wifiPrefs.getString("ntfy",  "");
     wifiPrefs.end();
 
     if (forcePortal || ssid.isEmpty()) {
@@ -806,24 +806,6 @@ static void startFullServer() {
         ESP.restart();
     });
 
-    // POST /ar-url — save AutoRemote notify URL (bypasses 64-byte WifiCmd queue limit)
-    httpServer.on("/ar-url", HTTP_POST,
-        [](AsyncWebServerRequest* req) {
-            req->send(200, "text/plain", "OK");
-        },
-        nullptr,
-        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
-            String url = "";
-            for (size_t i = 0; i < len; i++) url += (char)data[i];
-            url.trim();
-            stackNotifyUrl = url;
-            wifiPrefs.begin("wifi", false);
-            wifiPrefs.putString("arUrl", stackNotifyUrl);
-            wifiPrefs.end();
-            Serial.printf("[AR] notify URL saved (%u bytes)\n", url.length());
-        }
-    );
-
     // Serve individual signature .bin files — the web dashboard fetches these
     // to overlay a saved spectrum in the panel.  URL: /vibsig/<name>.bin
     // Regex routes require -DASYNCWEBSERVER_REGEX, which the Arduino IDE does
@@ -1263,20 +1245,20 @@ static void handleWifiCommand(const char* key, const char* val) {
         wsServer.textAll("{\"pong\":1}");
 
     // ── AutoRemote notify URL ─────────────────────────────────────────────────
-    } else if (strcmp(key, "arUrl") == 0) {
-        stackNotifyUrl = String(val);
+    } else if (strcmp(key, "ntfyTopic") == 0) {
+        ntfyTopic = String(val);
         wifiPrefs.begin("wifi", false);
-        wifiPrefs.putString("arUrl", stackNotifyUrl);
+        wifiPrefs.putString("ntfy", ntfyTopic);
         wifiPrefs.end();
-        Serial.printf("[AR] notify URL set: %s\n", stackNotifyUrl.c_str());
+        Serial.printf("[NTFY] topic set: %s\n", ntfyTopic.c_str());
 
-    } else if (strcmp(key, "arTest") == 0) {
-        if (stackNotifyUrl.length() > 0) {
-            String* url = new String(stackNotifyUrl);
-            xTaskCreate(arNotifyTask, "arNotify", 4096, url, 1, nullptr);
-            Serial.println("[AR] test notify fired");
+    } else if (strcmp(key, "ntfyTest") == 0) {
+        if (ntfyTopic.length() > 0) {
+            String* t = new String(ntfyTopic);
+            xTaskCreate(ntfyTask, "ntfy", 4096, t, 1, nullptr);
+            Serial.println("[NTFY] test fired");
         } else {
-            Serial.println("[AR] test notify skipped — no URL set");
+            Serial.println("[NTFY] test skipped — no topic set");
         }
     }
 }
@@ -1374,7 +1356,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // ── WiFi ─────────────────────────────────────────────────────────────────
     doc["wifiSSID"]   = WiFi.SSID();
     doc["wifiRSSI"]   = (int)WiFi.RSSI();
-    doc["arUrl"]      = stackNotifyUrl;
+    doc["ntfyTopic"]  = ntfyTopic;
 
     // ── Vibration signatures ─────────────────────────────────────────────────
     // Include the saved signature filename list so the web client shows them
@@ -1583,23 +1565,24 @@ String wifiGetSSID()     { if (wifiServerMode == WMODE_PORTAL) return String(AP_
 // BLE HID key would have fired).  Pushes a one-shot WS event so the web UI
 // can fire a browser Notification — BLE-free fallback for the stacker prompt.
 // The JS side plays 3 scheduled AudioContext beeps from this single message.
-static void arNotifyTask(void* param) {
-    String* url = static_cast<String*>(param);
+static void ntfyTask(void* param) {
+    String* topic = static_cast<String*>(param);
+    WiFiClient client;
     HTTPClient http;
-    http.begin(*url);
+    http.begin(client, "http://ntfy.sh/" + *topic);
     http.setTimeout(4000);
-    int code = http.GET();
-    Serial.printf("[AR] notify %s -> %d\n", url->c_str(), code);
+    int code = http.POST("Focus stack complete");
+    Serial.printf("[NTFY] -> %d\n", code);
     http.end();
-    delete url;
+    delete topic;
     vTaskDelete(nullptr);
 }
 
 void wifiNotifyStackComplete() {
     if (wsServer.count() > 0) wsServer.textAll("{\"stackDone\":1}");
-    if (stackNotifyUrl.length() > 0) {
-        String* url = new String(stackNotifyUrl);
-        xTaskCreate(arNotifyTask, "arNotify", 4096, url, 1, nullptr);
+    if (ntfyTopic.length() > 0) {
+        String* t = new String(ntfyTopic);
+        xTaskCreate(ntfyTask, "ntfy", 4096, t, 1, nullptr);
     }
 }
 
