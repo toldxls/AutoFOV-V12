@@ -1137,6 +1137,7 @@
             <span id="vibp-read1">waiting for data&hellip;</span>
             <span id="vibp-read2"></span>
             <span id="vibp-read3" style="color:#5e8c7e; font-size:10px;"></span>
+            <span id="vibp-read4" style="font-size:10px;"></span>
           </span>
         </span>
         <span id="vibp-state" style="color:#3ddb7a;">—</span>
@@ -2075,8 +2076,8 @@
         e1.innerHTML = `dominant <b style="color:#ffe000"><span style="display:inline-block;min-width:5ch;text-align:right">${(state.vibDom||0).toFixed(1)}</span> Hz</b>` +
             ` &nbsp; V <b>${v.toFixed(1)}</b>` +
             ` &nbsp; H <b style="color:${hc}">${h.toFixed(1)}</b> mg`;
+        const dV = vibDispStats(vibSpec, vibBaseV), dH = vibDispStats(vibSpecH, vibBaseH);
         if (e2) {
-            const dV = vibDispStats(vibSpec, vibBaseV), dH = vibDispStats(vibSpecH, vibBaseH);
             e2.innerHTML =
                 `peak V <b style="color:#36d6ff">${dV.peakUm.toFixed(1)} µm @ ${dV.peakHz.toFixed(1)} Hz</b>` +
                 ` &nbsp; H <b style="color:#ff5bd0">${dH.peakUm.toFixed(1)} µm @ ${dH.peakHz.toFixed(1)} Hz</b>` +
@@ -2098,6 +2099,20 @@
                 e3.innerHTML = `settle wait <b style="color:#ffcc44">${rec} ms</b>${curStr}`;
             } else {
                 e3.textContent = 'settle wait — trigger a shutter pulse for an estimate';
+            }
+        }
+        const e4 = document.getElementById('vibp-read4');
+        if (e4) {
+            const blurCol = um => um > 2 ? '#ff4444' : um > 0.5 ? '#ffcc00' : '#3ddb7a';
+            const blurUm = (peakUm, peakHz) =>
+                peakHz > 0 ? 2 * peakUm * Math.abs(Math.sin(Math.PI * peakHz / 60)) : 0;
+            const bV = blurUm(dV.peakUm, dV.peakHz), bH = blurUm(dH.peakUm, dH.peakHz);
+            if (bV > 0 || bH > 0) {
+                e4.innerHTML =
+                    `1/60&thinsp;s blur &nbsp; V <b style="color:${blurCol(bV)}">${bV.toFixed(1)}&thinsp;µm</b>` +
+                    ` &nbsp; H <b style="color:${blurCol(bH)}">${bH.toFixed(1)}&thinsp;µm</b>`;
+            } else {
+                e4.textContent = '';
             }
         }
     }
