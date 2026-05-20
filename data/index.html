@@ -505,7 +505,7 @@
                                   fill="none" stroke="#ADFF2F" stroke-width="1.9"
                                   stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
-                    <span>VIBRATION</span>
+                    <span>VIBRATION <span id="vib-tile-dot" style="font-size:9px; color:#3ddb7a;">●</span></span>
                 </div>
 
             </div>
@@ -2164,38 +2164,73 @@
         const c = document.getElementById('vib-canvas');
         if (!c) return;
         const g = c.getContext('2d');
-        g.fillStyle = '#06120f';
-        g.fillRect(0, 0, c.width, c.height);
-        if (!vibSpec || !vibSpec.length) return;
-        // Primary trace = peak-hold envelope (same VIB_HOLD_TAU_MS the panel
-        // uses, so transient lines stay visible ~10 s instead of flashing for
-        // a single 30 Hz frame); live frame overlaid thin so the immediate
-        // state is still readable.
+        const W = c.width, H = c.height;
+        g.fillStyle = '#06120f'; g.fillRect(0, 0, W, H);
+
+        // Margins for axis labels
+        const mL = 24, mB = 14, mT = 2, mR = 2;
+        const pw = W - mL - mR, ph = H - mT - mB;
+
+        // Y-axis label
+        g.font = '8px monospace'; g.fillStyle = '#4a7a6a';
+        g.textAlign = 'left'; g.textBaseline = 'top';
+        g.fillText('mg', 1, mT + 1);
+
+        // X-axis baseline + Hz tick labels
+        g.strokeStyle = '#1f3a33'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(mL, mT + ph); g.lineTo(mL + pw, mT + ph); g.stroke();
+        g.textAlign = 'center'; g.textBaseline = 'top';
+        for (let hz = 0; hz <= 200; hz += 50) {
+            const x = mL + hz / 208 * pw;
+            g.strokeStyle = '#1a2e28';
+            g.beginPath(); g.moveTo(x, mT); g.lineTo(x, mT + ph); g.stroke();
+            g.fillStyle = '#4a7a6a';
+            g.fillText(hz === 0 ? '0' : hz, x, mT + ph + 2);
+        }
+        g.textAlign = 'right'; g.fillStyle = '#3a5e52';
+        g.fillText('Hz', mL + pw, mT + ph + 2);
+
+        // Y-axis left border
+        g.strokeStyle = '#1f3a33'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(mL, mT); g.lineTo(mL, mT + ph); g.stroke();
+
+        if (!vibSpec || !vibSpec.length) {
+            // "▶ ANALYZE" hint even when idle
+            g.font = 'bold 9px monospace'; g.fillStyle = 'rgba(0,200,180,0.45)';
+            g.textAlign = 'right'; g.textBaseline = 'top';
+            g.fillText('▶ ANALYZE', mL + pw - 2, mT + 2);
+            return;
+        }
+
+        // Primary trace = peak-hold envelope
         const hold = vibHoldV || vibSpec;
         const n    = vibSpec.length;
         let mx = 30;
         for (let b = 2; b < hold.length; b++) if (hold[b] > mx) mx = hold[b];
-        const H = c.height, W = c.width;
-        for (let x = 0; x < W; x++) {
-            const b = Math.floor(x * n / W);
-            let h = Math.round(hold[b] / mx * (H - 2));
-            if (h < 0) h = 0;
-            if (h > 0) { g.fillStyle = vibHeat(h / H); g.fillRect(x, H - h, 1, h); }
+
+        for (let x = 0; x < pw; x++) {
+            const b = Math.floor(x * n / pw);
+            const h = Math.round(hold[b] / mx * ph);
+            if (h > 0) { g.fillStyle = vibHeat(h / ph); g.fillRect(mL + x, mT + ph - h, 1, h); }
         }
-        // Thin white live overlay — 2-frame EMA so the trace doesn't strobe
-        // single-bin spikes while the held envelope behind it is steady.
+
+        // Thin white live overlay (2-frame EMA)
         const live = vibLiveV || vibSpec;
-        g.strokeStyle = 'rgba(255,255,255,0.55)';
-        g.lineWidth = 1;
+        g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1;
         g.beginPath();
-        for (let x = 0; x < W; x++) {
-            const b = Math.floor(x * n / W);
-            const h = Math.round(live[b] / mx * (H - 2));
-            const y = H - Math.max(0, h);
-            if (x === 0) g.moveTo(x + 0.5, y + 0.5);
-            else         g.lineTo(x + 0.5, y + 0.5);
+        for (let x = 0; x < pw; x++) {
+            const b = Math.floor(x * n / pw);
+            const h = Math.round(live[b] / mx * ph);
+            const y = mT + ph - Math.max(0, h);
+            if (x === 0) g.moveTo(mL + x + 0.5, y + 0.5);
+            else         g.lineTo(mL + x + 0.5, y + 0.5);
         }
         g.stroke();
+
+        // "▶ ANALYZE" click hint — top-right corner of plot area
+        g.font = 'bold 9px monospace'; g.fillStyle = 'rgba(0,200,180,0.50)';
+        g.textAlign = 'right'; g.textBaseline = 'top';
+        g.fillText('▶ ANALYZE', mL + pw - 2, mT + 2);
     }
     function vibUpdateReadout() {
         const stIdx = state.vibState || 0;
@@ -2204,6 +2239,8 @@
         const r1 = document.getElementById('vib-readout');
         const rs = document.getElementById('vib-state');
         if (rs) { rs.textContent = st; rs.style.color = stColor; }
+        const rd = document.getElementById('vib-tile-dot');
+        if (rd) rd.style.color = stColor;
         const vMg = state.vibRms || 0, hMg = state.vibHoriz || 0;
         // Horizontal turns orange when it exceeds vertical — the "horizontal
         // mess" cue, mirroring the device VIB_SPECTRUM readout.
