@@ -1321,6 +1321,8 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["sdk"]        = ESP.getSdkVersion();
 
     // ── About / build ─────────────────────────────────────────────────────────
+    doc["buildVersion"] = BUILD_VERSION;
+    doc["buildCommit"]  = BUILD_COMMIT;
     doc["buildDate"]   = __DATE__;
     doc["buildTime"]   = __TIME__;
     doc["sketchKB"]    = ESP.getSketchSize()      / 1024;

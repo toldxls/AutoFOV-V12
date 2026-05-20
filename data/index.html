@@ -631,9 +631,10 @@
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 75px; font-size: 20px; color: var(--accent-green);">Auto FOV V12</div>
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 100px; font-size: 12px; color: var(--text-disabled);">Field-of-view calculator</div>
 
-                <div class="gfx-text" style="width:240px; text-align:center; top:128px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE BUILD</div>
-                <div id="about-built" class="gfx-text" style="width:240px; text-align:center; top:144px; font-size:14px; color:var(--accent-green);">—</div>
-                <div id="about-time" class="gfx-text" style="width:240px; text-align:center; top:162px; font-size:11px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="width:240px; text-align:center; top:122px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE</div>
+                <div id="about-version" class="gfx-text" style="width:240px; text-align:center; top:136px; font-size:18px; color:var(--accent-green); font-weight:bold;">—</div>
+                <div id="about-commit" class="gfx-text" style="width:240px; text-align:center; top:158px; font-size:10px; color:var(--text-disabled);">—</div>
+                <div id="about-built" class="gfx-text" style="width:240px; text-align:center; top:172px; font-size:10px; color:var(--text-disabled);">—</div>
                 <div class="gfx-text" style="left: 15px; top: 176px; color: var(--text-disabled);">Sketch size:</div>
                 <div id="about-sketch" class="gfx-text" style="right: 15px; top: 176px; color: var(--accent-green);">—</div>
                 <div class="gfx-text" style="left: 15px; top: 198px; color: var(--text-disabled);">Free flash:</div>
@@ -1231,7 +1232,7 @@
         freeHeap: null, totalHeap: null, lowestFree: null, spriteKB: null, cpu: 240,
         psramFree: null, psramTotal: null,
         // About / build info (fallbacks shown until device connects and overrides)
-        buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
+        buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null,
@@ -3339,8 +3340,9 @@
     // ─────────────────────────────────────────────────────────────────────────
     function updateAboutUI() {
         const g = (id) => document.getElementById(id);
-        if (g('about-built'))     g('about-built').innerText     = state.buildDate   || '—';
-        if (g('about-time'))      g('about-time').innerText      = state.buildTime   || '—';
+        if (g('about-version'))   g('about-version').innerText   = state.buildVersion ? 'v' + state.buildVersion : '—';
+        if (g('about-commit'))    g('about-commit').innerText    = state.buildCommit  ? state.buildCommit + '  ·  ' + (state.buildDate || '') : '—';
+        if (g('about-built'))     g('about-built').innerText     = state.buildTime    || '—';
         if (g('about-sketch'))    g('about-sketch').innerText    = state.sketchKB    !== null ? state.sketchKB    + ' KB' : '—';
         if (g('about-freeflash')) g('about-freeflash').innerText = state.freeFlashKB !== null ? state.freeFlashKB + ' KB' : '—';
         if (g('about-lines'))     g('about-lines').innerText     = state.sourceLines !== null ? '~' + state.sourceLines + ' lines' : '—';
@@ -3546,8 +3548,9 @@
     // ── OTA firmware update ───────────────────────────────────────────────────
     function otaReset() {
         const rb = document.getElementById('ota-running-build');
-        if (rb) rb.textContent = (state.buildDate && state.buildTime)
-            ? state.buildDate + '  ' + state.buildTime : '—';
+        if (rb) rb.textContent = state.buildVersion
+            ? 'v' + state.buildVersion + ' (' + state.buildCommit + ')  ' + (state.buildDate || '')
+            : '—';
         document.getElementById('ota-filename').textContent = 'No file selected';
         document.getElementById('ota-progress-fill').style.width = '0%';
         document.getElementById('ota-progress-pct').textContent = '';
@@ -3994,8 +3997,10 @@
 
         // ── About / build info ──
         let aboutDirty = false;
-        if (data.buildDate   !== undefined) { state.buildDate   = data.buildDate;   aboutDirty = true; }
-        if (data.buildTime   !== undefined) { state.buildTime   = data.buildTime;   aboutDirty = true; }
+        if (data.buildVersion !== undefined) { state.buildVersion = data.buildVersion; aboutDirty = true; }
+        if (data.buildCommit  !== undefined) { state.buildCommit  = data.buildCommit;  aboutDirty = true; }
+        if (data.buildDate    !== undefined) { state.buildDate    = data.buildDate;    aboutDirty = true; }
+        if (data.buildTime    !== undefined) { state.buildTime    = data.buildTime;    aboutDirty = true; }
         if (data.sketchKB    !== undefined) { state.sketchKB    = data.sketchKB;    aboutDirty = true; memDirty = true; }
         if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; aboutDirty = true; memDirty = true; }
         if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; }
