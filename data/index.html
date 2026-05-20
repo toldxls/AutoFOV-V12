@@ -1048,13 +1048,17 @@
                 <div style="position:absolute; left:10px; top:186px; width:220px; height:1px; background:#303030;"></div>
 
                 <div class="gfx-btn"
-                     style="left:10px; top:196px; width:105px; height:34px;
+                     style="left:10px; top:196px; width:68px; height:34px;
                             background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
                      onclick="arSave()">SAVE</div>
                 <div class="gfx-btn"
-                     style="left:125px; top:196px; width:105px; height:34px;
+                     style="left:86px; top:196px; width:68px; height:34px;
                             background:#1a0d0d; border:1px solid #5a2a2a; font-size:11px;"
                      onclick="arClear()">CLEAR</div>
+                <div class="gfx-btn"
+                     style="left:162px; top:196px; width:68px; height:34px;
+                            background:#1a2a1a; border:1px solid #2a6a2a; font-size:11px;"
+                     onclick="arTest()">TEST</div>
 
                 <div id="ar-status"
                      style="position:absolute; left:10px; top:240px; right:10px;
@@ -3617,6 +3621,15 @@
         const inp = document.getElementById('ar-url-input');
         if (inp) inp.value = '';
         arSave();
+    }
+    function arTest() {
+        const st = document.getElementById('ar-status');
+        if (!state.arUrl) {
+            if (st) { st.textContent = 'No URL saved — save first.'; st.style.color = '#bf4a4a'; }
+            return;
+        }
+        sendCommand('arTest', '1');
+        if (st) { st.textContent = 'Sent — check your phone.'; st.style.color = '#6abf6a'; }
     }
 
     // ── OTA firmware update ───────────────────────────────────────────────────

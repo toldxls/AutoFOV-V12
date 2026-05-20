@@ -1251,6 +1251,15 @@ static void handleWifiCommand(const char* key, const char* val) {
         wifiPrefs.putString("arUrl", stackNotifyUrl);
         wifiPrefs.end();
         Serial.printf("[AR] notify URL set: %s\n", stackNotifyUrl.c_str());
+
+    } else if (strcmp(key, "arTest") == 0) {
+        if (stackNotifyUrl.length() > 0) {
+            String* url = new String(stackNotifyUrl);
+            xTaskCreate(arNotifyTask, "arNotify", 4096, url, 1, nullptr);
+            Serial.println("[AR] test notify fired");
+        } else {
+            Serial.println("[AR] test notify skipped — no URL set");
+        }
     }
 }
 
