@@ -806,6 +806,24 @@ static void startFullServer() {
         ESP.restart();
     });
 
+    // POST /ar-url — save AutoRemote notify URL (bypasses 64-byte WifiCmd queue limit)
+    httpServer.on("/ar-url", HTTP_POST,
+        [](AsyncWebServerRequest* req) {
+            req->send(200, "text/plain", "OK");
+        },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            String url = "";
+            for (size_t i = 0; i < len; i++) url += (char)data[i];
+            url.trim();
+            stackNotifyUrl = url;
+            wifiPrefs.begin("wifi", false);
+            wifiPrefs.putString("arUrl", stackNotifyUrl);
+            wifiPrefs.end();
+            Serial.printf("[AR] notify URL saved (%u bytes)\n", url.length());
+        }
+    );
+
     // Serve individual signature .bin files — the web dashboard fetches these
     // to overlay a saved spectrum in the panel.  URL: /vibsig/<name>.bin
     // Regex routes require -DASYNCWEBSERVER_REGEX, which the Arduino IDE does

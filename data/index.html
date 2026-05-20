@@ -3612,9 +3612,16 @@
     function arSave() {
         const inp = document.getElementById('ar-url-input');
         const url = inp ? inp.value.trim() : '';
-        sendCommand('arUrl', url);
         const st = document.getElementById('ar-status');
-        if (st) { st.textContent = url ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', (wifiBase || '') + '/ar-url');
+        xhr.onload = () => {
+            if (st) { st.textContent = url ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
+        };
+        xhr.onerror = () => {
+            if (st) { st.textContent = 'Save failed.'; st.style.color = '#bf4a4a'; }
+        };
+        xhr.send(url);
         state.arUrl = url;
     }
     function arClear() {
