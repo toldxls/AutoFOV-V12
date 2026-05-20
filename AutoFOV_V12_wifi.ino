@@ -45,6 +45,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include "web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG
@@ -310,9 +311,9 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 void wifiSetup() {
     wifiCmdQueue = xQueueCreate(CMD_QUEUE_DEPTH, sizeof(WifiCmd));
 
-    // Mount LittleFS — HTML served from /index.html
+    // Mount LittleFS — used for vibration signatures (/vibsig/*.bin)
     if (!LittleFS.begin(true)) {
-        Serial.println("[WiFi] LittleFS mount failed — /index.html will not be served");
+        Serial.println("[WiFi] LittleFS mount failed — vibration signatures unavailable");
     }
 
     // GPIO0 (BOOT button) held LOW at power-on → force captive portal
@@ -727,14 +728,13 @@ static void startFullServer() {
     wsServer.onEvent(onWsEvent);
     httpServer.addHandler(&wsServer);
 
-    // Serve HTML from LittleFS /index.html
+    // Serve HTML from firmware PROGMEM (gzip — regenerate web_ui.h via tools/embed_html.py)
     httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        if (LittleFS.exists("/index.html")) {
-            req->send(LittleFS, "/index.html", "text/html");
-        } else {
-            req->send(200, "text/plain",
-                "No HTML found. Upload data/index.html via the LittleFS uploader.");
-        }
+        AsyncWebServerResponse* resp = req->beginResponse_P(
+            200, "text/html", WEB_UI_HTML_GZ, WEB_UI_HTML_GZ_LEN);
+        resp->addHeader("Content-Encoding", "gzip");
+        resp->addHeader("Cache-Control", "no-cache");
+        req->send(resp);
     });
 
     // GET /state — full JSON snapshot (used by HTML on initial WiFi connect)
