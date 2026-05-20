@@ -501,11 +501,11 @@
                 <div class="gfx-btn btn-menu" style="top: 262px; height: 34px; background-color: #00968C;"
                      onclick="switchScreen('screen-vibration')">
                     <svg style="position:absolute;left:9px;" width="26" height="22" viewBox="0 0 26 22">
-                        <polyline points="1,11 4,3 7,19 10,6 13,16 16,9 19,13 25,11"
-                                  fill="none" stroke="#ADFF2F" stroke-width="1.9"
+                        <polyline id="vib-tile-wave" points="1,11 4,3 7,19 10,6 13,16 16,9 19,13 25,11"
+                                  fill="none" stroke="#3ddb7a" stroke-width="1.9"
                                   stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
-                    <span>VIBRATION <span id="vib-tile-dot" style="font-size:9px; color:#3ddb7a;">●</span></span>
+                    <span>VIBRATION</span>
                 </div>
 
             </div>
@@ -838,9 +838,9 @@
                 <div class="gfx-text" id="vib-readout"  style="left: 12px; top: 40px; font-size: 12px; color: var(--accent-green);">dominant -- Hz</div>
                 <div class="gfx-text" id="vib-readout2" style="left: 12px; top: 60px; width: 222px; font-size: 10px; color: var(--text-muted);">rec WAIT <span id="vib-rec" style="color:var(--accent-green);">--</span> &middot; now <input id="vib-curwait" type="number" min="0" max="20000" step="50" style="width:46px;background:#0c2b2e;color:#e3f7c9;border:1px solid #1f3a33;font-size:10px;" onchange="vibSetWait()">ms &middot; <span id="vib-delta"></span></div>
 
-                <canvas id="vib-canvas" width="226" height="92" title="Tap to open the full analyzer"
+                <canvas id="vib-canvas" width="452" height="184" title="Tap to open the full analyzer"
                         onclick="vibOpenPanel()"
-                        style="position:absolute; left:7px; top:80px; background:#06120f; border:1px solid #1f3a33; cursor:pointer;"></canvas>
+                        style="position:absolute; left:7px; top:80px; width:226px; height:92px; background:#06120f; border:1px solid #1f3a33; cursor:pointer;"></canvas>
 
                 <div class="gfx-btn" style="left: 12px; top: 180px; width: 96px; height: 30px; background-color: #A800F8;"
                      onclick="sendCommand('vibReLock',1)">RE-LOCK</div>
@@ -852,8 +852,29 @@
                 <div class="gfx-btn" style="left: 138px; top: 218px; width: 90px; height: 30px; background-color: #006400;"
                      onclick="vibCapture()">CAPTURE</div>
 
-                <div id="vib-siglist" style="position:absolute; left:7px; top:256px; width:226px; height:58px;
+                <div class="gfx-btn" style="left: 7px; top: 252px; width: 226px; height: 22px; background-color: #1a3c3a; border:1px solid #2a5e58; font-size: 10px;"
+                     onclick="switchScreen('screen-vib-wait')">WAIT ANALYSIS &#9654;</div>
+
+                <div id="vib-siglist" style="position:absolute; left:7px; top:278px; width:226px; height:38px;
                      overflow-y:auto; font-size:11px; color:var(--text-muted);"></div>
+            </div>
+
+            <!-- ===================== WAIT ANALYSIS ===================== -->
+            <div id="screen-vib-wait" class="screen">
+                <div class="title-stripe" style="left: 5px; top: 5px; width: 130px; background-color: #1a3c3a;">WAIT ANALYSIS</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-vibration')">X</div>
+
+                <div class="gfx-text" id="vibw-rec"  style="left: 12px; top: 36px; font-size: 12px; color: #ffcc44;">rec wait — ms</div>
+                <div class="gfx-text" id="vibw-cur"  style="left: 12px; top: 54px; font-size: 11px; color: var(--text-muted);">configured — ms</div>
+                <div class="gfx-text" id="vibw-delta" style="right: 12px; top: 54px; font-size: 11px;"></div>
+
+                <canvas id="vib-waitscreen-canvas" width="456" height="440"
+                        style="position:absolute; left:6px; top:72px; width:228px; height:220px;
+                               background:#040d0b; border:1px solid #1f3a33;"></canvas>
+
+                <div class="gfx-text" style="left: 12px; top: 298px; font-size: 9px; color: var(--text-disabled);">
+                    wait recommended by settle analysis after each shutter pulse
+                </div>
             </div>
 
             <!-- ===================== SCREEN TIMEOUT + THEMES ===================== -->
@@ -1096,7 +1117,6 @@
       .vibp-pane:nth-child(1) { flex:5 1 0; }
       .vibp-pane:nth-child(2) { flex:3 1 0; }
       .vibp-pane:nth-child(3) { flex:3 1 0; }
-      .vibp-pane:nth-child(4) { flex:2 1 0; }
       .vibp-cap { font-size:10px; color:#6f9a8c; letter-spacing:0.5px; margin-bottom:2px; }
       .vibp-cap b { font-weight:normal; }
       .vibp-pane canvas { flex:1 1 auto; width:100%; min-height:0;
@@ -1139,11 +1159,6 @@
           <div class="vibp-cap">RMS TREND &nbsp; <b style="color:#36d6ff">vertical</b>
             &nbsp; <b style="color:#ff5bd0">horizontal</b> &nbsp; &mdash; last 90 s</div>
           <canvas id="vibp-trend"></canvas>
-        </div>
-        <div class="vibp-pane">
-          <div class="vibp-cap">WAIT ANALYSIS &nbsp; <b style="color:#ffcc44">recommended settle</b>
-            &nbsp; <b style="color:#9fe6cf">configured</b> &nbsp; &mdash; last 90 s</div>
-          <canvas id="vibp-wait"></canvas>
         </div>
       </div>
     </div>
@@ -1265,6 +1280,7 @@
         if (id === 'screen-about')       updateAboutUI();
         if (id === 'screen-vibration')   vibEnter();
         else if (prevScreen === 'screen-vibration') vibLeave();
+        if (id === 'screen-vib-wait')    vibWaitScreenEnter();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1569,7 +1585,7 @@
     function vibPanelResize() {
         if (!vibPanelOpen) return;
         const dpr = window.devicePixelRatio || 1;
-        ['vibp-spec', 'vibp-wf', 'vibp-trend', 'vibp-wait'].forEach(id => {
+        ['vibp-spec', 'vibp-wf', 'vibp-trend'].forEach(id => {
             const c = document.getElementById(id);
             if (!c) return;
             c.width  = Math.max(1, Math.round(c.clientWidth  * dpr));
@@ -2049,11 +2065,10 @@
         vibDrawTrend();
     }
 
-    // ── Wait analysis timeline ─────────────────────────────────────────────────
+    // ── Wait analysis screen ───────────────────────────────────────────────────
     let vibWaitHistory = [];   // [{t, rec, cur}] rolling 90 s
     let vibWaitLast = 0;
     function vibWaitSample() {
-        if (!vibPanelOpen) return;
         const now = Date.now();
         if (now - vibWaitLast < 500) return;   // 2 Hz
         vibWaitLast = now;
@@ -2063,36 +2078,63 @@
         vibWaitHistory.push({ t: now, rec, cur });
         const cut = now - 92000;
         while (vibWaitHistory.length && vibWaitHistory[0].t < cut) vibWaitHistory.shift();
-        vibDrawWait();
+        if (state.screen === 'screen-vib-wait') vibDrawWaitScreen();
     }
-    function vibDrawWait() {
-        const c = document.getElementById('vibp-wait');
-        if (!c || !vibPanelOpen) return;
-        const g = c.getContext('2d'), W = c.width, H = c.height;
-        g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
-        const mL = 46, mR = 12, mT = 8, mB = 18;
-        const pw = W - mL - mR, ph = H - mT - mB;
-        if (pw < 10 || ph < 10) return;
+    function vibWaitScreenEnter() {
+        vibUpdateWaitReadout();
+        vibDrawWaitScreen();
+    }
+    function vibUpdateWaitReadout() {
+        const rec = state.vibWait || 0;
+        const cur = state.vibCur !== undefined ? state.vibCur : null;
+        const er = document.getElementById('vibw-rec');
+        const ec = document.getElementById('vibw-cur');
+        const ed = document.getElementById('vibw-delta');
+        if (er) er.textContent = 'rec wait ' + (rec > 0 ? rec + ' ms' : '—');
+        if (ec) ec.textContent = cur !== null ? 'configured ' + cur + ' ms' : 'configured — ms';
+        if (ed && rec > 0 && cur !== null) {
+            const d = cur - rec;
+            if      (d >  150) { ed.textContent = 'cut ' + d + ' ms';    ed.style.color = '#3f3'; }
+            else if (d < -150) { ed.textContent = 'short ' + (-d) + ' ms'; ed.style.color = '#f55'; }
+            else               { ed.textContent = 'about right';          ed.style.color = '#3f3'; }
+        } else if (ed) { ed.textContent = ''; }
+    }
+    function vibDrawWaitScreen() {
+        const c = document.getElementById('vib-waitscreen-canvas');
+        if (!c) return;
+        const g = c.getContext('2d');
+        // Canvas is 2× CSS size to match the bezel scale(2.0)
+        g.fillStyle = '#040d0b'; g.fillRect(0, 0, c.width, c.height);
+        g.save(); g.scale(2, 2);
+        // Work in 228×220 logical coords
+        const lW = 228, lH = 220;
+        const mL = 40, mR = 8, mT = 8, mB = 16;
+        const pw = lW - mL - mR, ph = lH - mT - mB;
         const now = Date.now(), span = 90000;
         const rec = state.vibWait || 0;
         const cur = state.vibCur !== undefined ? state.vibCur : 0;
         let mx = Math.max(rec, cur, 500);
         for (const s of vibWaitHistory) { if (s.rec > mx) mx = s.rec; if (s.cur > mx) mx = s.cur; }
         mx = Math.ceil(mx / 100) * 100;
-        g.font = '10px monospace'; g.lineWidth = 1;
+        g.font = '9px monospace'; g.lineWidth = 1;
         g.strokeStyle = '#15302a'; g.fillStyle = '#5e8c7e';
         g.textAlign = 'right'; g.textBaseline = 'middle';
-        for (let i = 0; i <= 3; i++) {
-            const y = mT + ph * i / 3;
+        for (let i = 0; i <= 4; i++) {
+            const y = mT + ph * i / 4;
             g.beginPath(); g.moveTo(mL, y); g.lineTo(mL + pw, y); g.stroke();
-            g.fillText(((mx * (3 - i) / 3) | 0) + 'ms', mL - 5, y);
+            g.fillText(((mx * (4 - i) / 4) | 0) + 'ms', mL - 3, y);
         }
-        g.textAlign = 'left'; g.fillStyle = '#5e8c7e'; g.fillText('ms', 4, mT + 4);
         g.textAlign = 'center'; g.textBaseline = 'top';
         for (let s = 0; s <= 90; s += 30) {
             const x = mL + pw * (1 - s / 90);
-            g.fillText(s === 0 ? 'now' : '-' + s + 's', x, mT + ph + 4);
+            g.fillStyle = '#15302a'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(x, mT); g.lineTo(x, mT + ph); g.stroke();
+            g.fillStyle = '#5e8c7e';
+            g.fillText(s === 0 ? 'now' : '-' + s + 's', x, mT + ph + 3);
         }
+        // Y-axis border
+        g.strokeStyle = '#1f3a33';
+        g.beginPath(); g.moveTo(mL, mT); g.lineTo(mL, mT + ph); g.stroke();
         const tx = t => mL + pw * (1 - (now - t) / span);
         const wy = m => mT + ph - Math.min(1, m / mx) * ph;
         if (vibWaitHistory.length > 1) {
@@ -2108,22 +2150,22 @@
             drawLine('cur', '#9fe6cf');
             drawLine('rec', '#ffcc44');
         }
-        // Floating axis markers for current values
-        const drawMark = (val, color, label) => {
+        const drawMark = (val, color) => {
             if (!val) return;
             const y = wy(val);
             g.strokeStyle = color; g.lineWidth = 2;
             g.beginPath(); g.moveTo(mL - 8, y); g.lineTo(mL + 5, y); g.stroke();
             g.fillStyle = color;
-            g.beginPath(); g.arc(mL, y, 3.5, 0, 2 * Math.PI); g.fill();
+            g.beginPath(); g.arc(mL, y, 3, 0, 2 * Math.PI); g.fill();
         };
-        drawMark(rec, '#ffcc44', 'rec');
-        drawMark(cur, '#9fe6cf', 'cur');
+        drawMark(rec, '#ffcc44');
+        drawMark(cur, '#9fe6cf');
         if (!vibWaitHistory.length) {
-            g.fillStyle = '#3a5e52'; g.font = '11px monospace';
+            g.fillStyle = '#3a5e52'; g.font = '10px monospace';
             g.textAlign = 'center'; g.textBaseline = 'middle';
-            g.fillText('no settle data yet — trigger a shutter pulse', mL + pw / 2, mT + ph / 2);
+            g.fillText('trigger a shutter pulse for settle data', mL + pw / 2, mT + ph / 2);
         }
+        g.restore();
     }
 
     // Hover wiring — the spectrum + waterfall canvases exist in the static DOM at load.
@@ -2166,6 +2208,9 @@
         const g = c.getContext('2d');
         const W = c.width, H = c.height;
         g.fillStyle = '#06120f'; g.fillRect(0, 0, W, H);
+        // Canvas buffer is 2× the CSS size to match the bezel's scale(2.0).
+        // Scale the context so all drawing coordinates stay in the 226×92 space.
+        g.save(); g.scale(2, 2);
 
         // Margins for axis labels
         const mL = 24, mB = 14, mT = 2, mR = 2;
@@ -2231,6 +2276,7 @@
         g.font = 'bold 9px monospace'; g.fillStyle = 'rgba(0,200,180,0.50)';
         g.textAlign = 'right'; g.textBaseline = 'top';
         g.fillText('▶ ANALYZE', mL + pw - 2, mT + 2);
+        g.restore();
     }
     function vibUpdateReadout() {
         const stIdx = state.vibState || 0;
@@ -2239,8 +2285,8 @@
         const r1 = document.getElementById('vib-readout');
         const rs = document.getElementById('vib-state');
         if (rs) { rs.textContent = st; rs.style.color = stColor; }
-        const rd = document.getElementById('vib-tile-dot');
-        if (rd) rd.style.color = stColor;
+        const rw = document.getElementById('vib-tile-wave');
+        if (rw) rw.setAttribute('stroke', stColor);
         const vMg = state.vibRms || 0, hMg = state.vibHoriz || 0;
         // Horizontal turns orange when it exceeds vertical — the "horizontal
         // mess" cue, mirroring the device VIB_SPECTRUM readout.
@@ -3509,7 +3555,10 @@
                 data.vh !== undefined || data.vst !== undefined ||
                 data.vs !== undefined || data.hs !== undefined) vibPanelReadout();
             if (data.vr !== undefined || data.vh !== undefined) vibTrendSample();
-            if (data.vw !== undefined || data.vcw !== undefined) vibWaitSample();
+        }
+        if (data.vw !== undefined || data.vcw !== undefined) {
+            vibWaitSample();
+            if (state.screen === 'screen-vib-wait') vibUpdateWaitReadout();
         }
 
         // ── patched3: remote menu navigation (device → web) ──
