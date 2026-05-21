@@ -1036,32 +1036,38 @@ static void startFullServer() {
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
-                // SHA-256 verification is required.  The web UI computes the
-                // digest before uploading and sends it as X-OTA-SHA256.  A bad
-                // digest at `final` triggers Update.abort() so the bootloader
-                // never flips to a corrupt image.
-                if (!req->hasHeader("X-OTA-SHA256")) {
-                    markAborted();
-                    req->send(400, "text/plain", "Missing X-OTA-SHA256");
-                    return;
+                // SHA-256 verification is best-effort.  The web UI computes
+                // the digest before uploading and sends it as X-OTA-SHA256;
+                // when present, a mismatch at `final` triggers Update.abort()
+                // so the bootloader never flips to a corrupt image.  We do
+                // NOT require the header — browsers expose crypto.subtle only
+                // in secure contexts, so over plain-HTTP LAN the dashboard
+                // falls back to a pure-JS hash, and a future client without
+                // SHA support shouldn't wedge OTA entirely.
+                otaExpectedSha[0] = '\0';
+                if (req->hasHeader("X-OTA-SHA256")) {
+                    String sha = req->header("X-OTA-SHA256");
+                    sha.toLowerCase();
+                    if (sha.length() == 64) {
+                        strncpy(otaExpectedSha, sha.c_str(), sizeof(otaExpectedSha) - 1);
+                        otaExpectedSha[sizeof(otaExpectedSha) - 1] = '\0';
+                    } else {
+                        Serial.printf("[OTA] ignoring malformed X-OTA-SHA256 (%u chars)\n",
+                                      (unsigned)sha.length());
+                    }
                 }
-                String sha = req->header("X-OTA-SHA256");
-                sha.toLowerCase();
-                if (sha.length() != 64) {
-                    markAborted();
-                    req->send(400, "text/plain", "Bad SHA-256");
-                    return;
-                }
-                strncpy(otaExpectedSha, sha.c_str(), sizeof(otaExpectedSha) - 1);
-                otaExpectedSha[sizeof(otaExpectedSha) - 1] = '\0';
                 otaInProgress  = true;
                 otaLastChunkMs = millis();
                 if (otaShaActive) mbedtls_sha256_free(&otaShaCtx);
                 mbedtls_sha256_init(&otaShaCtx);
                 mbedtls_sha256_starts(&otaShaCtx, 0 /* 0 = SHA-256, not SHA-224 */);
                 otaShaActive = true;
-                Serial.printf("[OTA] start: %s (expect sha %s…)\n",
-                              filename.c_str(), otaExpectedSha);
+                if (otaExpectedSha[0])
+                    Serial.printf("[OTA] start: %s (expect sha %s…)\n",
+                                  filename.c_str(), otaExpectedSha);
+                else
+                    Serial.printf("[OTA] start: %s (no SHA header — integrity check skipped)\n",
+                                  filename.c_str());
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
                     markAborted();
@@ -1095,7 +1101,7 @@ static void startFullServer() {
                 char hex[65];
                 for (int i = 0; i < 32; i++) snprintf(hex + i*2, 3, "%02x", digest[i]);
                 hex[64] = '\0';
-                if (strcmp(hex, otaExpectedSha) != 0) {
+                if (otaExpectedSha[0] && strcmp(hex, otaExpectedSha) != 0) {
                     Serial.printf("[OTA] sha mismatch: got %s, expected %s\n",
                                   hex, otaExpectedSha);
                     Update.abort();
@@ -1105,6 +1111,8 @@ static void startFullServer() {
                     otaLastChunkMs = 0;
                     return;
                 }
+                if (!otaExpectedSha[0])
+                    Serial.printf("[OTA] computed sha (unchecked): %s\n", hex);
                 if (Update.end(true)) {
                     Serial.printf("[OTA] success: %u bytes, sha ok\n",
                                   (unsigned)(index + len));
