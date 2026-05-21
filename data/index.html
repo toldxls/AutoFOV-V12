@@ -988,20 +988,50 @@
                     </div>
                 </div>
 
+                <!-- PARTITION bar + legend — one OTA slot, showing current
+                     firmware footprint, last OTA size, and free headroom. -->
+                <div id="mem-part-section">
+                    <div style="position:absolute; left:17px; top:136px; font-size:9px; color:#666;">PARTITION</div>
+                    <div style="position:absolute; left:15px; top:149px; width:210px; height:14px;">
+                        <div style="position:absolute; inset:0; border-radius:3px; border:1px solid #444; overflow:hidden;">
+                            <div style="position:absolute; inset:0; background:#1a2a44;"></div>
+                            <div id="mem-part-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
+                            <!-- Last-OTA tick: marks where the most recent update sized to. -->
+                            <div id="mem-part-bar-last-tick" style="position:absolute; top:-3px; width:2px; height:20px; background:#FFD700; left:0%; display:none;"></div>
+                        </div>
+                    </div>
+                    <div style="position:absolute; left:15px; top:167px; width:210px; display:flex; justify-content:space-between; align-items:center; font-size:10px;">
+                        <span>
+                            <span style="display:inline-block; width:8px; height:8px; background:#4a90c4; vertical-align:middle; margin-right:3px;"></span>
+                            <span id="ml-pused" style="color:#4a90c4; vertical-align:middle;">—K</span>
+                            <span style="color:#555; font-size:9px; vertical-align:middle;"> sketch</span>
+                        </span>
+                        <span>
+                            <span style="display:inline-block; width:2px; height:10px; background:#FFD700; vertical-align:middle; margin-right:3px;"></span>
+                            <span id="ml-plast" style="color:#FFD700; vertical-align:middle;">—K</span>
+                            <span style="color:#555; font-size:9px; vertical-align:middle;"> last</span>
+                        </span>
+                        <span>
+                            <span style="display:inline-block; width:8px; height:8px; background:#1a2a44; vertical-align:middle; margin-right:3px;"></span>
+                            <span id="ml-pfree2" style="color:#7eb8e0; vertical-align:middle;">—K free</span>
+                        </span>
+                    </div>
+                </div>
+
                 <!-- Separator -->
-                <div id="mem-separator" style="position:absolute; left:10px; top:149px; width:220px; height:1px; background:#333;"></div>
+                <div id="mem-separator" style="position:absolute; left:10px; top:188px; width:220px; height:1px; background:#333;"></div>
 
                 <!-- System info rows -->
-                <div class="gfx-text" style="left:15px; top:163px; color:var(--text-disabled);">Firmware:</div>
-                <div class="gfx-text" style="right:15px; top:163px; color:var(--accent-green);">Auto FOV V12</div>
-                <div class="gfx-text" style="left:15px; top:189px; color:var(--text-disabled);">CPU:</div>
-                <div id="mem-cpu" class="gfx-text" style="right:15px; top:189px; color:var(--text-primary);">240 MHz</div>
-                <div class="gfx-text" style="left:15px; top:215px; color:var(--text-disabled);">SDK:</div>
-                <div id="mem-sdk" class="gfx-text" style="right:15px; top:215px; color:var(--text-disabled);">5.1.2</div>
-                <div class="gfx-text" style="left:15px; top:241px; color:var(--text-disabled);">Source:</div>
-                <div id="mem-source" class="gfx-text" style="right:15px; top:241px; color:var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left:15px; top:267px; color:var(--text-disabled);">Flash:</div>
-                <div id="mem-flash" class="gfx-text" style="right:15px; top:267px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:198px; color:var(--text-disabled);">Firmware:</div>
+                <div class="gfx-text" style="right:15px; top:198px; color:var(--accent-green);">Auto FOV V12</div>
+                <div class="gfx-text" style="left:15px; top:220px; color:var(--text-disabled);">CPU:</div>
+                <div id="mem-cpu" class="gfx-text" style="right:15px; top:220px; color:var(--text-primary);">240 MHz</div>
+                <div class="gfx-text" style="left:15px; top:242px; color:var(--text-disabled);">SDK:</div>
+                <div id="mem-sdk" class="gfx-text" style="right:15px; top:242px; color:var(--text-disabled);">5.1.2</div>
+                <div class="gfx-text" style="left:15px; top:264px; color:var(--text-disabled);">Source:</div>
+                <div id="mem-source" class="gfx-text" style="right:15px; top:264px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:286px; color:var(--text-disabled);">Flash:</div>
+                <div id="mem-flash" class="gfx-text" style="right:15px; top:286px; color:var(--text-disabled);">—</div>
             </div>
 
             <!-- ===================== CAL REVIEW ===================== -->
@@ -1344,6 +1374,7 @@
         psramFree: null, psramTotal: null,
         // About / build info (fallbacks shown until device connects and overrides)
         buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
+        partKB: null, lastOtaKB: null,
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
@@ -1482,6 +1513,13 @@
     // time at draw time.
     let vibLinkedCursorAge = null;   // ms ago; null when no linked cursor
     let vibCursorPane      = null;   // 'wf' | 'trend' — which pane owns it
+    // Sticky-ceiling EMA for the right-edge per-row energy strip.  Mirrors the
+    // vibWfRefMax pattern: fast attack so a strong burst expands the scale
+    // immediately, slow release so the scale doesn't shrink back down to noise
+    // level when the scene goes quiet.  Without this the strip auto-normalises
+    // to whatever's loudest in the visible window — including noise — and the
+    // dynamic range between "ambient" and "moderate vibration" collapses.
+    let vibRowSumRefMax = 4000;
     // Offscreen canvas holding the heatmap-only pixels (no axis, no cursor),
     // so the visible canvas can be recomposited every mousemove without the
     // crosshair leaving a trail and without re-rasterising the full history.
@@ -2192,24 +2230,34 @@
                 rowSums[r] = s;
             }
             // Drop a noise baseline so the bars only respond to row energy
-            // *above* the in-window ambient floor.  Same approach as the
-            // filmstrip's percentile gate — 25th percentile of rowSums × 1.15
-            // headroom is a robust estimate of quiet-row energy even when
-            // some rows are loud.  Without this, broadband 1/f noise summed
-            // across 250+ bins quickly saturates the 56 px bar width.
+            // above the in-window ambient floor.  10th percentile × 1.02 — a
+            // gentle gate that flattens ambient hiss but barely touches even
+            // light vibrations.
             const sorted = Array.from(rowSums).sort((a, b) => a - b);
             const pIx    = Math.max(0, Math.min(sorted.length - 1,
-                                                (sorted.length * 0.25) | 0));
-            const noiseBase = sorted[pIx] * 1.15;
-            let sumMx = 200;    // floor on the *post-subtraction* scale
+                                                (sorted.length * 0.10) | 0));
+            const noiseBase = sorted[pIx] * 1.02;
+            let frameMx = 0;
             for (let r = 0; r < visible; r++) {
                 const v = rowSums[r] - noiseBase;
                 rowSums[r] = v > 0 ? v : 0;
-                if (rowSums[r] > sumMx) sumMx = rowSums[r];
+                if (rowSums[r] > frameMx) frameMx = rowSums[r];
             }
-            // Background slab — gives the bars a discoverable home so
-            // even short bars have a visible "track" on a busy heatmap.
-            g.fillStyle = 'rgba(0,0,0,0.25)';
+            // Sticky-ceiling EMA: snap to a stronger burst, decay quickly
+            // enough that a fading-out burst doesn't keep the scale pinned
+            // high (which would shrink the next moderate event to nothing).
+            vibRowSumRefMax = frameMx > vibRowSumRefMax
+                ? vibRowSumRefMax + (frameMx - vibRowSumRefMax) * 0.60
+                : vibRowSumRefMax + (frameMx - vibRowSumRefMax) * 0.04;
+            // Hard floor so a fresh boot or a very-quiet window can't pin the
+            // ceiling near zero (which would map any residual variance to a
+            // full bar).
+            const sumMx = Math.max(1200, vibRowSumRefMax);
+            // Background slab — darker than before so the bars read against
+            // a near-opaque track instead of fighting the bright heatmap
+            // colours underneath (a strong burst row is already pale yellow
+            // in the heatmap, which used to swallow an amber bar on top).
+            g.fillStyle = 'rgba(0,0,0,0.65)';
             g.fillRect(W - BAR_MAX_W, 0, BAR_MAX_W, heatH);
             // Subtle scale ticks at 25/50/75 % of bar width.
             g.strokeStyle = 'rgba(255,170,0,0.18)'; g.lineWidth = 1;
@@ -2217,17 +2265,19 @@
                 const x = Math.round(W - BAR_MAX_W * (1 - i / 4)) + 0.5;
                 g.beginPath(); g.moveTo(x, 0); g.lineTo(x, heatH); g.stroke();
             }
-            // Per-bar tint scales with intensity: weak rows are dim translucent
-            // amber, strong rows are bright pale-yellow.  Coupling colour to
-            // length so a row near the right edge of the strip also reads as
-            // visually "hot" — not just long.
+            // sqrt(frac) length so a moderate row already pushes well past
+            // half-width — strong bursts no longer have to fully saturate the
+            // ceiling to look long.  Colour ramps deep-orange → amber → near-
+            // white so a maxed bar reads as visually "hot" against the bright
+            // heatmap rows it's drawn over.
             for (let r = 0; r < visible; r++) {
                 const frac = Math.min(1, rowSums[r] / sumMx);
-                const w    = Math.round(frac * BAR_MAX_W);
+                const shaped = Math.sqrt(frac);
+                const w    = Math.round(shaped * BAR_MAX_W);
                 if (w <= 0) continue;
-                const gC = 170 + frac * 70 | 0;    // 170 → 240
-                const bC =        frac * 80 | 0;    //   0 →  80
-                const a  = 0.30 + frac * 0.60;     // 0.30 → 0.90
+                const gC = 150 + shaped * 105 | 0;   // 150 → 255
+                const bC =        shaped * 200 | 0;  //   0 → 200 (white at top)
+                const a  = 0.85 + shaped * 0.15;     // 0.85 → 1.00
                 g.fillStyle = `rgba(255,${gC},${bC},${a.toFixed(3)})`;
                 g.fillRect(W - w, r, w, 1);
             }
@@ -3761,7 +3811,6 @@
         // PSRAM bar + legend
         const hasPsram = state.psramTotal > 0;
         if (g('mem-psram-section')) g('mem-psram-section').style.display = hasPsram ? '' : 'none';
-        if (g('mem-separator'))     g('mem-separator').style.top         = hasPsram ? '149px' : '84px';
         if (hasPsram) {
             const psUsedKB = state.psramTotal - (state.psramFree || 0);
             const sprKB    = state.spriteKB || 92;
@@ -3771,6 +3820,36 @@
             if (g('mem-psram-bar-sprites')) g('mem-psram-bar-sprites').style.width = (pPsSpr  * 100).toFixed(1) + '%';
             if (g('ml-spr'))   g('ml-spr').textContent   = sprKB + 'K';
             if (g('ml-pfree')) g('ml-pfree').textContent = (state.psramFree || 0) + 'K/' + state.psramTotal + 'K free';
+        }
+
+        // PARTITION bar + legend — one OTA slot, showing sketch / last update / free.
+        const partKB    = state.partKB;
+        const hasPart   = partKB && partKB > 0;
+        if (g('mem-part-section')) g('mem-part-section').style.display = hasPart ? '' : 'none';
+        if (hasPart) {
+            const sk     = state.sketchKB || 0;
+            const last   = state.lastOtaKB || 0;
+            const pUsed  = Math.min(1, sk / partKB);
+            const pLast  = Math.min(1, last / partKB);
+            const freeKB = Math.max(0, partKB - sk);
+            if (g('mem-part-bar-used')) g('mem-part-bar-used').style.width = (pUsed * 100).toFixed(1) + '%';
+            const tick = g('mem-part-bar-last-tick');
+            if (tick) {
+                tick.style.left    = (pLast * 100).toFixed(1) + '%';
+                // Hide the tick when last==0 (no OTA yet) or it coincides
+                // exactly with the sketch edge (no extra info to show).
+                tick.style.display = (last > 0 && Math.abs(last - sk) >= 1) ? '' : 'none';
+            }
+            if (g('ml-pused'))  g('ml-pused').textContent  = sk + 'K';
+            if (g('ml-plast'))  g('ml-plast').textContent  = (last > 0 ? last + 'K' : '—');
+            if (g('ml-pfree2')) g('ml-pfree2').textContent = freeKB + 'K/' + partKB + 'K free';
+        }
+
+        // Separator follows whichever sections are visible above it.
+        if (g('mem-separator')) {
+            const sepTop = hasPsram ? (hasPart ? 188 : 149)
+                                    : (hasPart ? 123 :  84);
+            g('mem-separator').style.top = sepTop + 'px';
         }
 
         // System info
@@ -4508,6 +4587,8 @@
         if (data.buildTime    !== undefined) { state.buildTime    = data.buildTime;    aboutDirty = true; }
         if (data.sketchKB    !== undefined) { state.sketchKB    = data.sketchKB;    aboutDirty = true; memDirty = true; }
         if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; aboutDirty = true; memDirty = true; }
+        if (data.partKB      !== undefined) { state.partKB      = data.partKB;      memDirty = true; }
+        if (data.lastOtaKB   !== undefined) { state.lastOtaKB   = data.lastOtaKB;   memDirty = true; }
         if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();

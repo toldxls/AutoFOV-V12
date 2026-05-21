@@ -100,6 +100,11 @@ static Preferences     wifiPrefs;
 // Stored in NVS "wifi" namespace, key "ntfy".
 static String ntfyTopic = "";
 
+// Size in bytes of the most recent successful OTA upload — persisted in NVS
+// at OTA completion and read back at boot so the memory screen can plot the
+// "last update size" alongside the running sketch size and free OTA space.
+static uint32_t lastOtaBytes = 0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMAND QUEUE
 // WS onMessage callback fires on the lwIP/async task (NOT Core 1).
@@ -409,6 +414,7 @@ void wifiSetup() {
     String gateway  = wifiPrefs.getString("gw",    "");
     ntfyTopic       = wifiPrefs.getString("ntfy",  "");
     String savedOta = wifiPrefs.getString("otapw", "");
+    lastOtaBytes    = wifiPrefs.getUInt  ("lastOta", 0);
     wifiPrefs.end();
 
     // Generate a per-device OTA password on first boot; persist it for future boots.
@@ -1010,6 +1016,17 @@ static void startFullServer() {
                 }
                 otaInProgress = true;
                 Serial.printf("[OTA] start: %s\n", filename.c_str());
+                // Capture the OUTGOING firmware size *before* Update.begin
+                // overwrites the inactive partition.  This is what the
+                // partition-bar tick wants to mark on next boot: "this is
+                // where the previous version sized to", giving a visible
+                // delta against the new sketch.  Recording after end() would
+                // store the new firmware's size, which then equals
+                // ESP.getSketchSize() on reboot and gets hidden by the
+                // tick's "no extra info to show" branch.
+                wifiPrefs.begin("wifi", false);
+                wifiPrefs.putUInt("lastOta", ESP.getSketchSize());
+                wifiPrefs.end();
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
                     markAborted();
@@ -1528,6 +1545,11 @@ static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOt
     doc["buildTime"]   = __TIME__;
     doc["sketchKB"]    = ESP.getSketchSize()      / 1024;
     doc["freeFlashKB"] = ESP.getFreeSketchSpace() / 1024;
+    // Partition size (one OTA slot, per tools/partitions.csv: app0/app1 = 0x1D0000)
+    // and the most recent OTA upload size in KB.  Used by the memory screen to
+    // plot used / last-update / free against the full slot capacity.
+    doc["partKB"]      = 0x1D0000 / 1024;
+    doc["lastOtaKB"]   = lastOtaBytes / 1024;
     doc["chipInfo"]    = ESP.getChipModel();
     // sourceLines is managed by the HTML default (3866) — not sent here to save space
 
