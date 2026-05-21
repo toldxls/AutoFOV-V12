@@ -1222,7 +1222,7 @@
                     <div style="height:1px; background:#303030; margin-bottom:6px;"></div>
                     <div id="ota-rollback-built"
                          style="font-size:9px; color:#6a9ab0; text-align:center; margin-bottom:2px;">
-                        Previous: —
+                        Rollback target: —
                     </div>
                     <div id="ota-rollback-btn" class="gfx-btn"
                          style="position:relative; left:0; top:0; width:100%; height:30px;
@@ -4206,7 +4206,7 @@
         if (!row) return;
         if (state.rollbackAvailable) {
             row.style.display = '';
-            built.textContent = 'Previous build: ' + (state.rollbackBuilt || '—');
+            built.textContent = 'Rollback target: ' + (state.rollbackBuilt || '—');
         } else {
             row.style.display = 'none';
         }
@@ -4398,9 +4398,10 @@
     function otaRollbackClicked() {
         if (!state.rollbackAvailable) return;
         showConfirm(
-            'Roll back to the previous firmware?\n' +
+            'Boot the firmware in the inactive OTA slot?\n' +
             'Built: ' + (state.rollbackBuilt || '—') + '\n\n' +
-            'The device will reboot into the inactive OTA slot.',
+            'Note: this is whatever was last written to that slot — ' +
+            'after a USB recovery flash it may be quite old.',
             () => {
                 sendCommand('otaRollback', 1);
                 // The rollback path mirrors the flash path: device reboots,
