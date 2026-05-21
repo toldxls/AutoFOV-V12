@@ -1055,6 +1055,19 @@ static void startFullServer() {
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
+                // Stale state from a previous attempt that didn't clean up
+                // (e.g. browser tab closed mid-upload before the watchdog
+                // fired).  Force a clean slate so the new request doesn't
+                // inherit a half-erased partition or a live SHA context —
+                // Update.abort() resets the Update.h state machine in place.
+                if (otaInProgress) {
+                    Serial.println("[OTA] stale otaInProgress at request start — resetting");
+                    Update.abort();
+                    if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+                    otaInProgress      = false;
+                    otaLastChunkMs     = 0;
+                    otaRestartPendingMs = 0;
+                }
                 // SHA-256 verification is best-effort.  The web UI computes
                 // the digest before uploading and sends it as X-OTA-SHA256;
                 // when present, a mismatch at `final` triggers Update.abort()
@@ -1099,12 +1112,21 @@ static void startFullServer() {
             otaLastChunkMs = millis();
             if (otaShaActive) mbedtls_sha256_update(&otaShaCtx, data, len);
             if (Update.write(data, len) != len) {
-                Serial.printf("[OTA] write error: %s\n", Update.errorString());
+                // Capture the specific Update error string BEFORE calling
+                // Update.abort() — abort() overwrites _error to ABORT and
+                // every subsequent errorString() call would return the
+                // useless generic "Aborted".  The browser needs to see the
+                // real cause (magic-byte, write fail, space, etc.).
+                String why = Update.errorString();
+                Serial.printf("[OTA] write error at %u/%u (chunk %u): %s\n",
+                              (unsigned)index, (unsigned)(index + len),
+                              (unsigned)len, why.c_str());
                 Update.abort();
                 markAborted();
-                req->send(500, "text/plain", Update.errorString());
+                req->send(500, "text/plain", why);
                 if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
                 otaInProgress = false;
+                otaLastChunkMs = 0;
                 return;
             }
             if (final) {
