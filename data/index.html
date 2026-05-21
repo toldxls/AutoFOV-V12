@@ -236,7 +236,11 @@
             position: absolute; left: 152px; top: 2px; width: 44px; height: 40px; cursor: pointer;
         }
         .fov-bullet { position: absolute; top: 20px; width: 2px; height: 2px; background: #CA00FC; border-radius: 50%; }
-        .fov-err     { color: inherit; letter-spacing: 0; }
+        .fov-err     { color: inherit; letter-spacing: 0; font-weight: normal; }
+        .fov-err::before,
+        .fov-err::after { position: relative; top: -3px; }
+        .fov-err::before { content: '('; }
+        .fov-err::after  { content: ')'; }
         .fov-unit    { }
 
         /* Gear icon zone */
@@ -2030,19 +2034,27 @@
             g.fillText('now', mL - 5, 0);
         }
         // ── Filmstrip: time-integrated spectrum at the bottom of the waterfall ──
-        // For each frequency column, averages every visible waterfall row's bin value
-        // and maps to the same green heat palette — bright green = sustained energy,
-        // dark = occasional, black = silent.
+        // For each frequency column, averages every row in the rolling history
+        // (back to FILMSTRIP_WINDOW_MS) and maps to the same green heat palette —
+        // bright green = sustained energy, dark = occasional, black = silent.
+        // Integrating over a wall-clock window (not just the visible rows) means
+        // the filmstrip keeps showing persistent resonances long after they've
+        // scrolled off the top of the heatmap.
+        const FILMSTRIP_WINDOW_MS = 30000;
         const filmH = 7;  // hoisted so the hover block below can reference it
         if (vibWfRows.length > 0 && pw > 0) {
             const n = (vibSpec && vibSpec.length) ? vibSpec.length : 256;
-            const rowCnt = Math.min(vibWfRows.length, H - filmH);
+            const cutoffT = now - FILMSTRIP_WINDOW_MS;
             const binAvg = new Float32Array(n);
-            for (let r = 0; r < rowCnt; r++) {
-                const fr = vibWfRows[r].frame;
+            let rowCnt = 0;
+            for (let r = 0; r < vibWfRows.length; r++) {
+                const row = vibWfRows[r];
+                if (!row || row.t < cutoffT) break;     // rows are newest-first
+                const fr = row.frame;
                 if (!fr) continue;
                 const len = Math.min(n, fr.length);
                 for (let b = 0; b < len; b++) binAvg[b] += fr[b];
+                rowCnt++;
             }
             if (rowCnt > 0) for (let b = 0; b < n; b++) binAvg[b] /= rowCnt;
             const filmY = H - filmH;
@@ -4029,7 +4041,7 @@
                 if (state._pendingFov !== undefined) {
                     const errCentimm = state._pendingFovErr;
                     const errSpan = errCentimm !== undefined
-                        ? `<span class="fov-err">(${errCentimm})</span>`
+                        ? `<span class="fov-err">${errCentimm}</span>`
                         : '';
                     document.getElementById('val-fov').innerHTML =
                         state._pendingFov.toFixed(2) + errSpan + '<span class="fov-unit"> mm</span>';
