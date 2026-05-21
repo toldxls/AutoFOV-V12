@@ -1001,7 +1001,7 @@
                             <div id="mem-part0-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
                         </div>
                     </div>
-                    <div id="ml-part0" style="position:absolute; left:140px; top:149px; font-size:10px; color:#7eb8e0; white-space:nowrap;">APP0 —K</div>
+                    <div id="ml-part0" style="position:absolute; left:140px; top:150px; font-size:9px; color:#7eb8e0; white-space:nowrap;">APP0 —K</div>
                     <!-- APP1 -->
                     <div style="position:absolute; left:15px; top:164px; width:120px; height:12px;">
                         <div style="position:absolute; inset:0; border-radius:3px; border:1px solid #444; overflow:hidden;">
@@ -1009,7 +1009,7 @@
                             <div id="mem-part1-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
                         </div>
                     </div>
-                    <div id="ml-part1" style="position:absolute; left:140px; top:165px; font-size:10px; color:#7eb8e0; white-space:nowrap;">APP1 —K</div>
+                    <div id="ml-part1" style="position:absolute; left:140px; top:166px; font-size:9px; color:#7eb8e0; white-space:nowrap;">APP1 —K</div>
                 </div>
 
                 <!-- Separator -->
@@ -3834,9 +3834,15 @@
             // Active slot fills with sketch usage; inactive slot stays empty.
             if (g('mem-part0-bar-used')) g('mem-part0-bar-used').style.width = (run0 ? pUsed * 100 : 0).toFixed(1) + '%';
             if (g('mem-part1-bar-used')) g('mem-part1-bar-used').style.width = (run0 ? 0 : pUsed * 100).toFixed(1) + '%';
+            // Shorter than "X K / Y K run" / "Y K free" so the line fits in
+            // the ~100 px of label gutter to the right of the bar.  The slash
+            // form ("used/slot") matches how the HEAP and PSRAM legends read.
+            // "standby" — not "free" — because the inactive slot isn't blank:
+            // dual-OTA keeps the previous firmware there as the rollback /
+            // next-OTA-write target.
             const label = (active, slotKB) => active
-                ? `${sk}K / ${slotKB}K run`
-                : `${slotKB}K free`;
+                ? `${sk}K/${slotKB}K run`
+                : `${slotKB}K standby`;
             if (g('ml-part0')) {
                 g('ml-part0').textContent = 'APP0 ' + label(run0, partKB);
                 g('ml-part0').style.color = run0 ? '#7eb8e0' : '#5a7a90';
