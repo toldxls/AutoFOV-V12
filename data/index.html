@@ -1310,7 +1310,9 @@
          the device hasn't returned in 20 s. -->
     <style>
       #ota-reboot-overlay { display:none; position:fixed; inset:0; z-index:600;
-        background:#1a1a1a; flex-direction:column; align-items:center;
+        background:rgba(20,20,20,0.78); backdrop-filter:blur(2px);
+        -webkit-backdrop-filter:blur(2px);
+        flex-direction:column; align-items:center;
         justify-content:center; padding:0 28px; text-align:center;
         color:#cfe7df; font-size:13px; line-height:1.55; font-family:monospace; }
       #ota-reboot-overlay.open { display:flex; }
