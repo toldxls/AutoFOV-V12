@@ -988,50 +988,47 @@
                     </div>
                 </div>
 
-                <!-- PARTITION bar + legend — one OTA slot, showing current
-                     firmware footprint, last OTA size, and free headroom. -->
+                <!-- PARTITION bars — dual-OTA: two app slots at 1856 KB each.
+                     One is running the current firmware; the other is the next
+                     OTA target.  Inline labels to the right of each bar keep
+                     the section compact enough to fit a die-temp row below. -->
                 <div id="mem-part-section">
                     <div style="position:absolute; left:17px; top:136px; font-size:9px; color:#666;">PARTITION</div>
-                    <div style="position:absolute; left:15px; top:149px; width:210px; height:14px;">
+                    <!-- APP0 -->
+                    <div style="position:absolute; left:15px; top:148px; width:120px; height:12px;">
                         <div style="position:absolute; inset:0; border-radius:3px; border:1px solid #444; overflow:hidden;">
                             <div style="position:absolute; inset:0; background:#1a2a44;"></div>
-                            <div id="mem-part-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
-                            <!-- Last-OTA tick: marks where the most recent update sized to. -->
-                            <div id="mem-part-bar-last-tick" style="position:absolute; top:-3px; width:2px; height:20px; background:#FFD700; left:0%; display:none;"></div>
+                            <div id="mem-part0-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
                         </div>
                     </div>
-                    <div style="position:absolute; left:15px; top:167px; width:210px; display:flex; justify-content:space-between; align-items:center; font-size:10px;">
-                        <span>
-                            <span style="display:inline-block; width:8px; height:8px; background:#4a90c4; vertical-align:middle; margin-right:3px;"></span>
-                            <span id="ml-pused" style="color:#4a90c4; vertical-align:middle;">—K</span>
-                            <span style="color:#555; font-size:9px; vertical-align:middle;"> sketch</span>
-                        </span>
-                        <span>
-                            <span style="display:inline-block; width:2px; height:10px; background:#FFD700; vertical-align:middle; margin-right:3px;"></span>
-                            <span id="ml-plast" style="color:#FFD700; vertical-align:middle;">—K</span>
-                            <span style="color:#555; font-size:9px; vertical-align:middle;"> last</span>
-                        </span>
-                        <span>
-                            <span style="display:inline-block; width:8px; height:8px; background:#1a2a44; vertical-align:middle; margin-right:3px;"></span>
-                            <span id="ml-pfree2" style="color:#7eb8e0; vertical-align:middle;">—K free</span>
-                        </span>
+                    <div id="ml-part0" style="position:absolute; left:140px; top:149px; font-size:10px; color:#7eb8e0; white-space:nowrap;">APP0 —K</div>
+                    <!-- APP1 -->
+                    <div style="position:absolute; left:15px; top:164px; width:120px; height:12px;">
+                        <div style="position:absolute; inset:0; border-radius:3px; border:1px solid #444; overflow:hidden;">
+                            <div style="position:absolute; inset:0; background:#1a2a44;"></div>
+                            <div id="mem-part1-bar-used" style="position:absolute; top:0; left:0; bottom:0; background:#4a90c4; width:0%;"></div>
+                        </div>
                     </div>
+                    <div id="ml-part1" style="position:absolute; left:140px; top:165px; font-size:10px; color:#7eb8e0; white-space:nowrap;">APP1 —K</div>
                 </div>
 
                 <!-- Separator -->
-                <div id="mem-separator" style="position:absolute; left:10px; top:188px; width:220px; height:1px; background:#333;"></div>
+                <div id="mem-separator" style="position:absolute; left:10px; top:184px; width:220px; height:1px; background:#333;"></div>
 
-                <!-- System info rows -->
-                <div class="gfx-text" style="left:15px; top:198px; color:var(--text-disabled);">Firmware:</div>
-                <div class="gfx-text" style="right:15px; top:198px; color:var(--accent-green);">Auto FOV V12</div>
-                <div class="gfx-text" style="left:15px; top:220px; color:var(--text-disabled);">CPU:</div>
-                <div id="mem-cpu" class="gfx-text" style="right:15px; top:220px; color:var(--text-primary);">240 MHz</div>
-                <div class="gfx-text" style="left:15px; top:242px; color:var(--text-disabled);">SDK:</div>
-                <div id="mem-sdk" class="gfx-text" style="right:15px; top:242px; color:var(--text-disabled);">5.1.2</div>
-                <div class="gfx-text" style="left:15px; top:264px; color:var(--text-disabled);">Source:</div>
-                <div id="mem-source" class="gfx-text" style="right:15px; top:264px; color:var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left:15px; top:286px; color:var(--text-disabled);">Flash:</div>
-                <div id="mem-flash" class="gfx-text" style="right:15px; top:286px; color:var(--text-disabled);">—</div>
+                <!-- System info rows — 18 px row pitch (was 22) to free a row
+                     for die temp without overflowing the 320 px screen. -->
+                <div class="gfx-text" style="left:15px; top:192px; color:var(--text-disabled);">Firmware:</div>
+                <div class="gfx-text" style="right:15px; top:192px; color:var(--accent-green);">Auto FOV V12</div>
+                <div class="gfx-text" style="left:15px; top:212px; color:var(--text-disabled);">CPU:</div>
+                <div id="mem-cpu" class="gfx-text" style="right:15px; top:212px; color:var(--text-primary);">240 MHz</div>
+                <div class="gfx-text" style="left:15px; top:232px; color:var(--text-disabled);">SDK:</div>
+                <div id="mem-sdk" class="gfx-text" style="right:15px; top:232px; color:var(--text-disabled);">5.1.2</div>
+                <div class="gfx-text" style="left:15px; top:252px; color:var(--text-disabled);">Source:</div>
+                <div id="mem-source" class="gfx-text" style="right:15px; top:252px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled);">Flash:</div>
+                <div id="mem-flash" class="gfx-text" style="right:15px; top:272px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:292px; color:var(--text-disabled);">Die temp:</div>
+                <div id="mem-die" class="gfx-text" style="right:15px; top:292px; color:var(--accent-cyan);">—</div>
             </div>
 
             <!-- ===================== CAL REVIEW ===================== -->
@@ -3822,33 +3819,40 @@
             if (g('ml-pfree')) g('ml-pfree').textContent = (state.psramFree || 0) + 'K/' + state.psramTotal + 'K free';
         }
 
-        // PARTITION bar + legend — one OTA slot, showing sketch / last update / free.
+        // PARTITION — dual-OTA layout.  Both app slots are equal (partKB each);
+        // the running one shows its sketch as a filled bar, the other is the
+        // empty next-OTA target.  Active slot is marked "(run)" inline so the
+        // user can see which way the bootloader is about to flip.
         const partKB    = state.partKB;
         const hasPart   = partKB && partKB > 0;
         if (g('mem-part-section')) g('mem-part-section').style.display = hasPart ? '' : 'none';
         if (hasPart) {
             const sk     = state.sketchKB || 0;
-            const last   = state.lastOtaKB || 0;
+            const run    = state.partRunning || 'ota_0';   // 'ota_0' | 'ota_1'
             const pUsed  = Math.min(1, sk / partKB);
-            const pLast  = Math.min(1, last / partKB);
-            const freeKB = Math.max(0, partKB - sk);
-            if (g('mem-part-bar-used')) g('mem-part-bar-used').style.width = (pUsed * 100).toFixed(1) + '%';
-            const tick = g('mem-part-bar-last-tick');
-            if (tick) {
-                tick.style.left    = (pLast * 100).toFixed(1) + '%';
-                // Hide the tick when last==0 (no OTA yet) or it coincides
-                // exactly with the sketch edge (no extra info to show).
-                tick.style.display = (last > 0 && Math.abs(last - sk) >= 1) ? '' : 'none';
+            const run0   = (run !== 'ota_1');
+            // Active slot fills with sketch usage; inactive slot stays empty.
+            if (g('mem-part0-bar-used')) g('mem-part0-bar-used').style.width = (run0 ? pUsed * 100 : 0).toFixed(1) + '%';
+            if (g('mem-part1-bar-used')) g('mem-part1-bar-used').style.width = (run0 ? 0 : pUsed * 100).toFixed(1) + '%';
+            const label = (active, slotKB) => active
+                ? `${sk}K / ${slotKB}K run`
+                : `${slotKB}K free`;
+            if (g('ml-part0')) {
+                g('ml-part0').textContent = 'APP0 ' + label(run0, partKB);
+                g('ml-part0').style.color = run0 ? '#7eb8e0' : '#5a7a90';
             }
-            if (g('ml-pused'))  g('ml-pused').textContent  = sk + 'K';
-            if (g('ml-plast'))  g('ml-plast').textContent  = (last > 0 ? last + 'K' : '—');
-            if (g('ml-pfree2')) g('ml-pfree2').textContent = freeKB + 'K/' + partKB + 'K free';
+            if (g('ml-part1')) {
+                g('ml-part1').textContent = 'APP1 ' + label(!run0, partKB);
+                g('ml-part1').style.color = !run0 ? '#7eb8e0' : '#5a7a90';
+            }
         }
 
-        // Separator follows whichever sections are visible above it.
+        // Separator follows whichever sections are visible above it.  Dual
+        // partition bars need 12 px more than the old single bar+legend, so
+        // the "has-partition" offsets bump down accordingly.
         if (g('mem-separator')) {
-            const sepTop = hasPsram ? (hasPart ? 188 : 149)
-                                    : (hasPart ? 123 :  84);
+            const sepTop = hasPsram ? (hasPart ? 184 : 149)
+                                    : (hasPart ? 119 :  84);
             g('mem-separator').style.top = sepTop + 'px';
         }
 
@@ -3863,6 +3867,19 @@
             g('mem-flash').innerText = (sk !== null && ff !== null)
                 ? sk + 'K/' + (sk + ff) + 'K'
                 : '—';
+        }
+        // Die temp — colour-coded against the SoC's 110 °C junction limit so a
+        // hot board reads at a glance without having to remember the number.
+        if (g('mem-die')) {
+            const t = state.dieC;
+            if (typeof t === 'number' && isFinite(t)) {
+                g('mem-die').innerText = t.toFixed(1) + ' °C';
+                g('mem-die').style.color = t >= 85 ? '#ff5050'
+                                        : t >= 70 ? '#ffaa00'
+                                        :           'var(--accent-cyan)';
+            } else {
+                g('mem-die').innerText = '—';
+            }
         }
     }
 
@@ -4588,7 +4605,8 @@
         if (data.sketchKB    !== undefined) { state.sketchKB    = data.sketchKB;    aboutDirty = true; memDirty = true; }
         if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; aboutDirty = true; memDirty = true; }
         if (data.partKB      !== undefined) { state.partKB      = data.partKB;      memDirty = true; }
-        if (data.lastOtaKB   !== undefined) { state.lastOtaKB   = data.lastOtaKB;   memDirty = true; }
+        if (data.partRunning !== undefined) { state.partRunning = data.partRunning; memDirty = true; }
+        if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; }
         if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();
