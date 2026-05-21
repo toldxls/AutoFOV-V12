@@ -379,6 +379,11 @@ PSRAMCanvas16 objSprite(240, 67);
 #define VIB_FFT_BINS     (VIB_FFT_SIZE / 2)           // 256 usable bins (0..255)
 #define VIB_SAMPLE_RATE  416.0f                       // accel ODR, Hz (see imuSetup)
 #define VIB_BIN_HZ       (VIB_SAMPLE_RATE / VIB_FFT_SIZE)  // 0.8125 Hz per bin
+// Accelerometer sensitivity — must match the setAccelRange() call in imuSetup.
+// ±2 g → 0.061 mg/LSB (±4 g would be 0.122). The ±2 g range halves the
+// quantization step for finer spectral resolution; bench vibration is
+// single-digit mg so the reduced full-scale headroom is never reached.
+#define VIB_MG_PER_LSB   0.061f
 #define VIB_HOP          128                          // FFT every 128 new samples (75% overlap)
 #define VIB_RAW_LEN      8192                         // raw ring — ~19.7 s look-back (Phase 2)
 // Band-RMS warning thresholds (mg).
@@ -3312,7 +3317,7 @@ static uint8_t imuReadRegs(uint8_t reg, uint8_t *buf, uint8_t len) {
 }
 
 // imuSetup() — called from setup() with i2cMutex held, after the VL53L4CX is
-// started. Probes both I²C addresses, configures accel-only ODR 416 Hz / ±4 g,
+// started. Probes both I²C addresses, configures accel-only ODR 416 Hz / ±2 g,
 // and arms the hardware FIFO in continuous mode batching accel at 416 Hz.
 static void imuSetup() {
   if      (lsm.begin_I2C(0x6A, &Wire)) imuAddr = 0x6A;
@@ -3320,7 +3325,7 @@ static void imuSetup() {
   else { Serial.println("LSM6DSOX not found (tried 0x6A / 0x6B)"); imuPresent = false; return; }
   imuPresent = true;
 
-  lsm.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
+  lsm.setAccelRange(LSM6DS_ACCEL_RANGE_2_G);   // ±2 g — see VIB_MG_PER_LSB
   lsm.setAccelDataRate(LSM6DS_RATE_416_HZ);
   lsm.setGyroDataRate(LSM6DS_RATE_SHUTDOWN);   // accel-only — saves FIFO + power
 
@@ -3329,7 +3334,7 @@ static void imuSetup() {
   // FIFO_CTRL4: FIFO_MODE = 110b (Continuous — overwrite oldest when full).
   imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x06);
 
-  Serial.printf("LSM6DSOX online at 0x%02X — FIFO continuous, 416 Hz / +-4 g\n", imuAddr);
+  Serial.printf("LSM6DSOX online at 0x%02X — FIFO continuous, 416 Hz / +-2 g\n", imuAddr);
 }
 
 // vibBegin() — allocate the PSRAM buffers and build the Hann window. Mirrors
@@ -3608,14 +3613,14 @@ void vibTask(void *pvParameters) {
       vibFFT.compute(FFTDirection::Forward);
       vibFFT.complexToMagnitude();   // magnitudes land in vibFftReal[0..255]
 
-      // Time-domain window RMS → band RMS in mg (0.122 mg/LSB at +-4 g).
-      float rmsMg = sqrtf((float)(sumSq / VIB_FFT_SIZE)) * 0.122f;
+      // Time-domain window RMS → band RMS in mg (VIB_MG_PER_LSB at ±2 g).
+      float rmsMg = sqrtf((float)(sumSq / VIB_FFT_SIZE)) * VIB_MG_PER_LSB;
 
       // Publish the spectrum into the idle ping-pong buffer (deci-mg).
       // Hann coherent gain 0.5, real-FFT 2/N → amplitude ~ bin * 4/N.
       specSeq++;
       uint16_t *dst = vibSpec[specSeq & 1];
-      const float binScale = 0.122f * 4.0f / VIB_FFT_SIZE * 10.0f;  // LSB-mag → deci-mg
+      const float binScale = VIB_MG_PER_LSB * 4.0f / VIB_FFT_SIZE * 10.0f;  // LSB-mag → deci-mg
       uint32_t domBin = 0; float domMag = 0.0f;
       for (int b = 0; b < VIB_FFT_BINS; b++) {
         float m = vibFftReal[b] * binScale;
@@ -3665,8 +3670,8 @@ void vibTask(void *pvParameters) {
       // Cross-core scalars.
       vibDominant.store((uint32_t)lroundf(domBin * VIB_BIN_HZ * 10.0f));
       vibBandRms.store((uint32_t)lroundf(rmsMg * 100.0f));
-      // Horizontal-plane RMS — no FFT, energy only. Same 0.122 mg/LSB scale.
-      float horizMg = sqrtf(horizMs2Ema) * 0.122f;
+      // Horizontal-plane RMS — no FFT, energy only. Same VIB_MG_PER_LSB scale.
+      float horizMg = sqrtf(horizMs2Ema) * VIB_MG_PER_LSB;
       vibHorizRms.store((uint32_t)lroundf(horizMg * 100.0f));
 
       // "Is the bench quiet" reflects whichever axis is worse — a horizontal
