@@ -4331,6 +4331,12 @@
         const fd = new FormData();
         fd.append('firmware', file, file.name);
 
+        // Track whether the body finished uploading.  Once we hit 100%, any
+        // socket drop (including onerror) most likely means the device is
+        // rebooting — *not* a real network failure — so the overlay should
+        // come up and the polling reload should run regardless of how the
+        // XHR resolves.
+        let uploadComplete = false;
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
         xhr.setRequestHeader('X-OTA-Password', state.otaPassword);
@@ -4344,24 +4350,48 @@
             pct.textContent = p + '%';
             st.textContent = p < 100 ? 'Uploading… ' + p + '%' : 'Verifying & flashing…';
         };
+        // upload.onload fires when the request body has been fully sent — i.e.
+        // 100% reached.  Surface the overlay here, not in xhr.onload, because
+        // the server's 200 may never arrive: the device reboots ~800 ms after
+        // queuing the response and AsyncTCP sometimes drops the FIN.
+        xhr.upload.onload = () => {
+            uploadComplete = true;
+            fill.style.width = '100%'; fill.style.background = '#2abf6a';
+            pct.textContent = '100%';
+            st.textContent = 'Done — rebooting';
+            st.style.color = '#3ddb7a';
+            otaShowRebootOverlay();
+        };
         xhr.onload = () => {
-            if (xhr.status === 200) {
-                fill.style.width = '100%'; fill.style.background = '#2abf6a';
-                pct.textContent = '100%';
-                st.textContent = 'Done — rebooting';
-                st.style.color = '#3ddb7a';
-                otaShowRebootOverlay();
-            } else {
+            // A non-200 here means the device rejected the upload (bad SHA,
+            // payload too large, etc.) — overlay stays hidden, surface the
+            // error inline so the user can fix the input.  200 just confirms
+            // what upload.onload already showed.
+            if (xhr.status !== 200 && !uploadComplete) {
                 st.textContent = 'Error: ' + (xhr.responseText || xhr.status);
+                st.style.color = '#ff4444';
+                fill.style.background = '#7a1a1a';
+                btn.style.opacity = ''; btn.style.pointerEvents = '';
+            } else if (xhr.status !== 200 && uploadComplete) {
+                // Server returned an error AFTER full upload (e.g. SHA
+                // mismatch on the device).  Show the message and clear the
+                // overlay so the user isn't stranded.
+                otaHideRebootOverlay();
+                st.textContent = 'Rejected: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
                 fill.style.background = '#7a1a1a';
                 btn.style.opacity = ''; btn.style.pointerEvents = '';
             }
         };
         xhr.onerror = () => {
-            // Connection drop mid-upload can be the device rebooting mid-transfer
-            // (shouldn't happen) or a real network error.  The device's stall
-            // watchdog will free its OTA state after 10 s so a retry will work.
+            if (uploadComplete) {
+                // Device is rebooting — the overlay is already up via
+                // upload.onload, and otaShowRebootOverlay is polling /token
+                // and will reload as soon as the new firmware answers.
+                return;
+            }
+            // Real network failure mid-upload.  Device's stall watchdog frees
+            // its OTA state after 10 s so a retry will work.
             st.textContent = 'Connection lost — check device and retry';
             st.style.color = '#ff9900';
             btn.style.opacity = ''; btn.style.pointerEvents = '';
@@ -4373,7 +4403,16 @@
     // Polling /token is enough to know the new firmware is up — the endpoint
     // returns immediately as soon as the server is listening, and the new boot
     // generates a fresh CSRF token, so reloading is the cleanest re-sync.
+    let otaPollAbort = false;
+    function otaHideRebootOverlay() {
+        otaPollAbort = true;
+        const overlay = document.getElementById('ota-reboot-overlay');
+        if (overlay) overlay.classList.remove('open');
+        const manual = document.getElementById('ota-reboot-manual');
+        if (manual) manual.style.display = 'none';
+    }
     function otaShowRebootOverlay() {
+        otaPollAbort = false;
         const overlay = document.getElementById('ota-reboot-overlay');
         if (!overlay) { setTimeout(() => location.reload(), 6000); return; }
         overlay.classList.add('open');
@@ -4386,10 +4425,12 @@
         // Fallback: if it isn't back in 20 s, surface the manual reload button.
         setTimeout(() => { if (manual) manual.style.display = 'inline-block'; }, 20000);
         function otaPollDeviceBack() {
+            if (otaPollAbort) return;
             fetch((wifiBase || '') + '/token', { cache: 'no-store' })
                 .then(r => r.ok ? r.text() : Promise.reject(r.status))
-                .then(() => location.reload())
+                .then(() => { if (!otaPollAbort) location.reload(); })
                 .catch(() => {
+                    if (otaPollAbort) return;
                     if (Date.now() - start > 60000) return;  // give up after 60 s
                     setTimeout(otaPollDeviceBack, 800);
                 });

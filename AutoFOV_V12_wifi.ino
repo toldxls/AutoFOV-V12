@@ -93,6 +93,11 @@ static uint32_t                otaLastChunkMs   = 0;
 static mbedtls_sha256_context  otaShaCtx;
 static bool                    otaShaActive     = false;   // ctx initialised?
 static char                    otaExpectedSha[65] = {0};   // hex, 64 chars + NUL
+// Restart can't happen inline in the OTA completion handler — that runs on the
+// AsyncTCP task, and ESP.restart() preempts the response transmit so the
+// browser sees a connection drop instead of the 200 OK.  We stash a timestamp
+// and let wifiLoop() (Core 1) restart after the response has had time to flush.
+static uint32_t                otaRestartPendingMs = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVER OBJECTS
@@ -489,6 +494,17 @@ void wifiLoop() {
         Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
         Serial.flush();
         handleWifiCommand(cmd.key, cmd.val);
+    }
+
+    // ── OTA deferred restart ─────────────────────────────────────────────────
+    // The completion handler queued a 200 response and asked us to reboot.
+    // 800 ms is enough for AsyncTCP to flush the response + FIN to the client
+    // (typical wire time well under 50 ms); pushing it further only delays the
+    // UX without buying reliability.
+    if (otaRestartPendingMs && (millis() - otaRestartPendingMs) > 800UL) {
+        Serial.println("[OTA] response flushed, restarting");
+        Serial.flush();
+        ESP.restart();
     }
 
     // ── OTA stall watchdog ───────────────────────────────────────────────────
@@ -1009,8 +1025,11 @@ static void startFullServer() {
                 req->beginResponse(ok ? 200 : 500, "text/plain", msg);
             resp->addHeader("Connection", "close");
             req->send(resp);
-            if (ok) { delay(500); ESP.restart(); }
-            else {
+            if (ok) {
+                // Hand off restart to wifiLoop — must NOT block here or the
+                // response never leaves the AsyncTCP send queue before reboot.
+                otaRestartPendingMs = millis();
+            } else {
                 if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
                 otaInProgress  = false;
                 otaLastChunkMs = 0;
