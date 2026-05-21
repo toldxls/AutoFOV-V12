@@ -46,7 +46,7 @@
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <HTTPClient.h>
-#include "web_ui.h"
+#include "data/web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG

@@ -28,7 +28,7 @@
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
 #include <Fonts/FreeSans24pt7b.h>
-#include "FreeSans7pt7b.h"   // local — used for the main-screen CALIBRATE button
+#include "data/FreeSans7pt7b.h"   // local — used for the main-screen CALIBRATE button
 
 #define TFT_BLACK         0x0000
 #define TFT_WHITE         0xFFFF

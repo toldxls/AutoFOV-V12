@@ -13,7 +13,7 @@ VERSION_MINOR = 0   # bump manually for milestone releases
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 src  = os.path.join(root, 'data', 'index.html')
-dst  = os.path.join(root, 'web_ui.h')
+dst  = os.path.join(root, 'data', 'web_ui.h')
 
 # Git info
 def git(cmd):
