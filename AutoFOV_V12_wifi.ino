@@ -706,6 +706,9 @@ static void startPortalMode() {
             wifiPrefs.putString("pass", pass);
             wifiPrefs.putString("ip",   ip);
             wifiPrefs.putString("gw",   gw);
+            // Drop any cached BSSID/channel from older firmware revisions.
+            wifiPrefs.remove("bssid");
+            wifiPrefs.remove("chan");
             wifiPrefs.end();
 
             req->send_P(200, "text/html", PORTAL_SAVED_HTML);
@@ -761,17 +764,19 @@ static void staConnectTask(void* arg) {
         }
     }
 
+    uint32_t tStart = millis();
+
     WiFi.begin(args->ssid.c_str(), args->pass.c_str());
 
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < CONNECT_TIMEOUT_MS) {
+    while (WiFi.status() != WL_CONNECTED && millis() - tStart < CONNECT_TIMEOUT_MS) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     if (WiFi.status() == WL_CONNECTED) {
         wifiConnected = true;
-        Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm\n",
-                      WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+        Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d  (%lu ms)\n",
+                      WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
+                      WiFi.channel(), (unsigned long)(millis() - tStart));
     } else {
         wifiConnected = false;
         lastReconnectMs = millis();
