@@ -2635,16 +2635,47 @@
     function vibRenderSigList() {
         const d = document.getElementById('vib-siglist');
         if (!d) return;
-        if (!vibSigs.length) { d.innerHTML = '<i>no signatures saved</i>'; return; }
-        d.innerHTML = vibSigs.map(fn => {
+        // Build the list as DOM nodes so a maliciously-named signature file
+        // can't smuggle markup or JS through innerHTML interpolation. Earlier
+        // firmware accepted unsanitised filenames from the network, so any
+        // pre-existing /vibsig/ entries with weird chars would land here.
+        // textContent + addEventListener neutralises that path.
+        d.textContent = '';
+        if (!vibSigs.length) {
+            const i = document.createElement('i');
+            i.textContent = 'no signatures saved';
+            d.appendChild(i);
+            return;
+        }
+        vibSigs.forEach(fn => {
             const nm = fn.replace(/\.bin$/, '');
-            return `<div style="display:flex;justify-content:space-between;padding:2px 1px;border-bottom:1px solid #1a2e29;">
-                    <span style="color:#e3f7c9;">${nm}</span>
-                    <span>
-                    <a href="#" onclick="vibLoadSig('${fn}');return false;" style="color:#ffd700;text-decoration:none;" title="Overlay in analyzer">&#9654;</a>
-                    &nbsp; <a href="#" onclick="vibRename('${fn}');return false;" style="color:#5bf;text-decoration:none;">rename</a>
-                    &nbsp; <a href="#" onclick="vibDelete('${fn}');return false;" style="color:#f66;text-decoration:none;">del</a></span></div>`;
-        }).join('');
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;justify-content:space-between;padding:2px 1px;border-bottom:1px solid #1a2e29;';
+            const left = document.createElement('span');
+            left.style.color = '#e3f7c9';
+            left.textContent = nm;
+            const right = document.createElement('span');
+
+            const mkAction = (label, color, title, fn2) => {
+                const a = document.createElement('a');
+                a.href = '#';
+                a.style.cssText = 'color:' + color + ';text-decoration:none;';
+                if (title) a.title = title;
+                // innerHTML restricted to a constant string — no user input.
+                a.innerHTML = label;
+                a.addEventListener('click', e => { e.preventDefault(); fn2(fn); });
+                return a;
+            };
+            right.appendChild(mkAction('&#9654;', '#ffd700', 'Overlay in analyzer', vibLoadSig));
+            right.appendChild(document.createTextNode(' '));
+            right.appendChild(mkAction('rename', '#5bf', '', vibRename));
+            right.appendChild(document.createTextNode(' '));
+            right.appendChild(mkAction('del', '#f66', '', vibDelete));
+
+            row.appendChild(left);
+            row.appendChild(right);
+            d.appendChild(row);
+        });
     }
     function vibCapture() {
         const inp = document.getElementById('vib-capname');
@@ -3535,6 +3566,12 @@
     let wifiBase = '';
     let wifiIP = '';
     let reconnectAttempts = 0;
+    // Per-boot CSRF token from GET /token. Required as ?tok=… on the WS
+    // upgrade and as X-AutoFOV-Token on /cmd POST. Cross-origin pages can
+    // request /token but the browser blocks the body from JS without an
+    // Access-Control-Allow-Origin header — see the C++ comments in
+    // startFullServer().
+    let csrfToken = '';
     // Single shared AudioContext for the stack-complete beep. Reused across
     // every stack so we never exhaust the browser's concurrent-context cap.
     let beepCtx = null;
@@ -3772,6 +3809,12 @@
         status.innerText = 'WiFi: CONNECTING…'; status.style.color = '#FFA500';
         updateWifiZone(false);
         try {
+            // Fetch the CSRF token before anything that needs it. Cached across
+            // WS reconnects; only refetched on a full connectWifi() cycle.
+            const tr = await fetch(wifiBase + '/token', { signal: AbortSignal.timeout(3000) });
+            if (!tr.ok) throw new Error('token HTTP ' + tr.status);
+            csrfToken = (await tr.text()).trim();
+            if (!csrfToken) throw new Error('empty token');
             const r = await fetch(wifiBase + '/state', { signal: AbortSignal.timeout(3000) });
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
@@ -3787,7 +3830,10 @@
 
     function openWebSocket(ip) {
         if (ws) { ws.onclose = null; ws.close(); }
-        ws = new WebSocket('ws://' + ip + '/ws');
+        // Server's wsServer.setFilter() rejects upgrades without a matching
+        // ?tok=… query param. encodeURIComponent is a belt-and-braces hedge —
+        // the token alphabet today is already URL-safe.
+        ws = new WebSocket('ws://' + ip + '/ws?tok=' + encodeURIComponent(csrfToken));
         // Device may send the vibration spectrum as a binary frame ('VS'
         // header — see decodeVibSpectrumBinary). Default is already
         // 'blob' on some browsers; force ArrayBuffer so the decoder can
@@ -3834,11 +3880,14 @@
         const payload = JSON.stringify({ [key]: val });
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(payload);
-        } else if (wifiBase) {
+        } else if (wifiBase && csrfToken) {
             try {
                 await fetch(wifiBase + '/cmd', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-AutoFOV-Token': csrfToken
+                    },
                     body: payload,
                     signal: AbortSignal.timeout(2000)
                 });

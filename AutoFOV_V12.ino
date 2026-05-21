@@ -401,9 +401,9 @@ PSRAMCanvas16 objSprite(240, 67);
 #define VIB_PLOT_X       4
 #define VIB_PLOT_Y       82
 #define VIB_WF_X         6
-#define VIB_WF_Y         192
+#define VIB_WF_Y         188                          // pulled up from 192; sits 1 px below the plot border
 #define VIB_WF_W         228                          // waterfall width  (frequency)
-#define VIB_WF_H         124                          // waterfall height (time)
+#define VIB_WF_H         131                          // grown from 124 → fills to screen bottom (y=319, border at 320 clipped)
 
 // FFT working buffers + Hann window — .bss (fast internal RAM), ~6 KB.
 static float vibFftReal[VIB_FFT_SIZE];
@@ -2312,6 +2312,10 @@ void refreshVibSpectrumValues(bool force) {
   tft.drawRGBBitmap(VIB_PLOT_X, VIB_PLOT_Y, vibPlotSprite.getBuffer(), 232, 104);
 
   // ── Waterfall — scroll down one row on a new frame, then blit ──
+  // Color is mapped through sqrt(frac) so moderate-energy rows still register
+  // visibly when yMax has been pushed up by a brief strong peak. Without the
+  // gamma the slow-decay yMax keeps the waterfall colors saturated near the
+  // floor for seconds after every spike, and moderate vibrations read as black.
   if (isNewFrame && vibWF) {
     memmove(vibWF + VIB_WF_W, vibWF,
             (size_t)(VIB_WF_H - 1) * VIB_WF_W * sizeof(uint16_t));
@@ -2322,7 +2326,9 @@ void refreshVibSpectrumValues(bool force) {
       uint16_t mx = 0;
       for (int b = b0; b < b1 && b < VIB_FFT_BINS; b++)
         if (b >= 2 && spec[b] > mx) mx = spec[b];
-      vibWF[px] = vibHeatColor((float)mx / yMax);
+      float frac = (float)mx / yMax;
+      if (frac < 0.0f) frac = 0.0f;
+      vibWF[px] = vibHeatColor(sqrtf(frac));
     }
   }
   if (vibWF)
@@ -4717,13 +4723,18 @@ void finalizeCalibration() {
   tft.setCursor(5, 318); 
   tft.print("CALIBRATING..."); 
 
+  // Defensive: only iterate over slots that actually hold captured data.
+  // Today all call sites guarantee pointsCaptured >= nPoints before invoking
+  // us, but a future code path could miss that check and we'd otherwise read
+  // uninitialised distPoints[] / fovPoints[] entries.
+  int fitN = (pointsCaptured < nPoints) ? pointsCaptured : nPoints;
   float sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-  for (int i = 0; i < nPoints; i++) {
+  for (int i = 0; i < fitN; i++) {
     sumX += distPoints[i]; sumY += fovPoints[i];
     sumXY += (distPoints[i] * fovPoints[i]); sumX2 += (distPoints[i] * distPoints[i]);
   }
-  
-  float denominator = (nPoints * sumX2 - sumX * sumX);
+
+  float denominator = (fitN * sumX2 - sumX * sumX);
   if (fabs(denominator) < 0.0001) {
     // V11 fix: clamp degenerate-fit R² to 0.9999f instead of 1.0f.
     // The boot heuristic at loadCalibration() rejects values within 1e-4 of
@@ -4731,17 +4742,19 @@ void finalizeCalibration() {
     // caused a silent round-trip where the next boot overwrote this value.
     CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y; CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9999f;
   } else {
-    CTRLX = (nPoints * sumXY - sumX * sumY) / denominator;
-    CTRLY = (sumY - CTRLX * sumX) / nPoints;
-    float sse = 0, sst = 0, meanY = sumY / nPoints;
-    for (int i = 0; i < nPoints; i++) {
+    CTRLX = (fitN * sumXY - sumX * sumY) / denominator;
+    CTRLY = (sumY - CTRLX * sumX) / fitN;
+    float sse = 0, sst = 0, meanY = sumY / fitN;
+    for (int i = 0; i < fitN; i++) {
       float predictedFov = CTRLX * distPoints[i] + CTRLY;
       float residual = fovPoints[i] - predictedFov;
       sse += (residual * residual);
       float diffY = fovPoints[i] - meanY;
       sst += (diffY * diffY);
     }
-    CALIB_ERROR = sqrt(sse / (nPoints - 2));
+    // n-2 dof for a 2-parameter fit; degenerate (fitN < 3) → use 1 to avoid
+    // div-by-zero. CALIB_R2 already handles its own degenerate case below.
+    CALIB_ERROR = sqrt(sse / ((fitN > 2) ? (fitN - 2) : 1));
     // Same clamp here for the sst≈0 degenerate case.
     CALIB_R2 = (sst > 0.0001) ? (1.0f - (sse / sst)) : 0.9999f;
   }

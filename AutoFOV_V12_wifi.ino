@@ -62,6 +62,13 @@ static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor p
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
 static char            otaPassword[13]     = {0};            // generated on first boot, stored in NVS "wifi"/"otapw"
+// Per-boot CSRF token. Required (via X-AutoFOV-Token header) on /cmd and
+// /forget-wifi, and (via ?tok= query string) on the WebSocket upgrade. The
+// dashboard fetches it once over HTTP from /token and reuses it on reconnects.
+// Cross-origin sites can request /token but the browser blocks the response
+// body without a matching Access-Control-Allow-Origin header — see the
+// startFullServer() CORS notes below.
+static char            csrfToken[17]       = {0};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -183,12 +190,70 @@ static void generateOtaPassword() {
     otaPassword[12] = '\0';
 }
 
+static void generateCsrfToken() {
+    static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghijkmnpqrstuvwxyz";
+    for (int i = 0; i < 16; i++)
+        csrfToken[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
+    csrfToken[16] = '\0';
+}
+
+// Signature names from the web must match /vibsig/*.bin's filename whitelist so
+// nothing from the network can write outside /vibsig/. `allowDotBin` is true
+// when the caller passes a full "name.bin" (vibDelSig); false for the bare
+// basename (vibCapture, the rename target).
+static bool vibNameSafe(const char* s, bool allowDotBin) {
+    if (!s || !*s) return false;
+    size_t len = strlen(s);
+    if (len > 30) return false;
+    size_t scanLen = len;
+    if (allowDotBin) {
+        if (len <= 4 || strcmp(s + len - 4, ".bin") != 0) return false;
+        scanLen = len - 4;
+        if (scanLen == 0) return false;
+    }
+    for (size_t i = 0; i < scanLen; i++) {
+        char c = s[i];
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// One-shot: at boot, drop any /vibsig/ entries whose name doesn't match the
+// whitelist. Prior firmware revisions accepted unsanitised names from the
+// network, so a previously-exploited install could carry malicious filenames
+// that would later be displayed by the dashboard. Names are also bounded to
+// the 23-char vibSigList slot so anything over-long never reaches the UI.
+static void vibSigCleanupLegacyNames() {
+    File dir = LittleFS.open("/vibsig");
+    if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return; }
+    String bad[8]; int badN = 0;
+    for (File e = dir.openNextFile(); e && badN < 8; e = dir.openNextFile()) {
+        if (!e.isDirectory()) {
+            const char* fn = e.name();
+            const char* slash = strrchr(fn, '/');
+            const char* base = slash ? slash + 1 : fn;
+            if (!vibNameSafe(base, true) || strlen(base) > 23) {
+                bad[badN++] = String("/vibsig/") + base;
+            }
+        }
+        e.close();
+    }
+    dir.close();
+    for (int i = 0; i < badN; i++) {
+        Serial.printf("[vib] cleanup: removing %s\n", bad[i].c_str());
+        LittleFS.remove(bad[i]);
+    }
+}
+
 static void startPortalMode();
 static void startStaMode(const String& ssid, const String& pass,
                           const String& staticIP, const String& gateway);
 static void startFullServer();
 static void handleWifiCommand(const char* key, const char* val);
-static void buildFullStateJson(String& out, bool includeCalGraph = true);
+static void buildFullStateJson(String& out, bool includeCalGraph = true,
+                                              bool includeOtaPassword = false);
 static void buildFastTelemJson(String& out);
 static void pushVibSpectrumBinary();             // V12 — binary WS frame
 static void buildSlowTelemJson(String& out);
@@ -260,7 +325,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // atomic on Xtensa so this won't crash, but a rare connect-time snapshot
         // may be slightly inconsistent. Acceptable for a one-shot push.
         String out;
-        buildFullStateJson(out);
+        buildFullStateJson(out, /*includeCalGraph=*/true, /*includeOtaPassword=*/true);
         client->text(out);
         Serial.printf("[WS] full-state push: %u bytes\n", out.length());
         Serial.flush();
@@ -327,6 +392,8 @@ void wifiSetup() {
     // Mount LittleFS — used for vibration signatures (/vibsig/*.bin)
     if (!LittleFS.begin(true)) {
         Serial.println("[WiFi] LittleFS mount failed — vibration signatures unavailable");
+    } else {
+        vibSigCleanupLegacyNames();   // drop any pre-sanitisation /vibsig/ files
     }
 
     // GPIO0 (BOOT button) held LOW at power-on → force captive portal
@@ -743,16 +810,44 @@ static void startStaMode(const String& ssid, const String& pass,
 // FULL HTTP + WEBSOCKET SERVER  (STA mode)
 // ─────────────────────────────────────────────────────────────────────────────
 static void startFullServer() {
-    // ── CORS / preflight ────────────────────────────────────────────────────
-    // Without these headers, opening the HTML directly from a local file://
-    // URL (or any cross-origin host) is blocked by the browser's CORS policy.
-    // DefaultHeaders adds the headers to every response served by httpServer.
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin",  "*");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+    // Generate the per-boot CSRF token before any handler that consults it
+    // is registered. Called from staConnectTask on Core 0 once WiFi.mode(STA)
+    // has already enabled the RF subsystem, so esp_random() is HW-backed here.
+    generateCsrfToken();
 
+    // ── CORS policy ─────────────────────────────────────────────────────────
+    // We DO NOT add any Access-Control-Allow-Origin headers. The dashboard is
+    // served from the device itself (same-origin), so it doesn't need CORS.
+    // Withholding the header is what blocks cross-origin pages from reading
+    // the CSRF token via /token or smuggling state changes into /cmd:
+    //   * /token: cross-origin GET succeeds, response body is hidden from JS
+    //   * /cmd:   Content-Type: application/json triggers a preflight that
+    //             fails without Allow-Origin, so the POST is never sent
+    //   * /forget-wifi: requires X-AutoFOV-Token (custom header → preflight)
+    //   * /ota:   requires X-OTA-Password (custom header → preflight)
+    //   * WS:     filter requires ?tok= matching csrfToken (see below)
+    // Earlier firmware advertised Access-Control-Allow-Origin: * which let any
+    // visited webpage drive the device while the user was on the same LAN.
+
+    // WS upgrade gate — reject every handshake that doesn't carry our token in
+    // the query string. Browser-based attackers can't read /token cross-origin,
+    // so they can't supply the value here. setFilter() runs before WS_EVT_CONNECT
+    // so unauthenticated clients never receive the full-state push.
+    wsServer.setFilter([](AsyncWebServerRequest* req) {
+        if (!req->hasParam("tok")) return false;
+        return req->getParam("tok")->value() == String(csrfToken);
+    });
     wsServer.onEvent(onWsEvent);
     httpServer.addHandler(&wsServer);
+
+    // GET /token — returns the per-boot CSRF token. Cross-origin sites can
+    // issue this request but their JS can't read the response body without an
+    // Access-Control-Allow-Origin header (which we never add).
+    httpServer.on("/token", HTTP_GET, [](AsyncWebServerRequest* req) {
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", csrfToken);
+        resp->addHeader("Cache-Control", "no-store");
+        req->send(resp);
+    });
 
     // Serve HTML from firmware PROGMEM (gzip — regenerate web_ui.h via tools/embed_html.py)
     httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -783,6 +878,12 @@ static void startFullServer() {
         [](AsyncWebServerRequest* req) { /* headers only — body handled below */ },
         nullptr,
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            // CSRF gate — see /token comment above.
+            if (!req->hasHeader("X-AutoFOV-Token") ||
+                req->header("X-AutoFOV-Token") != String(csrfToken)) {
+                req->send(403, "text/plain", "Forbidden");
+                return;
+            }
             if (len > 512) {
                 req->send(400, "text/plain", "Payload too large");
                 return;
@@ -818,6 +919,11 @@ static void startFullServer() {
     // and ESP.restart() (core-agnostic). The delay() blocks the async task but
     // we're about to reboot, so request servicing is irrelevant.
     httpServer.on("/forget-wifi", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!req->hasHeader("X-AutoFOV-Token") ||
+            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+            req->send(403, "text/plain", "Forbidden");
+            return;
+        }
         wifiPrefs.begin("wifi", false);
         wifiPrefs.clear();
         wifiPrefs.end();
@@ -864,6 +970,10 @@ static void startFullServer() {
     httpServer.on("/ota", HTTP_POST,
         // Completion handler — called after the last upload chunk.
         [](AsyncWebServerRequest* req) {
+            // If the upload handler already responded (auth fail / abort), bail.
+            // _tempObject is a small heap flag the framework free()s for us, so
+            // it must be malloc'd — never a literal pointer like (void*)1.
+            if (req->_tempObject != nullptr) return;
             bool ok = !Update.hasError();
             String msg = ok ? "OK" : String(Update.errorString());
             AsyncWebServerResponse* resp =
@@ -876,10 +986,20 @@ static void startFullServer() {
         // Upload chunk handler — streams the binary into the OTA partition.
         [](AsyncWebServerRequest* req, const String& filename,
            size_t index, uint8_t* data, size_t len, bool final) {
+            // Skip every subsequent chunk once we've decided to abort. Without
+            // this, an auth-failed first chunk still saw later Update.write()
+            // calls (no-ops since Update.begin never ran) and produced a second
+            // response in the completion handler.
+            if (req->_tempObject != nullptr) return;
+
+            auto markAborted = [req]() {
+                if (req->_tempObject == nullptr) req->_tempObject = malloc(1);
+            };
+
             if (!index) {
-                // Reject if the X-OTA-Password header doesn't match
                 if (!req->hasHeader("X-OTA-Password") ||
                     req->header("X-OTA-Password") != String(otaPassword)) {
+                    markAborted();
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
@@ -887,10 +1007,19 @@ static void startFullServer() {
                 Serial.printf("[OTA] start: %s\n", filename.c_str());
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
+                    markAborted();
+                    req->send(500, "text/plain", Update.errorString());
+                    otaInProgress = false;
+                    return;
                 }
             }
             if (Update.write(data, len) != len) {
                 Serial.printf("[OTA] write error: %s\n", Update.errorString());
+                Update.abort();
+                markAborted();
+                req->send(500, "text/plain", Update.errorString());
+                otaInProgress = false;
+                return;
             }
             if (final) {
                 if (Update.end(true)) {
@@ -1217,25 +1346,34 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     } else if (strcmp(key, "vibCapture") == 0) {
         // val = source name. Arms a capture; vibCapturePoll() finishes it.
-        if (val[0]) {
+        // vibNameSafe enforces [A-Za-z0-9_-]{1,30} so the eventual
+        // snprintf("/vibsig/%s.bin", val) in vibSigFinishCapture() can never
+        // escape the directory.
+        if (vibNameSafe(val, false)) {
             strncpy(vibSigCaptureName, val, sizeof(vibSigCaptureName) - 1);
             vibSigCaptureName[sizeof(vibSigCaptureName) - 1] = '\0';
             for (int b = 0; b < VIB_FFT_BINS; b++) vibSigAccum[b] = 0;
             vibSigFrames    = 0;
             vibCapSeqSeen   = vibSpecSeq.load();
             vibSigCapturing = true;
+        } else {
+            Serial.printf("[vib] vibCapture rejected: bad name\n");
         }
 
     } else if (strcmp(key, "vibDelSig") == 0) {
-        if (val[0]) {
+        // Whitelist the full "name.bin" so `..` and `/` can't slip through.
+        if (vibNameSafe(val, true)) {
             char path[48];
             snprintf(path, sizeof(path), "/vibsig/%s", val);
             LittleFS.remove(path);
             wifiPushVibSigList();
+        } else {
+            Serial.printf("[vib] vibDelSig rejected: bad name\n");
         }
 
     } else if (strcmp(key, "vibRename") == 0) {
         // val = "oldfile.bin|NewName" — rewrites the file under the new name.
+        // Both halves are whitelisted before any LittleFS path is built.
         const char* bar = strchr(val, '|');
         if (bar && bar[1]) {
             char oldbase[32];
@@ -1243,12 +1381,15 @@ static void handleWifiCommand(const char* key, const char* val) {
             if (ol > 31) ol = 31;
             strncpy(oldbase, val, ol);
             oldbase[ol] = '\0';
-            if (vibSigLoad(oldbase)) {
-                strncpy(vibSigLoaded.name, bar + 1, sizeof(vibSigLoaded.name) - 1);
+            const char* newName = bar + 1;
+            if (!vibNameSafe(oldbase, true) || !vibNameSafe(newName, false)) {
+                Serial.printf("[vib] vibRename rejected: bad name\n");
+            } else if (vibSigLoad(oldbase)) {
+                strncpy(vibSigLoaded.name, newName, sizeof(vibSigLoaded.name) - 1);
                 vibSigLoaded.name[sizeof(vibSigLoaded.name) - 1] = '\0';
                 char oldp[48], newp[48];
                 snprintf(oldp, sizeof(oldp), "/vibsig/%s", oldbase);
-                snprintf(newp, sizeof(newp), "/vibsig/%s.bin", bar + 1);
+                snprintf(newp, sizeof(newp), "/vibsig/%s.bin", newName);
                 File f = LittleFS.open(newp, "w");
                 if (f) { f.write((const uint8_t*)&vibSigLoaded, sizeof(VibSignature)); f.close(); }
                 if (strcmp(oldp, newp) != 0) LittleFS.remove(oldp);
@@ -1302,7 +1443,7 @@ static void handleWifiCommand(const char* key, const char* val) {
 // Full state — sent on GET /state and when a new WebSocket client connects.
 // Pass includeCalGraph=false on reconnect / periodic sends; true only on new-client
 // connect, after calibration changes, and on explicit /state requests.
-static void buildFullStateJson(String& out, bool includeCalGraph) {
+static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOtaPassword) {
     // Read all atomics in one burst
     uint32_t st  = sensorState.load(std::memory_order_acquire);
     uint32_t hst = sensorHealth.load(std::memory_order_acquire);
@@ -1389,6 +1530,12 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["wifiSSID"]   = WiFi.SSID();
     doc["wifiRSSI"]   = (int)WiFi.RSSI();
     doc["ntfyTopic"]  = ntfyTopic;
+    // OTA password ships only when an authenticated transport asks for it
+    // (true is passed only from the WS connect path, which is itself gated by
+    // wsServer.setFilter on the CSRF token). The unauthenticated GET /state
+    // route uses the default false and never sees it. Previously this rode the
+    // 5 s slow-telem broadcast and leaked to anyone who could open a socket.
+    if (includeOtaPassword) doc["otaPassword"] = otaPassword;
 
     // ── Vibration signatures ─────────────────────────────────────────────────
     // Include the saved signature filename list so the web client shows them
@@ -1570,7 +1717,8 @@ static void buildSlowTelemJson(String& out) {
     doc["psramFree"]     = ESP.getFreePsram()   / 1024;
     doc["psramTotal"]    = ESP.getPsramSize()   / 1024;
     doc["wifiSSID"]      = WiFi.SSID();
-    doc["otaPassword"]   = otaPassword;
+    // otaPassword removed from slow telem — it now ships only in the one-shot
+    // full-state push (buildFullStateJson, sent on authenticated WS connect).
     doc["obj"]           = currentobj;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
     doc["highReflMode"]  = highReflMode   ? 1 : 0;
