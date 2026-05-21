@@ -1214,6 +1214,24 @@
                             font-size:11px; color:var(--text-disabled); text-align:center;">
                     Ready
                 </div>
+
+                <!-- Rollback row — dual-OTA's "undo" button.  Hidden when the
+                     inactive slot is blank (first ever flash); the device sets
+                     state.rollbackAvailable from /state. -->
+                <div id="ota-rollback-row" style="display:none; position:absolute; left:10px; top:268px; right:10px;">
+                    <div style="height:1px; background:#303030; margin-bottom:6px;"></div>
+                    <div id="ota-rollback-built"
+                         style="font-size:9px; color:#6a9ab0; text-align:center; margin-bottom:2px;">
+                        Previous: —
+                    </div>
+                    <div id="ota-rollback-btn" class="gfx-btn"
+                         style="position:relative; left:0; top:0; width:100%; height:30px;
+                                background:#3a2a0d; border:1px solid #7a5a1a; font-size:11px;"
+                         onclick="otaRollbackClicked()">
+                        ROLLBACK TO PREVIOUS
+                    </div>
+                </div>
+
             </div>
 
             <!-- ===================== CONFIRM MODAL ===================== -->
@@ -1284,6 +1302,37 @@
       .vibp-pane canvas { flex:1 1 auto; width:100%; min-height:0;
         background:#040d0b; border:1px solid #1f3a33; display:block; }
     </style>
+
+    <!-- OTA reboot overlay — viewport-scoped so it veils the bezel, the device
+         frame, and the connection-status row all at once.  Shown once the flash
+         hits 100% (or when the user triggers a rollback).  JS polls /token and
+         reloads on first response from the new boot; manual button surfaces if
+         the device hasn't returned in 20 s. -->
+    <style>
+      #ota-reboot-overlay { display:none; position:fixed; inset:0; z-index:600;
+        background:#1a1a1a; flex-direction:column; align-items:center;
+        justify-content:center; padding:0 28px; text-align:center;
+        color:#cfe7df; font-size:13px; line-height:1.55; font-family:monospace; }
+      #ota-reboot-overlay.open { display:flex; }
+      #ota-reboot-overlay .otaTitle { font-size:18px; font-weight:bold;
+        color:#3ddb7a; letter-spacing:2px; margin-bottom:20px; }
+      #ota-reboot-overlay .otaSpin  { width:54px; height:54px; border:4px solid #2a2a2a;
+        border-top-color:#3ddb7a; border-radius:50%;
+        animation:otaSpin 0.9s linear infinite; margin-bottom:22px; }
+      @keyframes otaSpin { to { transform: rotate(360deg); } }
+      #ota-reboot-manual { display:none; cursor:pointer; margin-top:18px;
+        padding:10px 22px; background:#1a4a3a; border:1px solid #3ddb7a;
+        border-radius:4px; color:#cfe7df; font-size:13px; letter-spacing:1px; }
+    </style>
+    <div id="ota-reboot-overlay">
+      <div class="otaTitle">DEVICE REBOOTING</div>
+      <div class="otaSpin"></div>
+      <div id="ota-reboot-msg">
+        Flashing complete.<br>Waiting for device to come back online…
+      </div>
+      <div id="ota-reboot-manual" onclick="location.reload()">REFRESH NOW</div>
+    </div>
+
     <div id="vib-panel">
       <div id="vibp-head">
         <span id="vibp-head-left">
@@ -1371,7 +1420,7 @@
         psramFree: null, psramTotal: null,
         // About / build info (fallbacks shown until device connects and overrides)
         buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
-        partKB: null, lastOtaKB: null,
+        partKB: null, rollbackAvailable: false, rollbackBuilt: null,
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
@@ -4149,17 +4198,48 @@
         const btn = document.getElementById('ota-flash-btn');
         btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
         document.getElementById('ota-file-input').value = '';
+        updateOtaRollbackUI();
+    }
+    function updateOtaRollbackUI() {
+        const row   = document.getElementById('ota-rollback-row');
+        const built = document.getElementById('ota-rollback-built');
+        if (!row) return;
+        if (state.rollbackAvailable) {
+            row.style.display = '';
+            built.textContent = 'Previous build: ' + (state.rollbackBuilt || '—');
+        } else {
+            row.style.display = 'none';
+        }
     }
     function otaFileSelected(input) {
         const f = input.files[0];
         if (!f) return;
-        document.getElementById('ota-filename').textContent =
-            f.name + '  (' + (f.size / 1048576).toFixed(2) + ' MB)';
-        document.getElementById('ota-filename').style.color = 'var(--accent-green)';
+        const nameEl = document.getElementById('ota-filename');
+        nameEl.textContent = f.name + '  (' + (f.size / 1048576).toFixed(2) + ' MB)';
+        nameEl.style.color = 'var(--accent-green)';
+        // Pre-flight: the bin must fit in one OTA slot.  partKB comes from the
+        // device's /state so we know the exact slot size (1856 KB today).
+        if (state.partKB && f.size > state.partKB * 1024) {
+            nameEl.textContent += ' — TOO LARGE for ' + state.partKB + 'K slot';
+            nameEl.style.color = '#ff4444';
+            const btn = document.getElementById('ota-flash-btn');
+            btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
+            return;
+        }
         const btn = document.getElementById('ota-flash-btn');
         btn.style.opacity = ''; btn.style.pointerEvents = '';
     }
-    function otaFlash() {
+    // Compute the SHA-256 of the file via the browser's WebCrypto API.  The
+    // result is sent as X-OTA-SHA256; the device hashes the upload stream with
+    // mbedtls and refuses to flip the boot partition on mismatch.
+    async function otaComputeSha256(file) {
+        const buf  = await file.arrayBuffer();
+        const hash = await crypto.subtle.digest('SHA-256', buf);
+        const hex  = Array.from(new Uint8Array(hash))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+        return hex;
+    }
+    async function otaFlash() {
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
         if (!state.otaPassword) {
@@ -4176,7 +4256,18 @@
         // Disable button and reset bar for the upload run
         btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
         fill.style.width = '0%'; pct.textContent = '';
-        st.style.color = 'var(--text-disabled)'; st.textContent = 'Uploading…';
+        st.style.color = 'var(--text-disabled)'; st.textContent = 'Computing checksum…';
+
+        let sha;
+        try {
+            sha = await otaComputeSha256(file);
+        } catch (e) {
+            st.textContent = 'Checksum failed: ' + e.message;
+            st.style.color = '#ff4444';
+            btn.style.opacity = ''; btn.style.pointerEvents = '';
+            return;
+        }
+        st.textContent = 'Uploading…';
 
         const fd = new FormData();
         fd.append('firmware', file, file.name);
@@ -4184,6 +4275,7 @@
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
         xhr.setRequestHeader('X-OTA-Password', state.otaPassword);
+        xhr.setRequestHeader('X-OTA-SHA256',   sha);
 
         xhr.upload.onprogress = e => {
             if (!e.lengthComputable) return;
@@ -4191,16 +4283,15 @@
             fill.style.background = '#2a7abf';
             fill.style.width = p + '%';
             pct.textContent = p + '%';
-            st.textContent = p < 100 ? 'Uploading… ' + p + '%' : 'Flashing…';
+            st.textContent = p < 100 ? 'Uploading… ' + p + '%' : 'Verifying & flashing…';
         };
         xhr.onload = () => {
             if (xhr.status === 200) {
                 fill.style.width = '100%'; fill.style.background = '#2abf6a';
                 pct.textContent = '100%';
-                st.textContent = 'Done! Device is rebooting…';
+                st.textContent = 'Done — rebooting';
                 st.style.color = '#3ddb7a';
-                // Reconnect after the device has had time to reboot (~5 s)
-                setTimeout(() => connectWifi(), 6000);
+                otaShowRebootOverlay();
             } else {
                 st.textContent = 'Error: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
@@ -4210,12 +4301,54 @@
         };
         xhr.onerror = () => {
             // Connection drop mid-upload can be the device rebooting mid-transfer
-            // (shouldn't happen) or a real network error.
+            // (shouldn't happen) or a real network error.  The device's stall
+            // watchdog will free its OTA state after 10 s so a retry will work.
             st.textContent = 'Connection lost — check device and retry';
             st.style.color = '#ff9900';
             btn.style.opacity = ''; btn.style.pointerEvents = '';
         };
         xhr.send(fd);
+    }
+    // Reboot overlay + auto-reload.  After Update.end() the device runs
+    // ESP.restart() ~500 ms later, then takes ~3–4 s to reconnect to WiFi.
+    // Polling /token is enough to know the new firmware is up — the endpoint
+    // returns immediately as soon as the server is listening, and the new boot
+    // generates a fresh CSRF token, so reloading is the cleanest re-sync.
+    function otaShowRebootOverlay() {
+        const overlay = document.getElementById('ota-reboot-overlay');
+        if (!overlay) { setTimeout(() => location.reload(), 6000); return; }
+        overlay.classList.add('open');
+        const start = Date.now();
+        const manual = document.getElementById('ota-reboot-manual');
+        // Give the chip ~2.5 s to actually reboot before we start probing — the
+        // first few /token hits would land on the OLD firmware otherwise and
+        // tempt us to reload too early.
+        setTimeout(otaPollDeviceBack, 2500);
+        // Fallback: if it isn't back in 20 s, surface the manual reload button.
+        setTimeout(() => { if (manual) manual.style.display = 'inline-block'; }, 20000);
+        function otaPollDeviceBack() {
+            fetch((wifiBase || '') + '/token', { cache: 'no-store' })
+                .then(r => r.ok ? r.text() : Promise.reject(r.status))
+                .then(() => location.reload())
+                .catch(() => {
+                    if (Date.now() - start > 60000) return;  // give up after 60 s
+                    setTimeout(otaPollDeviceBack, 800);
+                });
+        }
+    }
+    function otaRollbackClicked() {
+        if (!state.rollbackAvailable) return;
+        showConfirm(
+            'Roll back to the previous firmware?\n' +
+            'Built: ' + (state.rollbackBuilt || '—') + '\n\n' +
+            'The device will reboot into the inactive OTA slot.',
+            () => {
+                sendCommand('otaRollback', 1);
+                // The rollback path mirrors the flash path: device reboots,
+                // page should reload onto the previous firmware.
+                otaShowRebootOverlay();
+            }
+        );
     }
 
     function disconnectWifi() {
@@ -4604,6 +4737,7 @@
 
         // ── About / build info ──
         let aboutDirty = false;
+        let otaDirty   = false;   // rollback availability lives in /state too
         if (data.buildVersion !== undefined) { state.buildVersion = data.buildVersion; aboutDirty = true; }
         if (data.buildCommit  !== undefined) { state.buildCommit  = data.buildCommit;  aboutDirty = true; }
         if (data.buildDate    !== undefined) { state.buildDate    = data.buildDate;    aboutDirty = true; }
@@ -4612,10 +4746,13 @@
         if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; aboutDirty = true; memDirty = true; }
         if (data.partKB      !== undefined) { state.partKB      = data.partKB;      memDirty = true; }
         if (data.partRunning !== undefined) { state.partRunning = data.partRunning; memDirty = true; }
+        if (data.rollbackAvailable !== undefined) { state.rollbackAvailable = !!data.rollbackAvailable; otaDirty = true; }
+        if (data.rollbackBuilt     !== undefined) { state.rollbackBuilt     = data.rollbackBuilt;     otaDirty = true; }
         if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; }
         if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();
+        if (otaDirty   && state.screen === 'screen-ota')   updateOtaRollbackUI();
 
         // ── WiFi info screen ──
         if (data.wifiSSID !== undefined) {

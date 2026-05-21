@@ -47,6 +47,7 @@
 #include <Update.h>
 #include <HTTPClient.h>
 #include <esp_ota_ops.h>      // esp_ota_get_running_partition() — running OTA slot
+#include <mbedtls/sha256.h>   // end-to-end OTA integrity check
 #include "data/web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,6 +85,14 @@ static uint32_t        lastSlowTelemMs     = 0;
 static uint32_t        lastVibPushMs       = 0;       // V12: vibration spectrum stream timer
 static bool            vibWebPanelOpen     = false;   // V12: spectrum stream gated on this
 static volatile bool   otaInProgress       = false;   // suppresses telemetry during OTA flash
+// OTA stall watchdog + integrity check.  If the browser tab dies between
+// chunks the upload handler never sees `final`, so wifiLoop() trips
+// Update.abort() once otaLastChunkMs goes stale.  The SHA-256 context is fed
+// each chunk and compared against the client's X-OTA-SHA256 header at final.
+static uint32_t                otaLastChunkMs   = 0;
+static mbedtls_sha256_context  otaShaCtx;
+static bool                    otaShaActive     = false;   // ctx initialised?
+static char                    otaExpectedSha[65] = {0};   // hex, 64 chars + NUL
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVER OBJECTS
@@ -480,6 +489,20 @@ void wifiLoop() {
         Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
         Serial.flush();
         handleWifiCommand(cmd.key, cmd.val);
+    }
+
+    // ── OTA stall watchdog ───────────────────────────────────────────────────
+    // If the browser closes the upload mid-flight, the upload handler never
+    // sees `final` and otaInProgress stays true forever — silently muting
+    // telemetry.  Once chunks stop arriving for >10 s, tear the half-flash
+    // down so a retry can begin from a clean slate.
+    if (otaInProgress && otaLastChunkMs &&
+        (uint32_t)(millis() - otaLastChunkMs) > 10000UL) {
+        Serial.println("[OTA] stall watchdog — aborting half-finished flash");
+        Update.abort();
+        if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+        otaInProgress  = false;
+        otaLastChunkMs = 0;
     }
 
     // ── Heap watermark log ──────────────────────────────────────────────────
@@ -987,7 +1010,11 @@ static void startFullServer() {
             resp->addHeader("Connection", "close");
             req->send(resp);
             if (ok) { delay(500); ESP.restart(); }
-            else    { otaInProgress = false; }
+            else {
+                if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+                otaInProgress  = false;
+                otaLastChunkMs = 0;
+            }
         },
         // Upload chunk handler — streams the binary into the OTA partition.
         [](AsyncWebServerRequest* req, const String& filename,
@@ -1009,30 +1036,82 @@ static void startFullServer() {
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
-                otaInProgress = true;
-                Serial.printf("[OTA] start: %s\n", filename.c_str());
+                // SHA-256 verification is required.  The web UI computes the
+                // digest before uploading and sends it as X-OTA-SHA256.  A bad
+                // digest at `final` triggers Update.abort() so the bootloader
+                // never flips to a corrupt image.
+                if (!req->hasHeader("X-OTA-SHA256")) {
+                    markAborted();
+                    req->send(400, "text/plain", "Missing X-OTA-SHA256");
+                    return;
+                }
+                String sha = req->header("X-OTA-SHA256");
+                sha.toLowerCase();
+                if (sha.length() != 64) {
+                    markAborted();
+                    req->send(400, "text/plain", "Bad SHA-256");
+                    return;
+                }
+                strncpy(otaExpectedSha, sha.c_str(), sizeof(otaExpectedSha) - 1);
+                otaExpectedSha[sizeof(otaExpectedSha) - 1] = '\0';
+                otaInProgress  = true;
+                otaLastChunkMs = millis();
+                if (otaShaActive) mbedtls_sha256_free(&otaShaCtx);
+                mbedtls_sha256_init(&otaShaCtx);
+                mbedtls_sha256_starts(&otaShaCtx, 0 /* 0 = SHA-256, not SHA-224 */);
+                otaShaActive = true;
+                Serial.printf("[OTA] start: %s (expect sha %s…)\n",
+                              filename.c_str(), otaExpectedSha);
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
                     markAborted();
                     req->send(500, "text/plain", Update.errorString());
+                    mbedtls_sha256_free(&otaShaCtx); otaShaActive = false;
                     otaInProgress = false;
                     return;
                 }
             }
+            otaLastChunkMs = millis();
+            if (otaShaActive) mbedtls_sha256_update(&otaShaCtx, data, len);
             if (Update.write(data, len) != len) {
                 Serial.printf("[OTA] write error: %s\n", Update.errorString());
                 Update.abort();
                 markAborted();
                 req->send(500, "text/plain", Update.errorString());
+                if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
                 otaInProgress = false;
                 return;
             }
             if (final) {
+                // Compare SHA-256 before committing.  A mismatch means the file
+                // arrived corrupt (or the user picked the wrong .bin); refuse to
+                // flip the boot partition so the running firmware is preserved.
+                uint8_t digest[32];
+                if (otaShaActive) {
+                    mbedtls_sha256_finish(&otaShaCtx, digest);
+                    mbedtls_sha256_free(&otaShaCtx);
+                    otaShaActive = false;
+                }
+                char hex[65];
+                for (int i = 0; i < 32; i++) snprintf(hex + i*2, 3, "%02x", digest[i]);
+                hex[64] = '\0';
+                if (strcmp(hex, otaExpectedSha) != 0) {
+                    Serial.printf("[OTA] sha mismatch: got %s, expected %s\n",
+                                  hex, otaExpectedSha);
+                    Update.abort();
+                    markAborted();
+                    req->send(400, "text/plain", "SHA-256 mismatch — refusing to flash");
+                    otaInProgress  = false;
+                    otaLastChunkMs = 0;
+                    return;
+                }
                 if (Update.end(true)) {
-                    Serial.printf("[OTA] success: %u bytes\n", index + len);
+                    Serial.printf("[OTA] success: %u bytes, sha ok\n",
+                                  (unsigned)(index + len));
                 } else {
                     Serial.printf("[OTA] end error: %s\n", Update.errorString());
                 }
+                otaLastChunkMs = 0;
             }
         }
     );
@@ -1292,6 +1371,28 @@ static void handleWifiCommand(const char* key, const char* val) {
     } else if (strcmp(key, "testAlert") == 0) {
         wifiNotifyTestAlert();
 
+    // ── OTA rollback ─────────────────────────────────────────────────────────
+    //    Flip the boot partition to the *inactive* OTA slot (the previous
+    //    firmware, still intact thanks to dual-OTA) and reboot.  Refuses if the
+    //    inactive slot is blank — the first ever OTA flash on a fresh device
+    //    leaves it that way, and rolling back to 0xFF flash would brick.
+    } else if (strcmp(key, "otaRollback") == 0) {
+        const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
+        uint8_t magic = 0;
+        if (!next || esp_partition_read(next, 0, &magic, 1) != ESP_OK || magic != 0xE9) {
+            Serial.println("[OTA] rollback refused — inactive slot has no valid image");
+            return;
+        }
+        Serial.printf("[OTA] rolling back to %s\n", next->label);
+        esp_err_t err = esp_ota_set_boot_partition(next);
+        if (err != ESP_OK) {
+            Serial.printf("[OTA] rollback failed: %s\n", esp_err_to_name(err));
+            return;
+        }
+        Serial.flush();
+        delay(200);
+        ESP.restart();
+
     // ── IR remote (MJKZZ stacking controller) ────────────────────────────────
     //    val = button name; fires the matching NEC code over the IR LED.
     //    Runs on Core 1 via wifiLoop(), so the blocking sendNEC() is safe here.
@@ -1537,6 +1638,27 @@ static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOt
         const esp_partition_t* run = esp_ota_get_running_partition();
         doc["partRunning"] = (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1)
                              ? "ota_1" : "ota_0";
+    }
+    // Rollback target — the inactive OTA slot.  Only advertise rollback to the
+    // UI if its first byte matches the ESP image magic (0xE9); a freshly-flashed
+    // factory image leaves the other slot blank and rolling back to it would
+    // brick the device.
+    {
+        const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
+        bool ok = false;
+        if (next) {
+            uint8_t magic = 0;
+            if (esp_partition_read(next, 0, &magic, 1) == ESP_OK && magic == 0xE9) {
+                ok = true;
+                esp_app_desc_t desc;
+                if (esp_ota_get_partition_description(next, &desc) == ESP_OK) {
+                    char built[40];
+                    snprintf(built, sizeof(built), "%s %s", desc.date, desc.time);
+                    doc["rollbackBuilt"] = built;
+                }
+            }
+        }
+        doc["rollbackAvailable"] = ok;
     }
     // SoC junction temperature.  arduino-esp32 v3.x returns Celsius on the S3
     // (older cores returned Fahrenheit — confirm the unit if porting).  Useful
