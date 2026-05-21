@@ -1287,6 +1287,7 @@
         sourceLines: 5818, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
+        otaPassword: '',
         // isCustomCalib flag (false = factory defaults shown)
         isCustomCalib: false,
     };
@@ -3654,6 +3655,11 @@
     function otaFlash() {
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
+        if (!state.otaPassword) {
+            document.getElementById('ota-status').textContent =
+                'Waiting for device… check the WiFi screen on the device for the OTA password.';
+            return;
+        }
         const file = input.files[0];
         const st   = document.getElementById('ota-status');
         const fill = document.getElementById('ota-progress-fill');
@@ -3670,7 +3676,7 @@
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
-        xhr.setRequestHeader('X-OTA-Password', 'autofov-ota');
+        xhr.setRequestHeader('X-OTA-Password', state.otaPassword);
 
         xhr.upload.onprogress = e => {
             if (!e.lengthComputable) return;
@@ -4094,6 +4100,7 @@
             state.wifiSSID = data.wifiSSID;
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
         }
+        if (data.otaPassword !== undefined) state.otaPassword = data.otaPassword;
         if (data.ntfyTopic !== undefined) {
             state.ntfyTopic = data.ntfyTopic;
             if (state.screen === 'screen-autoremote') ntfyScreenInit();

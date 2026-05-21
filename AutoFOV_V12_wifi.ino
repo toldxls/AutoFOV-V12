@@ -61,7 +61,7 @@ static const uint32_t  RECONNECT_INTERVAL_MS = 30000UL;  // retry every 30 s
 static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor push — matches VL53L4CX timing budget 1:1
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
-static const char*     OTA_PASSWORD        = "autofov-ota";  // change this
+static char            otaPassword[13]     = {0};            // generated on first boot, stored in NVS "wifi"/"otapw"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -174,6 +174,13 @@ static void generatePortalCode() {
     for (int i = 0; i < 8; i++)
         portalCode[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
     portalCode[8] = '\0';
+}
+
+static void generateOtaPassword() {
+    static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (int i = 0; i < 12; i++)
+        otaPassword[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
+    otaPassword[12] = '\0';
 }
 
 static void startPortalMode();
@@ -334,7 +341,19 @@ void wifiSetup() {
     String staticIP = wifiPrefs.getString("ip",    "");
     String gateway  = wifiPrefs.getString("gw",    "");
     ntfyTopic       = wifiPrefs.getString("ntfy",  "");
+    String savedOta = wifiPrefs.getString("otapw", "");
     wifiPrefs.end();
+
+    // Generate a per-device OTA password on first boot; persist it for future boots.
+    if (savedOta.length() == 12) {
+        savedOta.toCharArray(otaPassword, sizeof(otaPassword));
+    } else {
+        generateOtaPassword();
+        wifiPrefs.begin("wifi", false);
+        wifiPrefs.putString("otapw", String(otaPassword));
+        wifiPrefs.end();
+        Serial.printf("[OTA] new password generated: %s\n", otaPassword);
+    }
 
     if (forcePortal || ssid.isEmpty()) {
         if (forcePortal) Serial.println("[WiFi] BOOT held — forcing captive portal");
@@ -860,7 +879,7 @@ static void startFullServer() {
             if (!index) {
                 // Reject if the X-OTA-Password header doesn't match
                 if (!req->hasHeader("X-OTA-Password") ||
-                    req->header("X-OTA-Password") != OTA_PASSWORD) {
+                    req->header("X-OTA-Password") != String(otaPassword)) {
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
@@ -1247,7 +1266,19 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     // ── AutoRemote notify URL ─────────────────────────────────────────────────
     } else if (strcmp(key, "ntfyTopic") == 0) {
-        ntfyTopic = String(val);
+        // Validate: ntfy.sh topics are alphanumeric, hyphen, underscore only.
+        // Reject anything else to prevent SSRF via URL control characters (e.g. @host).
+        String candidate = String(val);
+        bool valid = candidate.length() <= 64;
+        for (int i = 0; valid && i < (int)candidate.length(); i++) {
+            char c = candidate[i];
+            if (!isalnum((unsigned char)c) && c != '-' && c != '_') valid = false;
+        }
+        if (!valid) {
+            Serial.println("[NTFY] invalid topic rejected");
+            return;
+        }
+        ntfyTopic = candidate;
         wifiPrefs.begin("wifi", false);
         wifiPrefs.putString("ntfy", ntfyTopic);
         wifiPrefs.end();
@@ -1533,12 +1564,13 @@ static void buildSettingsJson(String& out) {
 
 // Slow telemetry — 5 s memory stats
 static void buildSlowTelemJson(String& out) {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     doc["freeHeap"]      = ESP.getFreeHeap()    / 1024;
     doc["lowestFree"]    = ESP.getMinFreeHeap() / 1024;
     doc["psramFree"]     = ESP.getFreePsram()   / 1024;
     doc["psramTotal"]    = ESP.getPsramSize()   / 1024;
     doc["wifiSSID"]      = WiFi.SSID();
+    doc["otaPassword"]   = otaPassword;
     doc["obj"]           = currentobj;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
     doc["highReflMode"]  = highReflMode   ? 1 : 0;
@@ -1553,9 +1585,10 @@ static void buildSlowTelemJson(String& out) {
 //   (Arduino builds all .ino files into one TU in alphabetical order, with the
 //   sketch-name file first.)
 // ─────────────────────────────────────────────────────────────────────────────
-bool        wifiIsConnected()   { return wifiConnected; }
-bool        wifiIsPortal()      { return wifiServerMode == WMODE_PORTAL; }
-const char* wifiGetPortalCode() { return portalCode; }
+bool        wifiIsConnected()    { return wifiConnected; }
+bool        wifiIsPortal()       { return wifiServerMode == WMODE_PORTAL; }
+const char* wifiGetPortalCode()  { return portalCode; }
+const char* wifiGetOtaPassword() { return otaPassword; }
 int    wifiGetRSSI()     { return wifiConnected ? (int)WiFi.RSSI() : 0; }
 String wifiGetIP()       { if (wifiServerMode == WMODE_PORTAL) return AP_IP.toString();
                            return wifiConnected ? WiFi.localIP().toString() : ""; }

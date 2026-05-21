@@ -514,11 +514,12 @@ void setSmoothFont(uint8_t size);
 
 // patched3: forward declarations for WiFi tab accessors (defined in patched3_wifi.ino).
 // They are used by drawWifiIndicator() / drawWifiInfoUI() in this file.
-bool   wifiIsConnected();
-bool   wifiIsPortal();
-int    wifiGetRSSI();
-String wifiGetIP();
-String wifiGetSSID();
+bool        wifiIsConnected();
+bool        wifiIsPortal();
+int         wifiGetRSSI();
+String      wifiGetIP();
+String      wifiGetSSID();
+const char* wifiGetOtaPassword();
 void   drawWifiIndicator();   // defined below — forward-decl needed by wifi tab calls
 
 // V11 polish: corner radius for buttons and slider rails.
@@ -3053,14 +3054,18 @@ void refreshWifiInfoValues() {
     sensorRow("Mode:", "STA (offline)",    COLOR_RED, 138);
   }
 
-  // Clear the hint area (y=168..195) — content depends on connection state
+  // Clear the hint area (y=168..207) — content depends on connection state
   // and can change between refreshes (e.g. portal→connected after restart).
-  tft.fillRect(0, 168, 240, 28, THEME_BG);
+  tft.fillRect(0, 168, 240, 40, THEME_BG);
   tft.setFont(); tft.setTextSize(1);
   if (wifiIsConnected()) {
     tft.setTextColor(themedText(COLOR_DARKGREY));
     String hint = "http://" + ip;
     tft.setCursor(10, 175); tft.print(hint);
+    // Show OTA password so user can flash firmware from the web UI
+    tft.setTextColor(COLOR_ORANGE);
+    tft.setCursor(10, 189);
+    tft.print("OTA pw: "); tft.print(wifiGetOtaPassword());
   } else if (wifiIsPortal()) {
     tft.setTextColor(COLOR_ORANGE);
     tft.setCursor(10, 175); tft.print("1. Join 'AutoFOV-Setup' with password");
