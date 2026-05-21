@@ -509,14 +509,21 @@ void wifiLoop() {
 
     // ── OTA stall watchdog ───────────────────────────────────────────────────
     // If the browser closes the upload mid-flight, the upload handler never
-    // sees `final` and otaInProgress stays true forever — silently muting
-    // telemetry.  Once chunks stop arriving for >10 s, tear the half-flash
-    // down so a retry can begin from a clean slate.
+    // sees `final` and otaInProgress stays true — silently muting telemetry.
+    // After 30 s of silence we resume telemetry, and nothing else.
+    //
+    // CRITICAL: this runs on Core 1 (wifiLoop) while the OTA upload handler
+    // runs on Core 0 (AsyncTCP).  Update.h and the mbedtls context are NOT
+    // thread-safe — a cross-core Update.abort() here races _writeBuffer()'s
+    // use of the shared _buffer and corrupts the Updater state machine,
+    // leaving _error stuck at ABORT.  That was the root cause of the
+    // persistent "Rejected: Aborted" failures.  So this watchdog touches
+    // ONLY the plain bool/uint32 flags; the leftover Update session and SHA
+    // context are torn down safely on Core 0 by the next OTA request's
+    // pre-flight cleanup.
     if (otaInProgress && otaLastChunkMs &&
-        (uint32_t)(millis() - otaLastChunkMs) > 10000UL) {
-        Serial.println("[OTA] stall watchdog — aborting half-finished flash");
-        Update.abort();
-        if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+        (uint32_t)(millis() - otaLastChunkMs) > 30000UL) {
+        Serial.println("[OTA] stall watchdog — upload abandoned, resuming telemetry");
         otaInProgress  = false;
         otaLastChunkMs = 0;
     }
@@ -1055,19 +1062,22 @@ static void startFullServer() {
                     req->send(401, "text/plain", "Unauthorized");
                     return;
                 }
-                // Stale state from a previous attempt that didn't clean up
-                // (e.g. browser tab closed mid-upload before the watchdog
-                // fired).  Force a clean slate so the new request doesn't
-                // inherit a half-erased partition or a live SHA context —
-                // Update.abort() resets the Update.h state machine in place.
-                if (otaInProgress) {
-                    Serial.println("[OTA] stale otaInProgress at request start — resetting");
+                // Pre-flight cleanup — runs on Core 0, the ONLY safe place to
+                // touch Update.h / mbedtls.  A previous OTA abandoned mid-
+                // upload (browser tab closed) leaves the Updater "running"
+                // (_size > 0) and the SHA context allocated; the stall
+                // watchdog deliberately does NOT clear those to avoid a
+                // cross-core race.  Tear them down here so begin() starts
+                // from a guaranteed-clean state.  Update.isRunning() is the
+                // Updater's own "session live" flag.
+                if (Update.isRunning()) {
+                    Serial.println("[OTA] leftover Update session — aborting before begin");
                     Update.abort();
-                    if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
-                    otaInProgress      = false;
-                    otaLastChunkMs     = 0;
-                    otaRestartPendingMs = 0;
                 }
+                if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+                otaInProgress       = false;
+                otaLastChunkMs      = 0;
+                otaRestartPendingMs = 0;
                 // SHA-256 verification is best-effort.  The web UI computes
                 // the digest before uploading and sends it as X-OTA-SHA256;
                 // when present, a mismatch at `final` triggers Update.abort()
