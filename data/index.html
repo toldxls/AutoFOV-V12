@@ -4443,9 +4443,9 @@
         if (!state.rollbackAvailable) return;
         showConfirm(
             'Boot the firmware in the inactive OTA slot?\n' +
-            'Built: ' + (state.rollbackBuilt || '—') + '\n\n' +
-            'Note: this is whatever was last written to that slot — ' +
-            'after a USB recovery flash it may be quite old.',
+            'Version: ' + (state.rollbackBuilt || '—') + '\n\n' +
+            'Note: this is whatever was last written to that slot. ' +
+            '"unknown" means it predates version tracking.',
             () => {
                 sendCommand('otaRollback', 1);
                 // The rollback path mirrors the flash path: device reboots,

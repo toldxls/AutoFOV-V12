@@ -98,6 +98,12 @@ static char                    otaExpectedSha[65] = {0};   // hex, 64 chars + NU
 // browser sees a connection drop instead of the 200 OK.  We stash a timestamp
 // and let wifiLoop() (Core 1) restart after the response has had time to flush.
 static uint32_t                otaRestartPendingMs = 0;
+// Version string of the firmware in the *inactive* OTA slot — the rollback
+// target.  Read once at boot from NVS (see wifiSetup).  esp_app_desc_t can't
+// supply this: arduino-esp32 ships a precompiled esp_app_desc, so its
+// date/time is frozen at the core's build, identical for every slot.  Each
+// firmware instead self-records its BUILD_VERSION against its running slot.
+static String                  otaRollbackInfo = "";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVER OBJECTS
@@ -435,6 +441,28 @@ void wifiSetup() {
         wifiPrefs.putString("otapw", String(otaPassword));
         wifiPrefs.end();
         Serial.printf("[OTA] new password generated: %s\n", otaPassword);
+    }
+
+    // Stamp this firmware's version against the OTA slot it booted from, and
+    // cache the *other* slot's stamp as the rollback target.  Refreshed every
+    // boot so the running slot's record is always accurate; the inactive
+    // slot's record only changes when an OTA flashes it (which reboots us),
+    // so caching it here is safe for the whole session.  Keys live in the
+    // existing "wifi" NVS namespace.
+    {
+        const esp_partition_t* run = esp_ota_get_running_partition();
+        bool run1 = (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1);
+        const char* myKey    = run1 ? "fw_ota1" : "fw_ota0";
+        const char* otherKey = run1 ? "fw_ota0" : "fw_ota1";
+        String mine = String("v") + BUILD_VERSION + "  " + __DATE__;
+        wifiPrefs.begin("wifi", false);
+        if (wifiPrefs.getString(myKey, "") != mine)
+            wifiPrefs.putString(myKey, mine);
+        otaRollbackInfo = wifiPrefs.getString(otherKey, "");
+        wifiPrefs.end();
+        Serial.printf("[OTA] running %s as %s; rollback target = %s\n",
+                      run1 ? "ota_1" : "ota_0", mine.c_str(),
+                      otaRollbackInfo.length() ? otaRollbackInfo.c_str() : "(unknown)");
     }
 
     if (forcePortal || ssid.isEmpty()) {
@@ -1709,12 +1737,12 @@ static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOt
             uint8_t magic = 0;
             if (esp_partition_read(next, 0, &magic, 1) == ESP_OK && magic == 0xE9) {
                 ok = true;
-                esp_app_desc_t desc;
-                if (esp_ota_get_partition_description(next, &desc) == ESP_OK) {
-                    char built[40];
-                    snprintf(built, sizeof(built), "%s %s", desc.date, desc.time);
-                    doc["rollbackBuilt"] = built;
-                }
+                // otaRollbackInfo is the inactive slot's self-recorded version
+                // (see wifiSetup).  Empty when that slot was last written by a
+                // build predating this feature, or by a USB recovery flash —
+                // honest "unknown" beats the bogus frozen esp_app_desc date.
+                doc["rollbackBuilt"] = otaRollbackInfo.length()
+                                       ? otaRollbackInfo : String("unknown");
             }
         }
         doc["rollbackAvailable"] = ok;
