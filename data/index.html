@@ -1293,7 +1293,7 @@
         min-width:30px; text-align:center; font-weight:bold; }
       #vibp-blur { flex:0 0 auto; display:flex; flex-direction:column; gap:2px;
         font-size:11.5px; color:#7ab4a2; white-space:nowrap; line-height:1.5;
-        margin-left:6px; }
+        margin:0 auto; }
       #vibp-blur .vibp-blur-hdr { color:#6f9a8c; letter-spacing:0.5px; }
       #vibp-blur-obj { color:#9fe6cf; }
       #vibp-shutter { background:#1a3c3a; border:1px solid #2a5e58; color:#9fe6cf;
@@ -2663,8 +2663,9 @@
             const mv = sv * mag, mh = sh * mag;                  // on-image µm
             const pv = mv / CAM_PIXEL_UM, ph = mh / CAM_PIXEL_UM;
             return `<span style="color:#6f9a8c">${label}</span>` +
-                   ` <b style="font-size:13px;color:${pxCol(Math.max(pv, ph))}">` +
-                   `${pv.toFixed(1)} / ${ph.toFixed(1)} px</b>` +
+                   ` <b style="font-size:13px;color:#7ab4a2">` +
+                   `<span style="color:${pxCol(pv)}">${pv.toFixed(1)}</span> / ` +
+                   `<span style="color:${pxCol(ph)}">${ph.toFixed(1)}</span> px</b>` +
                    ` &nbsp;<span style="color:#7ab4a2">on-image ${mv.toFixed(1)} / ${mh.toFixed(1)} µm</span>`;
         };
         const eObj = document.getElementById('vibp-blur-obj');
