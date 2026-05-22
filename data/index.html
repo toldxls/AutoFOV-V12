@@ -1843,9 +1843,9 @@
     const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // nominal magnification (fallback)
     const     CAM_PIXEL_UM    = 3.23;        // Canon M6 Mark II (APS-C) pixel pitch, µm
     const     CAM_WIDTH_PX    = 6960;        // M6 II horizontal pixel count (full frame)
-    // Blur numbers are EMA-smoothed (~2.5 s) — the raw per-frame values jitter
+    // Blur numbers are EMA-smoothed (~8 s) — the raw per-frame values jitter
     // too fast to read.  vibBlurEma = null re-primes (shutter/objective change).
-    const     VIB_BLUR_TAU_MS = 2500;
+    const     VIB_BLUR_TAU_MS = 8000;
     let       vibBlurEma      = null;
     let       vibBlurEmaT     = 0;
     const VIB_SPEC_LOG_MIN = 0.01;           // µm log-scale floor
@@ -2665,8 +2665,7 @@
             return `<span style="color:#6f9a8c">${label}</span>` +
                    ` <b style="font-size:13px;color:${pxCol(Math.max(pv, ph))}">` +
                    `${pv.toFixed(1)} / ${ph.toFixed(1)} px</b>` +
-                   ` &nbsp;<span style="color:#7ab4a2">on-image ${mv.toFixed(1)} / ${mh.toFixed(1)} µm</span>` +
-                   ` &nbsp;<span style="color:#5e8c7e">stage ${sv.toFixed(2)} / ${sh.toFixed(2)} µm</span>`;
+                   ` &nbsp;<span style="color:#7ab4a2">on-image ${mv.toFixed(1)} / ${mh.toFixed(1)} µm</span>`;
         };
         const eObj = document.getElementById('vibp-blur-obj');
         if (eObj) eObj.innerHTML =
