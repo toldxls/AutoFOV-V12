@@ -2245,8 +2245,9 @@
         }
         // ── Filmstrip: time-integrated spectrum at the bottom of the waterfall ──
         // For each frequency column, averages every row in the rolling history
-        // (back to FILMSTRIP_WINDOW_MS) and maps to the same green heat palette —
-        // bright green = sustained energy, dark = occasional, black = silent.
+        // (back to FILMSTRIP_WINDOW_MS) and maps through the purple film palette
+        // — bright magenta = sustained energy, dark purple = occasional, black
+        // = silent.
         // Integrating over a wall-clock window (not just the visible rows) means
         // the filmstrip keeps showing persistent resonances long after they've
         // scrolled off the top of the heatmap.
@@ -2340,11 +2341,11 @@
             // Scale anchor: a high percentile of the window's row energy, NOT
             // the peak.  Anchoring to the max let a single burst pin the scale
             // high through the slow release, collapsing every ordinary row to
-            // a near-identical stub.  The 88th-percentile anchor tracks
+            // a near-identical stub.  The 60th-percentile anchor tracks
             // typical strong activity instead — bursts just clip past full
             // width, while the bulk of the rows spread across the bar so
             // small time-slice-to-time-slice differences become visible.
-            const ROWSUM_REF_PCT = 0.88;
+            const ROWSUM_REF_PCT = 0.6;
             const refIx    = Math.max(0, Math.min(sorted.length - 1,
                                                   (sorted.length * ROWSUM_REF_PCT) | 0));
             const frameRef = Math.max(0, sorted[refIx] - noiseBase);
@@ -2356,7 +2357,7 @@
             // Hard floor so a fresh boot or a very-quiet window can't pin the
             // reference near zero (which would map any residual variance to a
             // full bar).  Lower it if moderate windows still look too short.
-            const sumMx = Math.max(1200, vibRowSumRef);
+            const sumMx = Math.max(1300, vibRowSumRef);
             // Background slab — darker than before so the bars read against
             // a near-opaque track instead of fighting the bright heatmap
             // colours underneath (a strong burst row is already pale yellow
@@ -2473,16 +2474,18 @@
         else               { const t = (f-0.85)/0.15;  r = 255;        g = 255;        b = t*220; }
         return `rgb(${r|0},${g|0},${b|0})`;
     }
-    // Filmstrip uses an orange ramp so a thin band still reads strongly
-    // against the green-toned waterfall — black → deep orange → bright amber
-    // → near-white-yellow at the top.
+    // Filmstrip uses a purple ramp — magenta is the visual complement of the
+    // green-toned waterfall, so a thin band reads strongly against it, and the
+    // lowest non-silent step starts at a clearly-visible purple instead of the
+    // near-black deep red the old orange ramp began with.
+    // black → bright purple → magenta → near-white.
     function vibFilmTint(f) {
         f = Math.max(0, Math.min(1, f));
         let r, g, b;
-        if      (f < 0.10) { r = 0;     g = 0;          b = 0; }
-        else if (f < 0.55) { const t = (f-0.10)/0.45; r = 60 + t*195; g = t*100;       b = 0; }
-        else if (f < 0.85) { const t = (f-0.55)/0.30; r = 255;        g = 100 + t*120; b = 0; }
-        else               { const t = (f-0.85)/0.15; r = 255;        g = 220 + t*35;  b = t*120; }
+        if      (f < 0.10) { r = 0;   g = 0;          b = 0; }
+        else if (f < 0.45) { const t = (f-0.10)/0.35; r = 95 + t*125;  g = 25 + t*30;   b = 150 + t*95; }
+        else if (f < 0.80) { const t = (f-0.45)/0.35; r = 220 + t*35;  g = 55 + t*95;   b = 245 + t*10; }
+        else               { const t = (f-0.80)/0.20; r = 255;        g = 150 + t*105; b = 255; }
         return `rgb(${r|0},${g|0},${b|0})`;
     }
 
