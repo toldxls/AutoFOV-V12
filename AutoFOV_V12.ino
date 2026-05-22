@@ -389,7 +389,6 @@ PSRAMCanvas16 objSprite(240, 67);
 // Band-RMS warning thresholds (mg).
 #define VIB_RMS_MODERATE 2.0f
 #define VIB_RMS_STRONG   8.0f
-#define VIB_HORIZ_EMA    0.002f    // horizontal-energy EMA weight (~1.2 s @ 416 Hz, ≈ FFT window)
 // Narrowband-tonal promotion. A persistent tonal — a dryer at 26 Hz, a stepper
 // holding torque, a desk fan — can push the rig 1-3 µm without ever crossing
 // the wide-band RMS thresholds (1 µm @ 26 Hz ≈ 2.7 mg peak in a single bin,
@@ -3444,7 +3443,6 @@ void vibTask(void *pvParameters) {
   const TickType_t period = pdMS_TO_TICKS(30);
   float dcG[3]      = { 0, 0, 0 };  // EMA of the gravity VECTOR, LSB (primed on 1st sample)
   bool  dcPrimed    = false;
-  float horizMs2Ema = 0.0f;         // EMA of horizontal-plane AC energy, LSB²
   float vibE1[3] = { 0, 0, 0 };     // orthonormal basis for the horizontal plane,
   float vibE2[3] = { 0, 0, 0 };     // perpendicular to gravity; only refreshed
                                     // when the gravity vector has actually moved
@@ -3551,17 +3549,15 @@ void vibTask(void *pvParameters) {
           dcG[1] += (ry - dcG[1]) * 0.002f;
           dcG[2] += (rz - dcG[2]) * 0.002f;
 
-          // AC = sample minus gravity. Split into the component ALONG gravity
-          // (vertical) and the leftover horizontal-plane energy. Gravity is
-          // projected out *first*, so neither channel carries the sqrt(g²+δ²)
-          // squaring artifact — horizontal is linear and at its true pitch.
+          // AC = sample minus gravity. Project out the component ALONG gravity
+          // (vertical). Gravity is projected out *first*, so neither channel
+          // carries the sqrt(g²+δ²) squaring artifact — horizontal is linear
+          // and at its true pitch. The horizontal RMS is taken as a boxcar in
+          // the FFT block below, not an EMA here, so V and H match.
           float ax = rx - dcG[0], ay = ry - dcG[1], az = rz - dcG[2];
           float gmag = sqrtf(dcG[0]*dcG[0] + dcG[1]*dcG[1] + dcG[2]*dcG[2]);
           if (gmag < 1.0f) gmag = 1.0f;
           float vert   = (ax*dcG[0] + ay*dcG[1] + az*dcG[2]) / gmag;   // LSB, signed
-          float horiz2 = (ax*ax + ay*ay + az*az) - vert*vert;          // LSB², >= 0
-          if (horiz2 < 0.0f) horiz2 = 0.0f;                            // rounding guard
-          horizMs2Ema += (horiz2 - horizMs2Ema) * VIB_HORIZ_EMA;
 
           // Horizontal vector = AC minus its gravity-aligned part; project it
           // onto the (e1,e2) plane basis and ring-buffer both components for
@@ -3633,6 +3629,7 @@ void vibTask(void *pvParameters) {
       //    real input, hy into the imaginary input. The horizontal power at
       //    bin k is (|X[k]|^2 + |X[N-k]|^2)/2 (a Hermitian-symmetry identity),
       //    which is basis-invariant — both axes, one FFT, no rectification.
+      double sumSqH = 0.0;       // mean-removed horizontal AC energy over the window
       {
         uint32_t hs0 = vibHxHead;            // oldest sample (ring == one window)
         // Mirror the vertical pipeline: subtract the segment mean of each
@@ -3651,8 +3648,11 @@ void vibTask(void *pvParameters) {
         const float meanY = (float)(sumY / VIB_FFT_SIZE);
         for (int i = 0; i < VIB_FFT_SIZE; i++) {
           uint32_t idx = (hs0 + i) % VIB_FFT_SIZE;
-          vibFftReal[i] = ((float)vibHx[idx] - meanX) * vibHann[i];
-          vibFftImag[i] = ((float)vibHy[idx] - meanY) * vibHann[i];
+          float xv = (float)vibHx[idx] - meanX;
+          float yv = (float)vibHy[idx] - meanY;
+          sumSqH += (double)xv*xv + (double)yv*yv;   // un-windowed — feeds the RMS
+          vibFftReal[i] = xv * vibHann[i];
+          vibFftImag[i] = yv * vibHann[i];
         }
         vibFFT.compute(FFTDirection::Forward);
         uint16_t *dstH = vibSpecH[specSeq & 1];
@@ -3670,8 +3670,9 @@ void vibTask(void *pvParameters) {
       // Cross-core scalars.
       vibDominant.store((uint32_t)lroundf(domBin * VIB_BIN_HZ * 10.0f));
       vibBandRms.store((uint32_t)lroundf(rmsMg * 100.0f));
-      // Horizontal-plane RMS — no FFT, energy only. Same VIB_MG_PER_LSB scale.
-      float horizMg = sqrtf(horizMs2Ema) * VIB_MG_PER_LSB;
+      // Horizontal-plane RMS — a boxcar over the same VIB_FFT_SIZE window as
+      // the vertical rmsMg, so the two are directly comparable for vibState.
+      float horizMg = sqrtf((float)(sumSqH / VIB_FFT_SIZE)) * VIB_MG_PER_LSB;
       vibHorizRms.store((uint32_t)lroundf(horizMg * 100.0f));
 
       // "Is the bench quiet" reflects whichever axis is worse — a horizontal
@@ -5621,7 +5622,10 @@ void updateDisplay() {
     
     float stdDevDist = sqrt(variance);
     
-    float liveFovError = fabs(CTRLX) * stdDevDist;
+    // stdDevDist is the spread of one reading, but the displayed FOV is
+    // computed from the numReadings-sample mean — so the sensor-noise term is
+    // the standard error of that mean (stdDevDist / sqrt(N)), not stdDevDist.
+    float liveFovError = fabs(CTRLX) * stdDevDist / sqrtf((float)numReadings);
     float totalFovError = sqrt((liveFovError * liveFovError) + (CALIB_ERROR * CALIB_ERROR));
     
     float fovErrorBound = 2.0 * totalFovError; 
