@@ -57,27 +57,47 @@ Install via the Arduino Library Manager or manually:
 
 ## Installation & Flashing
 
-### 1. Arduino IDE Board Settings
+Firmware is built with `arduino-cli` via `tools/build.sh` (the Arduino IDE is
+only needed for the Serial Monitor and editing). The web dashboard in
+`data/index.html` is gzip-embedded into the firmware binary — there is **no**
+separate LittleFS upload for it. The two `.ino` files compile as a single
+translation unit (the build concatenates them alphabetically, so
+`AutoFOV_V12.ino` precedes `AutoFOV_V12_wifi.ino`).
 
-PSRAM and partition settings are mandatory:
+### Build settings
+
+The build targets the Adafruit Feather ESP32-S3 with a **custom dual-OTA
+partition table** (`tools/partitions.csv`). `tools/build.sh` passes the correct
+FQBN automatically; if building from the Arduino IDE instead, match:
 
 | Setting | Value |
 | :--- | :--- |
-| Board | ESP32S3 Dev Module |
-| PSRAM | QSPI PSRAM |
-| Partition Scheme | Huge APP 3MB no OTA |
-| Events Run On | Core 1 |
+| Board | Adafruit Feather ESP32-S3 (4 MB Flash, 2 MB PSRAM) |
+| PSRAM | Enabled (QSPI PSRAM) |
+| Partition Scheme | Custom — `tools/partitions.csv` (dual-OTA) |
 | Arduino Runs On | Core 1 |
+| Events Run On | Core 1 |
 
-### 2. Upload the Web Interface (LittleFS)
+### Building and flashing
 
-1. The `data/` folder in this repo contains `index.html`.
-2. Use the **Arduino ESP32 LittleFS Data Upload Tool** to flash the `data/` folder to the device.
-3. Re-upload `data/` whenever `index.html` changes. This erases LittleFS, so vibration signatures saved on the device will be lost — export them first if needed.
+```
+git add … && git commit
+bash tools/build.sh
+```
 
-### 3. Flash the Firmware
+Flash the resulting `.bin` through the web dashboard (WiFi Info → FIRMWARE →
+CHOOSE .bin), or publish a release with `bash tools/release.sh` and use the
+dashboard's **Update from GitHub** button. Do **not** use the Arduino IDE's
+Upload button — it overwrites the partition table and breaks the dual-OTA
+layout.
 
-Compile and upload `AutoFOV_V12.ino` (the two `.ino` files compile as a single translation unit; the Arduino IDE concatenates them alphabetically, so `AutoFOV_V12.ino` precedes `AutoFOV_V12_wifi.ino`).
+### Recovery
+
+If a device won't boot or its dashboard is unreachable, re-flash it over USB
+with the browser-based recovery flasher at
+<https://toldxls.github.io/AutoFOV-V12/> (Chrome or Edge, plus a
+data-capable USB-C cable). It rewrites the bootloader, partition table and
+firmware while keeping calibration and WiFi settings.
 
 ## Usage
 

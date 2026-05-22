@@ -1159,66 +1159,88 @@
                 <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#1a4a6a;">FIRMWARE</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
 
-                <div style="position:absolute; left:10px; top:38px; right:10px;
-                     color:#6a9ab0; font-size:10px;">
+                <div style="position:absolute; left:10px; top:36px; width:220px;
+                     color:#6a9ab0; font-size:10px; white-space:nowrap;
+                     overflow:hidden; text-overflow:ellipsis;">
                     Running: <span id="ota-running-build">—</span>
                 </div>
-                <div style="position:absolute; left:10px; top:56px; right:10px;
-                     color:#ff9900; font-size:10px; line-height:1.55;">
-                    &#9888; Device will reboot after flashing.<br>
+                <!-- GitHub check result — set by checkGithubUpdate() -->
+                <div id="gh-status"
+                     style="position:absolute; left:10px; top:50px; width:220px;
+                            font-size:10px; color:var(--text-disabled); white-space:nowrap;
+                            overflow:hidden; text-overflow:ellipsis;">
+                    Checking GitHub for updates…
+                </div>
+
+                <div style="position:absolute; left:10px; top:66px; width:220px; height:1px; background:#303030;"></div>
+
+                <!-- Contextual GitHub action button — label/handler set by JS -->
+                <div id="gh-update-btn" class="gfx-btn"
+                     style="left:10px; top:71px; width:220px; height:38px;
+                            background:#003a5a; border:1px solid #005a8a; font-size:12px;
+                            opacity:0.35; pointer-events:none;"
+                     onclick="githubAction()">
+                    CHECKING…
+                </div>
+
+                <div style="position:absolute; left:10px; top:113px; width:220px;
+                     color:#ff9900; font-size:10px; line-height:1.4;">
+                    &#9888; Device reboots after flashing.<br>
                     Do not cut power during the update.
                 </div>
 
-                <div style="position:absolute; left:10px; top:88px; width:220px; height:1px; background:#303030;"></div>
-
-                <!-- Hidden native file input; styled button triggers it -->
-                <input type="file" id="ota-file-input" accept=".bin"
-                       style="display:none;" onchange="otaFileSelected(this)">
-                <div class="gfx-btn"
-                     style="left:10px; top:100px; width:220px; height:34px;
-                            background:#0d2535; border:1px solid #2a5a7a; font-size:11px;"
-                     onclick="document.getElementById('ota-file-input').click()">
-                    CHOOSE .bin FILE
-                </div>
-                <div id="ota-filename"
-                     style="position:absolute; left:10px; top:140px; right:10px;
-                            font-size:10px; color:var(--text-disabled); text-align:center;
-                            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                    No file selected
-                </div>
-
-                <div style="position:absolute; left:10px; top:160px; width:220px; height:1px; background:#303030;"></div>
-
-                <div id="ota-flash-btn" class="gfx-btn"
-                     style="left:10px; top:170px; width:220px; height:38px;
-                            background:#003a5a; border:1px solid #005a8a; font-size:12px;
-                            opacity:0.35; pointer-events:none;"
-                     onclick="otaFlash()">
-                    FLASH FIRMWARE
-                </div>
-
-                <!-- Progress bar -->
-                <div style="position:absolute; left:10px; top:220px; width:220px; height:14px;
+                <!-- Progress bar — shared by the GitHub and manual flash paths -->
+                <div style="position:absolute; left:10px; top:146px; width:220px; height:14px;
                      background:#111; border:1px solid #2a3a3a; border-radius:2px; overflow:hidden;">
                     <div id="ota-progress-fill"
                          style="height:100%; width:0%; background:#2a7abf;
                                 transition:width 0.2s; border-radius:2px;"></div>
                 </div>
                 <div id="ota-progress-pct"
-                     style="position:absolute; left:0; top:220px; width:240px;
+                     style="position:absolute; left:0; top:146px; width:240px;
                             text-align:center; font-size:10px; color:#5e8c7e; line-height:14px;">
                 </div>
 
                 <div id="ota-status"
-                     style="position:absolute; left:10px; top:244px; right:10px;
-                            font-size:11px; color:var(--text-disabled); text-align:center;">
+                     style="position:absolute; left:10px; top:166px; width:220px;
+                            font-size:11px; color:var(--text-disabled); text-align:center;
+                            line-height:1.2;">
                     Ready
+                </div>
+
+                <div style="position:absolute; left:10px; top:194px; width:220px; height:1px; background:#303030;"></div>
+                <div style="position:absolute; left:10px; top:198px; width:220px;
+                     font-size:9px; color:var(--text-disabled);">
+                    ADVANCED — flash a local .bin file
+                </div>
+
+                <!-- Hidden native file input; styled button triggers it -->
+                <input type="file" id="ota-file-input" accept=".bin"
+                       style="display:none;" onchange="otaFileSelected(this)">
+                <div id="ota-choose-btn" class="gfx-btn"
+                     style="left:10px; top:209px; width:106px; height:26px;
+                            background:#0d2535; border:1px solid #2a5a7a; font-size:10px;"
+                     onclick="document.getElementById('ota-file-input').click()">
+                    CHOOSE .bin
+                </div>
+                <div id="ota-flash-btn" class="gfx-btn"
+                     style="left:124px; top:209px; width:106px; height:26px;
+                            background:#003a5a; border:1px solid #005a8a; font-size:10px;
+                            opacity:0.35; pointer-events:none;"
+                     onclick="otaFlash()">
+                    FLASH
+                </div>
+                <div id="ota-filename"
+                     style="position:absolute; left:10px; top:238px; width:220px;
+                            font-size:9px; color:var(--text-disabled); text-align:center;
+                            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    No file selected
                 </div>
 
                 <!-- Rollback row — dual-OTA's "undo" button.  Hidden when the
                      inactive slot is blank (first ever flash); the device sets
                      state.rollbackAvailable from /state. -->
-                <div id="ota-rollback-row" style="display:none; position:absolute; left:10px; top:268px; right:10px;">
+                <div id="ota-rollback-row" style="display:none; position:absolute; left:10px; top:252px; width:220px;">
                     <div style="height:1px; background:#303030; margin-bottom:6px;"></div>
                     <div id="ota-rollback-built"
                          style="font-size:9px; color:#6a9ab0; text-align:center; margin-bottom:2px;">
@@ -1232,6 +1254,13 @@
                     </div>
                 </div>
 
+                <a href="https://toldxls.github.io/AutoFOV-V12/"
+                   target="_blank" rel="noopener"
+                   style="position:absolute; left:10px; top:305px; width:220px;
+                          font-size:9px; color:#5a7a8a; text-align:center;
+                          text-decoration:underline;">
+                    Device won't start? USB recovery flash &rarr;
+                </a>
             </div>
 
             <!-- ===================== CONFIRM MODAL ===================== -->
@@ -4290,6 +4319,9 @@
         btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
         document.getElementById('ota-file-input').value = '';
         updateOtaRollbackUI();
+        // Re-check GitHub on every entry to this screen, unless an update is
+        // already running or a check is in flight.
+        if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
     }
     function updateOtaRollbackUI() {
         const row   = document.getElementById('ota-rollback-row');
@@ -4326,15 +4358,16 @@
     // must fall back to a pure-JS hash.  The result is sent as X-OTA-SHA256;
     // the device hashes the upload stream with mbedtls and refuses to flip the
     // boot partition on mismatch.
-    async function otaComputeSha256(file) {
-        const buf   = await file.arrayBuffer();
-        const bytes = new Uint8Array(buf);
+    async function sha256Hex(buf) {
         if (window.crypto && window.crypto.subtle && window.crypto.subtle.digest) {
             const hash = await crypto.subtle.digest('SHA-256', buf);
             return Array.from(new Uint8Array(hash))
                 .map(b => b.toString(16).padStart(2, '0')).join('');
         }
-        return sha256JS(bytes);
+        return sha256JS(new Uint8Array(buf));
+    }
+    async function otaComputeSha256(file) {
+        return sha256Hex(await file.arrayBuffer());
     }
     // Pure-JS SHA-256 (FIPS 180-4).  Used when crypto.subtle is unavailable —
     // i.e. plain-HTTP origins.  ~1 s for a 1.5 MB firmware on a modern laptop;
@@ -4389,6 +4422,26 @@
         for (let i = 0; i < 8; i++) hex += H[i].toString(16).padStart(8, '0');
         return hex;
     }
+    // Disable every OTA action control while a flash is in flight.
+    function otaLockControls() {
+        ['gh-update-btn', 'ota-flash-btn', 'ota-choose-btn'].forEach(id => {
+            const b = document.getElementById(id);
+            if (b) { b.style.opacity = '0.35'; b.style.pointerEvents = 'none'; }
+        });
+    }
+    // Restore the manual-flash controls after a failed/aborted flash.  The
+    // GitHub button is restored separately, by ghRestoreButton().
+    function otaUnlockControls() {
+        const choose = document.getElementById('ota-choose-btn');
+        if (choose) { choose.style.opacity = ''; choose.style.pointerEvents = ''; }
+        const flash = document.getElementById('ota-flash-btn');
+        if (flash) {
+            const has = document.getElementById('ota-file-input').files.length > 0;
+            flash.style.opacity       = has ? '' : '0.35';
+            flash.style.pointerEvents = has ? '' : 'none';
+        }
+    }
+
     async function otaFlash() {
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
@@ -4399,13 +4452,9 @@
         }
         const file = input.files[0];
         const st   = document.getElementById('ota-status');
-        const fill = document.getElementById('ota-progress-fill');
-        const pct  = document.getElementById('ota-progress-pct');
-        const btn  = document.getElementById('ota-flash-btn');
-
-        // Disable button and reset bar for the upload run
-        btn.style.opacity = '0.35'; btn.style.pointerEvents = 'none';
-        fill.style.width = '0%'; pct.textContent = '';
+        otaLockControls();
+        document.getElementById('ota-progress-fill').style.width = '0%';
+        document.getElementById('ota-progress-pct').textContent = '';
         st.style.color = 'var(--text-disabled)'; st.textContent = 'Computing checksum…';
 
         let sha;
@@ -4414,13 +4463,27 @@
         } catch (e) {
             st.textContent = 'Checksum failed: ' + e.message;
             st.style.color = '#ff4444';
-            btn.style.opacity = ''; btn.style.pointerEvents = '';
+            otaUnlockControls(); ghRestoreButton();
             return;
         }
-        st.textContent = 'Uploading…';
+        doOtaUpload(file, file.name, sha);
+    }
+
+    // Shared upload path — POSTs already-hashed firmware bytes to the device's
+    // /ota endpoint.  Used by both the manual file picker (otaFlash) and the
+    // GitHub updater (githubUpdate).  `blob` is a File or Blob; `sha` is its
+    // hex SHA-256, already computed and (for the GitHub path) verified.
+    function doOtaUpload(blob, filename, sha) {
+        const st   = document.getElementById('ota-status');
+        const fill = document.getElementById('ota-progress-fill');
+        const pct  = document.getElementById('ota-progress-pct');
+        otaLockControls();
+        fill.style.width = '0%'; fill.style.background = '#2a7abf';
+        pct.textContent = '';
+        st.style.color = 'var(--text-disabled)'; st.textContent = 'Uploading…';
 
         const fd = new FormData();
-        fd.append('firmware', file, file.name);
+        fd.append('firmware', blob, filename);
 
         // Track whether the body finished uploading.  Once we hit 100%, any
         // socket drop (including onerror) most likely means the device is
@@ -4462,7 +4525,7 @@
                 st.textContent = 'Error: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
                 fill.style.background = '#7a1a1a';
-                btn.style.opacity = ''; btn.style.pointerEvents = '';
+                otaUnlockControls(); ghRestoreButton();
             } else if (xhr.status !== 200 && uploadComplete) {
                 // Server returned an error AFTER full upload (e.g. SHA
                 // mismatch on the device).  Show the message and clear the
@@ -4471,7 +4534,7 @@
                 st.textContent = 'Rejected: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
                 fill.style.background = '#7a1a1a';
-                btn.style.opacity = ''; btn.style.pointerEvents = '';
+                otaUnlockControls(); ghRestoreButton();
             }
         };
         xhr.onerror = () => {
@@ -4485,9 +4548,164 @@
             // its OTA state after 10 s so a retry will work.
             st.textContent = 'Connection lost — check device and retry';
             st.style.color = '#ff9900';
-            btn.style.opacity = ''; btn.style.pointerEvents = '';
+            otaUnlockControls(); ghRestoreButton();
         };
         xhr.send(fd);
+    }
+
+    // ── GitHub firmware update ────────────────────────────────────────────────
+    // The dashboard browser (real internet, CA-validated TLS) fetches the
+    // latest build from GitHub Pages, verifies its SHA-256, and hands the bytes
+    // to doOtaUpload() — the existing /ota path.  The ESP32 does no networking
+    // of its own.  Pages serves with Access-Control-Allow-Origin:* so the
+    // cross-origin fetch from the device's http:// dashboard is allowed.
+    const GITHUB_PAGES_BASE = 'https://toldxls.github.io/AutoFOV-V12';
+    let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
+    let ghManifest = null;     // {version, sha256, bin} from the last good check
+
+    function ghSetStatus(msg, color) {
+        const el = document.getElementById('gh-status');
+        if (el) { el.textContent = msg; el.style.color = color || 'var(--text-disabled)'; }
+    }
+    function ghSetButton(label, enabled, accent) {
+        const btn = document.getElementById('gh-update-btn');
+        if (!btn) return;
+        btn.textContent = label;
+        btn.style.opacity      = enabled ? '' : '0.35';
+        btn.style.pointerEvents = enabled ? '' : 'none';
+        btn.style.background   = accent || '#003a5a';
+        btn.style.borderColor  = accent ? '#2abf6a' : '#005a8a';
+    }
+    // Re-render the GitHub button after a flash finishes/fails, so it is never
+    // left disabled.  Re-derives the phase from the last manifest rather than
+    // trusting the (possibly 'busy') phase the failed flash left behind.
+    function ghRestoreButton() {
+        const running = state.buildVersion || '';
+        if (ghManifest && ghManifest.version !== running) {
+            ghPhase = 'available';
+            ghSetButton('UPDATE TO v' + ghManifest.version, true, '#0a5a2a');
+        } else if (ghManifest) {
+            ghPhase = 'current';
+            ghSetButton('CHECK AGAIN', true);
+        } else {
+            ghPhase = 'error';
+            ghSetButton('RETRY CHECK', true);
+        }
+    }
+
+    function githubAction() {
+        if (ghPhase === 'busy' || ghPhase === 'checking') return;
+        if (ghPhase === 'available') githubUpdate();
+        else checkGithubUpdate();          // idle, current, error → re-check
+    }
+
+    async function checkGithubUpdate() {
+        ghPhase = 'checking';
+        ghSetButton('CHECKING…', false);
+        ghSetStatus('Checking GitHub for updates…');
+        try {
+            const r = await fetch(GITHUB_PAGES_BASE + '/manifest.json',
+                                  { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const m = await r.json();
+            if (!m.version || !m.sha256 || !m.bin) throw new Error('bad manifest');
+            ghManifest = m;
+            const running = state.buildVersion || '';
+            if (running && m.version === running) {
+                ghPhase = 'current';
+                ghSetStatus('Up to date — v' + m.version, '#6abf6a');
+                ghSetButton('CHECK AGAIN', true);
+            } else {
+                // Any version difference is offered; the patch number is a git
+                // commit count, not a reliable ordering across history rewrites.
+                ghPhase = 'available';
+                ghSetStatus('Update available: v' + m.version
+                    + (running ? '  (running v' + running + ')' : ''), '#ffb84a');
+                ghSetButton('UPDATE TO v' + m.version, true, '#0a5a2a');
+            }
+        } catch (e) {
+            ghPhase = 'error';
+            ghManifest = null;
+            ghSetStatus('Update check failed — ' + e.message, '#bf4a4a');
+            ghSetButton('RETRY CHECK', true);
+        }
+    }
+
+    // Streamed download with a live progress bar — Pages sends Content-Length
+    // for static files, so the percentage is real.
+    async function ghDownload(url, fill, pct, st) {
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const total  = +(r.headers.get('Content-Length') || 0);
+        const reader = r.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            loaded += value.length;
+            if (total) {
+                const p = Math.round(loaded / total * 100);
+                fill.style.width = p + '%';
+                pct.textContent  = p + '%';
+                st.textContent   = 'Downloading from GitHub… ' + p + '%';
+            }
+        }
+        const out = new Uint8Array(loaded);
+        let off = 0;
+        for (const c of chunks) { out.set(c, off); off += c.length; }
+        return out;
+    }
+
+    async function githubUpdate() {
+        if (ghPhase !== 'available' || !ghManifest) return;
+        if (!state.otaPassword) {
+            ghSetStatus('Device not ready — open this page from the device itself.',
+                        '#bf4a4a');
+            return;
+        }
+        const manifest = ghManifest;
+        const fail = msg => {
+            const st = document.getElementById('ota-status');
+            st.textContent = msg; st.style.color = '#ff4444';
+            document.getElementById('ota-progress-fill').style.background = '#7a1a1a';
+            ghPhase = 'available';
+            otaUnlockControls();
+            ghSetButton('UPDATE TO v' + manifest.version, true, '#0a5a2a');
+        };
+
+        ghPhase = 'busy';
+        otaLockControls();
+        const st   = document.getElementById('ota-status');
+        const fill = document.getElementById('ota-progress-fill');
+        const pct  = document.getElementById('ota-progress-pct');
+        fill.style.width = '0%'; fill.style.background = '#2a7abf';
+        pct.textContent = '';
+        st.style.color = 'var(--text-disabled)';
+        st.textContent = 'Downloading from GitHub…';
+
+        let bytes;
+        try {
+            bytes = await ghDownload(GITHUB_PAGES_BASE + '/' + manifest.bin,
+                                     fill, pct, st);
+        } catch (e) { fail('Download failed: ' + e.message); return; }
+
+        // Must fit one OTA slot (partKB comes from the device /state).
+        if (state.partKB && bytes.length > state.partKB * 1024) {
+            fail('Firmware too large for the ' + state.partKB + 'K slot'); return;
+        }
+
+        st.textContent = 'Verifying checksum…';
+        let sha;
+        try { sha = await sha256Hex(bytes.buffer); }
+        catch (e) { fail('Checksum failed: ' + e.message); return; }
+        if (sha.toLowerCase() !== String(manifest.sha256).toLowerCase()) {
+            fail('Checksum mismatch — download corrupt, not flashing'); return;
+        }
+
+        // Verified — hand the bytes to the shared /ota upload path.
+        doOtaUpload(new Blob([bytes]), manifest.bin, sha);
     }
     // Reboot overlay + auto-reload.  After Update.end() the device runs
     // ESP.restart() ~500 ms later, then takes ~3–4 s to reconnect to WiFi.
