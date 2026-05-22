@@ -1286,9 +1286,11 @@
         padding:11px 28px; border-radius:5px; border:2px solid currentColor;
         min-width:148px; text-align:center; margin:0 24px;
         box-shadow:0 0 12px rgba(0,0,0,0.55), 0 0 8px currentColor; }
-      #vibp-units { cursor:pointer; background:#1a3c3a; border:1px solid #2a5e58;
-        padding:5px 10px; border-radius:3px; color:#9fe6cf; font-size:12px;
-        min-width:34px; text-align:center; font-weight:bold; }
+      #vibp-spec-pane { position:relative; }
+      #vibp-units { position:absolute; top:21px; right:10px; z-index:6;
+        cursor:pointer; background:rgba(26,60,58,0.85); border:1px solid #2a5e58;
+        padding:3px 9px; border-radius:3px; color:#9fe6cf; font-size:11px;
+        min-width:30px; text-align:center; font-weight:bold; }
       #vibp-blur { flex:0 0 auto; display:flex; flex-direction:column; gap:2px;
         font-size:11.5px; color:#7ab4a2; white-space:nowrap; line-height:1.5;
         margin-left:6px; }
@@ -1355,24 +1357,24 @@
           </span>
         </span>
         <span id="vibp-state" style="color:#3ddb7a;">—</span>
-        <span id="vibp-blur">
-          <span class="vibp-blur-hdr">blur @ 1/<select id="vibp-shutter" onchange="vibSetShutter(this.value)"><option value="8">8</option><option value="15">15</option><option value="30">30</option><option value="60" selected>60</option><option value="125">125</option><option value="250">250</option><option value="500">500</option></select> s<span id="vibp-blur-obj"></span></span>
-          <span id="vibp-blur-nb">narrowband &mdash;</span>
-          <span id="vibp-blur-bb">broadband&nbsp; &mdash;</span>
-        </span>
         <span id="vibp-head-right">
-          <span id="vibp-units" onclick="vibToggleUnits()" title="Toggle spectrum y-axis: acceleration (mg) ↔ displacement (µm)">mg</span>
+          <span id="vibp-blur">
+            <span class="vibp-blur-hdr">blur @ 1/<select id="vibp-shutter" onchange="vibSetShutter(this.value)"><option value="8">8</option><option value="15">15</option><option value="30">30</option><option value="60" selected>60</option><option value="80">80</option><option value="100">100</option><option value="125">125</option><option value="250">250</option><option value="500">500</option></select> s<span id="vibp-blur-obj"></span></span>
+            <span id="vibp-blur-nb">narrowband &mdash;</span>
+            <span id="vibp-blur-bb">broadband&nbsp; &mdash;</span>
+          </span>
           <span id="vibp-close" onclick="vibClosePanel()">&#10005; CLOSE</span>
         </span>
       </div>
       <div id="vibp-body">
-        <div class="vibp-pane">
+        <div class="vibp-pane" id="vibp-spec-pane">
           <div class="vibp-cap">SPECTRUM &nbsp; <b style="color:#36d6ff">&#9646; V</b>
             &nbsp; <b style="color:#ff5bd0">&#9646; H</b>
             &nbsp; <b style="color:#00c8b4">&#9135;&#9135; V+H 5 s avg</b>
             &nbsp; <b id="vibp-sig-cap" style="color:#ffd700;display:none;cursor:pointer;" onclick="vibClearSigOverlay()" title="Click to clear overlay"></b>
             &nbsp; &mdash; hover to read a bin</div>
           <canvas id="vibp-spec"></canvas>
+          <span id="vibp-units" onclick="vibToggleUnits()" title="Toggle spectrum y-axis: acceleration (mg) ↔ displacement (µm)">mg</span>
         </div>
         <div class="vibp-pane">
           <div class="vibp-cap" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
