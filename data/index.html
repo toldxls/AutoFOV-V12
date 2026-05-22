@@ -1289,6 +1289,14 @@
       #vibp-units { cursor:pointer; background:#1a3c3a; border:1px solid #2a5e58;
         padding:5px 10px; border-radius:3px; color:#9fe6cf; font-size:12px;
         min-width:34px; text-align:center; font-weight:bold; }
+      #vibp-blur { flex:0 0 auto; display:flex; flex-direction:column; gap:1px;
+        font-size:10px; color:#7ab4a2; white-space:nowrap; line-height:1.4;
+        margin-left:6px; }
+      #vibp-blur .vibp-blur-hdr { color:#6f9a8c; letter-spacing:0.5px; }
+      #vibp-blur-obj { color:#9fe6cf; }
+      #vibp-shutter { background:#1a3c3a; border:1px solid #2a5e58; color:#9fe6cf;
+        font-family:monospace; font-size:10px; border-radius:3px; padding:1px 3px;
+        margin:0 1px; }
       #vibp-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
         padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
       #vibp-body { flex:1 1 auto; display:flex; flex-direction:column;
@@ -1344,10 +1352,14 @@
             <span id="vibp-read1">waiting for data&hellip;</span>
             <span id="vibp-read2"></span>
             <span id="vibp-read3" style="color:#5e8c7e; font-size:10px;"></span>
-            <span id="vibp-read4" style="font-size:10px;"></span>
           </span>
         </span>
         <span id="vibp-state" style="color:#3ddb7a;">—</span>
+        <span id="vibp-blur">
+          <span class="vibp-blur-hdr">blur @ 1/<select id="vibp-shutter" onchange="vibSetShutter(this.value)"><option value="8">8</option><option value="15">15</option><option value="30">30</option><option value="60" selected>60</option><option value="125">125</option><option value="250">250</option><option value="500">500</option></select> s<span id="vibp-blur-obj"></span></span>
+          <span id="vibp-blur-nb">narrowband &mdash;</span>
+          <span id="vibp-blur-bb">broadband&nbsp; &mdash;</span>
+        </span>
         <span id="vibp-head-right">
           <span id="vibp-units" onclick="vibToggleUnits()" title="Toggle spectrum y-axis: acceleration (mg) ↔ displacement (µm)">mg</span>
           <span id="vibp-close" onclick="vibClosePanel()">&#10005; CLOSE</span>
@@ -1824,11 +1836,17 @@
     //    real motion. Honest for large-amplitude / low-frequency sway.
     const VIB_DISP_K       = 248.5 / 10;     // (mg→µm) × (deci-mg→mg)
     const VIB_DISP_MIN_BIN = 4;              // bin 4 ≈ 3.25 Hz
+    // Motion-blur readout: exposure time + camera geometry.
+    let       vibShutterDenom = 60;          // shutter = 1/N s, user-selectable
+    const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // objective → on-sensor magnification
+    const     CAM_PIXEL_UM    = 3.23;        // Canon M6 Mark II (APS-C) pixel pitch, µm
     const VIB_SPEC_LOG_MIN = 0.01;           // µm log-scale floor
     let vibUnitsUm = false;
     function vibDispStats(spec, base) {
-        if (!spec || !spec.length) return { peakUm: 0, peakHz: 0, rmsUm: 0 };
-        let peakUm = 0, peakBin = 0, sumSq = 0;
+        if (!spec || !spec.length)
+            return { peakUm: 0, peakHz: 0, rmsUm: 0, blurNbUm: 0, blurBbUm: 0 };
+        let peakUm = 0, peakBin = 0, sumSq = 0, blurSq = 0;
+        const T = 1 / vibShutterDenom;
         for (let k = VIB_DISP_MIN_BIN; k < spec.length; k++) {
             const f = k * VIB_BIN_HZ;
             // Match the panel spectrum: drop the EMA noise floor from the
@@ -1839,9 +1857,28 @@
             const d = a * VIB_DISP_K / (f * f);
             if (d > peakUm) { peakUm = d; peakBin = k; }
             sumSq += d * d;
+            // Motion blur: how far this component shifts within one exposure.
+            // A sinusoid's position difference across a window T has amplitude
+            // 2·d·|sin(πfT)| — velocity-limited well below 1/(2T) Hz, capped at
+            // the full 2·d travel once half a period fits inside the exposure.
+            const bl = 2 * d * Math.abs(Math.sin(Math.PI * f * T));
+            blurSq += bl * bl;
         }
+        const peakHz = peakBin * VIB_BIN_HZ;
         // Per-bin values are peak amplitudes; time-domain RMS = √(Σ peakᵢ²)/√2.
-        return { peakUm, peakHz: peakBin * VIB_BIN_HZ, rmsUm: Math.sqrt(sumSq / 2) };
+        return {
+            peakUm, peakHz,
+            rmsUm:    Math.sqrt(sumSq  / 2),
+            // Narrowband blur — the dominant tone only (matches the legacy readout).
+            blurNbUm: peakHz > 0 ? 2 * peakUm * Math.abs(Math.sin(Math.PI * peakHz * T)) : 0,
+            // Broadband blur — every bin's exposure-windowed travel, RMS-summed.
+            blurBbUm: Math.sqrt(blurSq / 2),
+        };
+    }
+    // Shutter selector (1/N s) for the blur readout — recompute on change.
+    function vibSetShutter(v) {
+        vibShutterDenom = parseInt(v, 10) || 60;
+        vibPanelReadout();
     }
     function vibToggleUnits() {
         vibUnitsUm = !vibUnitsUm;
@@ -2586,20 +2623,27 @@
                 e3.textContent = 'settle wait — trigger a shutter pulse for an estimate';
             }
         }
-        const e4 = document.getElementById('vibp-read4');
-        if (e4) {
-            const blurCol = um => um > 2 ? '#ff4444' : um > 0.5 ? '#ffcc00' : '#3ddb7a';
-            const blurUm = (peakUm, peakHz) =>
-                peakHz > 0 ? 2 * peakUm * Math.abs(Math.sin(Math.PI * peakHz / 60)) : 0;
-            const bV = blurUm(dV.peakUm, dV.peakHz), bH = blurUm(dH.peakUm, dH.peakHz);
-            if (bV > 0 || bH > 0) {
-                e4.innerHTML =
-                    `1/60&thinsp;s blur &nbsp; V <b style="color:${blurCol(bV)}">${bV.toFixed(1)}&thinsp;µm</b>` +
-                    ` &nbsp; H <b style="color:${blurCol(bH)}">${bH.toFixed(1)}&thinsp;µm</b>`;
-            } else {
-                e4.textContent = '';
-            }
-        }
+        // Blur block (right of the CALM state): narrowband (dominant tone) and
+        // broadband (all bins) displacement during one shutter exposure — shown
+        // as stage µm, then projected to on-image µm + camera pixels using the
+        // selected objective's magnification and the M6 II pixel pitch.
+        const objId = state.obj || 3;
+        const mag   = OBJ_MAG[objId] || 20;
+        const pxCol = px => px > 2 ? '#ff4444' : px > 0.5 ? '#ffcc00' : '#3ddb7a';
+        const blurRow = (label, sv, sh) => {
+            const mv = sv * mag, mh = sh * mag;            // on-image µm
+            const pv = mv / CAM_PIXEL_UM, ph = mh / CAM_PIXEL_UM;
+            return `${label} V ${sv.toFixed(1)} H ${sh.toFixed(1)} µm` +
+                   ` &nbsp;&rarr; on-image V ${mv.toFixed(1)} H ${mh.toFixed(1)} µm` +
+                   ` &nbsp;<b style="color:${pxCol(Math.max(pv, ph))}">` +
+                   `V ${pv.toFixed(1)} H ${ph.toFixed(1)} px</b>`;
+        };
+        const eObj = document.getElementById('vibp-blur-obj');
+        if (eObj) eObj.textContent = `  ·  ${OBJ_LABEL[objId] || '20x'}`;
+        const eNb = document.getElementById('vibp-blur-nb');
+        const eBb = document.getElementById('vibp-blur-bb');
+        if (eNb) eNb.innerHTML = blurRow('narrowband', dV.blurNbUm, dH.blurNbUm);
+        if (eBb) eBb.innerHTML = blurRow('broadband&nbsp;', dV.blurBbUm, dH.blurBbUm);
     }
 
     // Sampled from the telemetry handler whenever a fresh RMS pair arrives.
