@@ -1289,8 +1289,8 @@
       #vibp-units { cursor:pointer; background:#1a3c3a; border:1px solid #2a5e58;
         padding:5px 10px; border-radius:3px; color:#9fe6cf; font-size:12px;
         min-width:34px; text-align:center; font-weight:bold; }
-      #vibp-blur { flex:0 0 auto; display:flex; flex-direction:column; gap:1px;
-        font-size:10px; color:#7ab4a2; white-space:nowrap; line-height:1.4;
+      #vibp-blur { flex:0 0 auto; display:flex; flex-direction:column; gap:2px;
+        font-size:11.5px; color:#7ab4a2; white-space:nowrap; line-height:1.5;
         margin-left:6px; }
       #vibp-blur .vibp-blur-hdr { color:#6f9a8c; letter-spacing:0.5px; }
       #vibp-blur-obj { color:#9fe6cf; }
@@ -1838,8 +1838,14 @@
     const VIB_DISP_MIN_BIN = 4;              // bin 4 ≈ 3.25 Hz
     // Motion-blur readout: exposure time + camera geometry.
     let       vibShutterDenom = 60;          // shutter = 1/N s, user-selectable
-    const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // objective → on-sensor magnification
+    const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // nominal magnification (fallback)
     const     CAM_PIXEL_UM    = 3.23;        // Canon M6 Mark II (APS-C) pixel pitch, µm
+    const     CAM_WIDTH_PX    = 6960;        // M6 II horizontal pixel count (full frame)
+    // Blur numbers are EMA-smoothed (~2.5 s) — the raw per-frame values jitter
+    // too fast to read.  vibBlurEma = null re-primes (shutter/objective change).
+    const     VIB_BLUR_TAU_MS = 2500;
+    let       vibBlurEma      = null;
+    let       vibBlurEmaT     = 0;
     const VIB_SPEC_LOG_MIN = 0.01;           // µm log-scale floor
     let vibUnitsUm = false;
     function vibDispStats(spec, base) {
@@ -1878,6 +1884,7 @@
     // Shutter selector (1/N s) for the blur readout — recompute on change.
     function vibSetShutter(v) {
         vibShutterDenom = parseInt(v, 10) || 60;
+        vibBlurEma = null;          // re-prime so the new shutter shows at once
         vibPanelReadout();
     }
     function vibToggleUnits() {
@@ -2624,26 +2631,49 @@
             }
         }
         // Blur block (right of the CALM state): narrowband (dominant tone) and
-        // broadband (all bins) displacement during one shutter exposure — shown
-        // as stage µm, then projected to on-image µm + camera pixels using the
-        // selected objective's magnification and the M6 II pixel pitch.
-        const objId = state.obj || 3;
-        const mag   = OBJ_MAG[objId] || 20;
+        // broadband (all bins) exposure-windowed displacement. Stage µm is
+        // projected to on-image µm + camera pixels via the *true* magnification
+        // (sensor width ÷ live FOV), then EMA-smoothed so the numbers settle.
+        const objId   = state.obj || 3;
+        const fovMm   = state._pendingFov || 0;
+        const widthPx = state.photoWidth || CAM_WIDTH_PX;
+        // True on-sensor magnification: physical sensor width ÷ field of view.
+        // Falls back to the nominal objective figure until a FOV reading lands.
+        const rawMag  = fovMm > 0
+            ? (CAM_PIXEL_UM / 1000) * widthPx / fovMm
+            : (OBJ_MAG[objId] || 20);
+        const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        if (!vibBlurEma) {
+            vibBlurEma = { nbV: dV.blurNbUm, nbH: dH.blurNbUm,
+                           bbV: dV.blurBbUm, bbH: dH.blurBbUm, mag: rawMag };
+        } else {
+            const a = 1 - Math.exp(-(nowMs - vibBlurEmaT) / VIB_BLUR_TAU_MS);
+            vibBlurEma.nbV += (dV.blurNbUm - vibBlurEma.nbV) * a;
+            vibBlurEma.nbH += (dH.blurNbUm - vibBlurEma.nbH) * a;
+            vibBlurEma.bbV += (dV.blurBbUm - vibBlurEma.bbV) * a;
+            vibBlurEma.bbH += (dH.blurBbUm - vibBlurEma.bbH) * a;
+            vibBlurEma.mag += (rawMag      - vibBlurEma.mag) * a;
+        }
+        vibBlurEmaT = nowMs;
+        const mag = vibBlurEma.mag;
         const pxCol = px => px > 2 ? '#ff4444' : px > 0.5 ? '#ffcc00' : '#3ddb7a';
         const blurRow = (label, sv, sh) => {
-            const mv = sv * mag, mh = sh * mag;            // on-image µm
+            const mv = sv * mag, mh = sh * mag;                  // on-image µm
             const pv = mv / CAM_PIXEL_UM, ph = mh / CAM_PIXEL_UM;
-            return `${label} V ${sv.toFixed(1)} H ${sh.toFixed(1)} µm` +
-                   ` &nbsp;&rarr; on-image V ${mv.toFixed(1)} H ${mh.toFixed(1)} µm` +
-                   ` &nbsp;<b style="color:${pxCol(Math.max(pv, ph))}">` +
-                   `V ${pv.toFixed(1)} H ${ph.toFixed(1)} px</b>`;
+            return `<span style="color:#6f9a8c">${label}</span>` +
+                   ` <b style="font-size:13px;color:${pxCol(Math.max(pv, ph))}">` +
+                   `${pv.toFixed(1)} / ${ph.toFixed(1)} px</b>` +
+                   ` &nbsp;<span style="color:#7ab4a2">on-image ${mv.toFixed(1)} / ${mh.toFixed(1)} µm</span>` +
+                   ` &nbsp;<span style="color:#5e8c7e">stage ${sv.toFixed(2)} / ${sh.toFixed(2)} µm</span>`;
         };
         const eObj = document.getElementById('vibp-blur-obj');
-        if (eObj) eObj.textContent = `  ·  ${OBJ_LABEL[objId] || '20x'}`;
+        if (eObj) eObj.innerHTML =
+            `&nbsp;·&nbsp;<b style="color:#9fe6cf">${OBJ_LABEL[objId] || '20x'}</b>` +
+            ` <span style="color:#6f9a8c">true ${mag.toFixed(1)}× · V/H</span>`;
         const eNb = document.getElementById('vibp-blur-nb');
         const eBb = document.getElementById('vibp-blur-bb');
-        if (eNb) eNb.innerHTML = blurRow('narrowband', dV.blurNbUm, dH.blurNbUm);
-        if (eBb) eBb.innerHTML = blurRow('broadband&nbsp;', dV.blurBbUm, dH.blurBbUm);
+        if (eNb) eNb.innerHTML = blurRow('narrowband', vibBlurEma.nbV, vibBlurEma.nbH);
+        if (eBb) eBb.innerHTML = blurRow('broadband&nbsp;', vibBlurEma.bbV, vibBlurEma.bbH);
     }
 
     // Sampled from the telemetry handler whenever a fresh RMS pair arrives.
