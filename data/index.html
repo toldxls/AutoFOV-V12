@@ -1576,13 +1576,14 @@
     // time at draw time.
     let vibLinkedCursorAge = null;   // ms ago; null when no linked cursor
     let vibCursorPane      = null;   // 'wf' | 'trend' — which pane owns it
-    // Sticky-ceiling EMA for the right-edge per-row energy strip.  Mirrors the
-    // vibWfRefMax pattern: fast attack so a strong burst expands the scale
-    // immediately, slow release so the scale doesn't shrink back down to noise
-    // level when the scene goes quiet.  Without this the strip auto-normalises
-    // to whatever's loudest in the visible window — including noise — and the
-    // dynamic range between "ambient" and "moderate vibration" collapses.
-    let vibRowSumRefMax = 4000;
+    // Sticky reference level for the right-edge per-row energy strip.  Fast
+    // attack so the scale expands when the bench gets busier, slow release so
+    // it doesn't collapse to noise level the moment the scene goes quiet.
+    // The strip code anchors this to a high PERCENTILE of the window's row
+    // energy, not the window max — anchoring to the max let one loud burst pin
+    // the scale high through the slow release, flattening every ordinary row
+    // to the same stub (the "all bars look identical" problem).
+    let vibRowSumRef = 4000;
     // Offscreen canvas holding the heatmap-only pixels (no axis, no cursor),
     // so the visible canvas can be recomposited every mousemove without the
     // crosshair leaving a trail and without re-rasterising the full history.
@@ -2332,22 +2333,30 @@
             const pIx    = Math.max(0, Math.min(sorted.length - 1,
                                                 (sorted.length * 0.10) | 0));
             const noiseBase = sorted[pIx] * 1.02;
-            let frameMx = 0;
             for (let r = 0; r < visible; r++) {
                 const v = rowSums[r] - noiseBase;
                 rowSums[r] = v > 0 ? v : 0;
-                if (rowSums[r] > frameMx) frameMx = rowSums[r];
             }
-            // Sticky-ceiling EMA: snap to a stronger burst, decay quickly
-            // enough that a fading-out burst doesn't keep the scale pinned
-            // high (which would shrink the next moderate event to nothing).
-            vibRowSumRefMax = frameMx > vibRowSumRefMax
-                ? vibRowSumRefMax + (frameMx - vibRowSumRefMax) * 0.60
-                : vibRowSumRefMax + (frameMx - vibRowSumRefMax) * 0.04;
+            // Scale anchor: a high percentile of the window's row energy, NOT
+            // the peak.  Anchoring to the max let a single burst pin the scale
+            // high through the slow release, collapsing every ordinary row to
+            // a near-identical stub.  The 88th-percentile anchor tracks
+            // typical strong activity instead — bursts just clip past full
+            // width, while the bulk of the rows spread across the bar so
+            // small time-slice-to-time-slice differences become visible.
+            const ROWSUM_REF_PCT = 0.88;
+            const refIx    = Math.max(0, Math.min(sorted.length - 1,
+                                                  (sorted.length * ROWSUM_REF_PCT) | 0));
+            const frameRef = Math.max(0, sorted[refIx] - noiseBase);
+            // Sticky EMA: snap up to a busier window fast, release slowly so a
+            // fading event doesn't shrink the next moderate one to nothing.
+            vibRowSumRef = frameRef > vibRowSumRef
+                ? vibRowSumRef + (frameRef - vibRowSumRef) * 0.60
+                : vibRowSumRef + (frameRef - vibRowSumRef) * 0.04;
             // Hard floor so a fresh boot or a very-quiet window can't pin the
-            // ceiling near zero (which would map any residual variance to a
-            // full bar).
-            const sumMx = Math.max(1200, vibRowSumRefMax);
+            // reference near zero (which would map any residual variance to a
+            // full bar).  Lower it if moderate windows still look too short.
+            const sumMx = Math.max(1200, vibRowSumRef);
             // Background slab — darker than before so the bars read against
             // a near-opaque track instead of fighting the bright heatmap
             // colours underneath (a strong burst row is already pale yellow
