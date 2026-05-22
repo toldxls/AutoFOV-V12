@@ -2658,7 +2658,7 @@
         }
         vibBlurEmaT = nowMs;
         const mag = vibBlurEma.mag;
-        const pxCol = px => px > 2 ? '#ff4444' : px > 0.5 ? '#ffcc00' : '#3ddb7a';
+        const pxCol = px => px > 3 ? '#ff4444' : px > 2 ? '#ff9000' : '#3ddb7a';
         const blurRow = (label, sv, sh) => {
             const mv = sv * mag, mh = sh * mag;                  // on-image µm
             const pv = mv / CAM_PIXEL_UM, ph = mh / CAM_PIXEL_UM;
