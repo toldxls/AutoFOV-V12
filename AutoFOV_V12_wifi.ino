@@ -1044,6 +1044,14 @@ static void startFullServer() {
     // basename onto "/vibsig/" so a request like /vibsig/..%2fwifi can never
     // wander outside the directory.
     httpServer.on("/vibsig/*", HTTP_GET, [](AsyncWebServerRequest* req) {
+        // Same CSRF gate as /cmd — the signature blobs aren't sensitive on
+        // their own, but the auth model should be consistent across endpoints
+        // so a future feature added here doesn't inherit an open door.
+        if (!req->hasHeader("X-AutoFOV-Token") ||
+            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+            req->send(403, "text/plain", "Forbidden");
+            return;
+        }
         String url = req->url();
         int slash = url.lastIndexOf('/');
         String base = (slash >= 0) ? url.substring(slash + 1) : url;

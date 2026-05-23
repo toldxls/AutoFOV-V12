@@ -3194,7 +3194,7 @@
     //    show it as a gold dashed line in the panel spectrum.
     let vibSigOverlay = null, vibSigOverlayName = '';
     function vibLoadSig(fn) {
-        fetch('/vibsig/' + fn)
+        fetch('/vibsig/' + fn, { headers: { 'X-AutoFOV-Token': csrfToken } })
             .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
             .then(buf => {
                 if (buf.byteLength < 16 + 512) return;
