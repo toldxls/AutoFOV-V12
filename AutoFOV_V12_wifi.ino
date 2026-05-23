@@ -852,6 +852,17 @@ static void staConnectTask(void* arg) {
         Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d  (%lu ms)\n",
                       WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
                       WiFi.channel(), (unsigned long)(millis() - tStart));
+        // mDNS — register only after the STA interface has an IP. The
+        // arduino-esp32 ESPmDNS hooks SYSTEM_EVENT_STA_GOT_IP internally and
+        // re-registers itself on reconnect, so this one-shot call covers the
+        // lifetime of the session. Heads-up: Android Chrome doesn't resolve
+        // .local from the URL bar — desktop browsers and iOS do.
+        if (MDNS.begin("autofov")) {
+            MDNS.addService("http", "tcp", 80);
+            Serial.println("[mDNS] autofov.local registered");
+        } else {
+            Serial.println("[mDNS] registration failed");
+        }
     } else {
         wifiConnected = false;
         lastReconnectMs = millis();

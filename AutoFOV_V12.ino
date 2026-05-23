@@ -3752,10 +3752,9 @@ void setup() {
   Serial.printf("[BOOT] WiFi init — free heap before: %u\n", ESP.getFreeHeap());
   Serial.flush();
   wifiSetup();
-  if (MDNS.begin("autofov")) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.println("[mDNS] autofov.local registered");
-  }
+  // mDNS is started by staConnectTask() after WL_CONNECTED — calling
+  // MDNS.begin() here returned true but never registered anything because the
+  // STA interface had no IP yet.
   Serial.printf("[BOOT] WiFi init done — free heap after: %u\n", ESP.getFreeHeap());
   Serial.flush();
 
