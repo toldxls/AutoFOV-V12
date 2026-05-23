@@ -14,10 +14,16 @@
 # These are committed to the `gh-pages` branch via a git worktree, so the
 # main working tree is never touched.  First run bootstraps the branch.
 #
-# Usage: bash tools/release.sh
+# Usage:
+#   bash tools/release.sh           # interactive — prompts before pushing
+#   bash tools/release.sh --yes     # non-interactive — pushes without prompt
+#                                   # (used after the OTA flash has been tested)
 
 set -e
 cd "$(dirname "$0")/.."
+
+AUTO_YES=0
+[ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ] && AUTO_YES=1
 
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
 PAGES_URL="https://toldxls.github.io/AutoFOV-V12"
@@ -111,8 +117,14 @@ echo ""
 echo "=== Step 4: publish ==="
 ( cd "$WT" && git add -A && git status --short )
 
-printf "\nPush v%s to the gh-pages branch on origin? [y/N] " "$VERSION"
-read -r ans
+if [ "$AUTO_YES" = 1 ]; then
+    ans=y
+    echo ""
+    echo "--yes given — pushing v$VERSION without prompting."
+else
+    printf "\nPush v%s to the gh-pages branch on origin? [y/N] " "$VERSION"
+    read -r ans
+fi
 if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
     ( cd "$WT" \
       && git commit -m "release v$VERSION" \
