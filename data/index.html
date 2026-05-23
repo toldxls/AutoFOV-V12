@@ -4585,12 +4585,29 @@
         btn.style.background   = accent || '#003a5a';
         btn.style.borderColor  = accent ? '#2abf6a' : '#005a8a';
     }
+    // Numeric major.minor.patch compare. Returns -1, 0, or +1 (a vs b). Treats
+    // missing parts as 0 and non-numeric parts as 0 so a malformed manifest
+    // can't make the device offer a phantom downgrade. Patch numbers are
+    // monotonically increasing in this repo's normal flow (git commit count)
+    // so this ordering is meaningful as long as history isn't rewritten.
+    function semverCmp(a, b) {
+        const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+        const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const x = pa[i] || 0, y = pb[i] || 0;
+            if (x !== y) return x < y ? -1 : 1;
+        }
+        return 0;
+    }
+
     // Re-render the GitHub button after a flash finishes/fails, so it is never
     // left disabled.  Re-derives the phase from the last manifest rather than
     // trusting the (possibly 'busy') phase the failed flash left behind.
     function ghRestoreButton() {
         const running = state.buildVersion || '';
-        if (ghManifest && ghManifest.version !== running) {
+        // Only "available" when the manifest is strictly newer — a local build
+        // ahead of the last release must NOT read as an offered downgrade.
+        if (ghManifest && running && semverCmp(ghManifest.version, running) > 0) {
             ghPhase = 'available';
             ghSetButton('UPDATE TO v' + ghManifest.version, true, '#0a5a2a');
         } else if (ghManifest) {
@@ -4620,17 +4637,25 @@
             if (!m.version || !m.sha256 || !m.bin) throw new Error('bad manifest');
             ghManifest = m;
             const running = state.buildVersion || '';
-            if (running && m.version === running) {
-                ghPhase = 'current';
-                ghSetStatus('Up to date — v' + m.version, '#6abf6a');
-                ghSetButton('CHECK AGAIN', true);
-            } else {
-                // Any version difference is offered; the patch number is a git
-                // commit count, not a reliable ordering across history rewrites.
+            const cmp = running ? semverCmp(m.version, running) : 1;
+            if (cmp > 0) {
+                // Manifest is strictly newer than what's running → real update.
                 ghPhase = 'available';
                 ghSetStatus('Update available: v' + m.version
                     + (running ? '  (running v' + running + ')' : ''), '#ffb84a');
                 ghSetButton('UPDATE TO v' + m.version, true, '#0a5a2a');
+            } else if (cmp === 0) {
+                ghPhase = 'current';
+                ghSetStatus('Up to date — v' + m.version, '#6abf6a');
+                ghSetButton('CHECK AGAIN', true);
+            } else {
+                // running > manifest — device has a local build that hasn't
+                // been released yet. Treat as current; surface the gap so the
+                // user knows there's an unreleased delta.
+                ghPhase = 'current';
+                ghSetStatus('Up to date — running v' + running
+                    + ' (latest release v' + m.version + ')', '#6abf6a');
+                ghSetButton('CHECK AGAIN', true);
             }
         } catch (e) {
             ghPhase = 'error';
