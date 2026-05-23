@@ -9,7 +9,7 @@ V12 adds a full real-time vibration monitoring and analysis system using the onb
 * **Real-Time FOV Calculation:** Uses a VL53L4CX ToF sensor to measure distance and computes FOV for 5×, 10×, and 20× objectives.
 * **Custom Calibration:** Calibrate the device to your specific optical setup using a scaled micrometer. Calculates standard error (RMSE) and R² of the calibration fit.
 * **Stack Calculator:** Automatically calculates image overlap % and total depth from step size, and required image count based on objective NA and depth of field.
-* **BLE Camera Triggering:** Acts as a BLE HID Keyboard. Sends an F12 keystroke to your connected device after the stack finishes.
+* **Stack-Complete Notifications:** Pushes a `stackDone` WebSocket event to every connected dashboard (browser Notification + audible alert beeps) and, optionally, an ntfy.sh push so a phone away from the bench can hear the stack finish.
 * **Web Dashboard & Telemetry:** Connects to WiFi to provide a ~30 Hz live data stream (distance, FOV, ToF signal rate, vibration) and full remote control of settings.
 * **Captive Portal Setup:** First-time WiFi setup via a built-in access point (AutoFOV-Setup).
 * **PSRAM-Backed UI:** Fluid, flicker-free UI using off-screen 16-bit sprites buffered in PSRAM.
@@ -47,7 +47,6 @@ Install via the Arduino Library Manager or manually:
 * `Adafruit_ILI9341`
 * `Adafruit_FT6206`
 * `vl53l4cx_class` (STM32duino)
-* `NimBLE-Arduino`
 * `ESPAsyncWebServer` (me-no-dev)
 * `AsyncTCP` (me-no-dev)
 * `ArduinoJson` v6.x
@@ -108,11 +107,11 @@ firmware while keeping calibration and WiFi settings.
 3. **Configure:** Enter your WiFi credentials. The device saves them, restarts, and connects. Assign a static high IP (e.g. 192.168.1.250) via your router for easy access.
 4. **Dashboard:** Enter the device IP in any browser. The full remote control UI loads from LittleFS.
 
-### BLE Trigger
+### Stack-Complete Notification
 
-1. Wait for WiFi to connect (BLE init is deferred until after WiFi to preserve heap).
-2. Pair with **ESP_Cam** in your OS Bluetooth settings.
-3. After a completed stack the device sends F12 over BLE and a browser notification with audible cue.
+The web dashboard subscribes to a `stackDone` WebSocket event the moment the device declares a stack finished. The browser fires a desktop Notification (if granted) and plays three audible beeps via WebAudio.
+
+Optionally, set an [ntfy.sh](https://ntfy.sh) topic from the dashboard's **Auto Remote** screen — when a stack finishes, the device POSTs a high-priority push notification to that topic so any phone subscribed in the ntfy app gets pinged without needing a tab open.
 
 ### Stack-Complete Thresholds
 

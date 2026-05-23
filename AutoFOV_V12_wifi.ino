@@ -2029,10 +2029,10 @@ String wifiGetIP()       { if (wifiServerMode == WMODE_PORTAL) return AP_IP.toSt
 String wifiGetSSID()     { if (wifiServerMode == WMODE_PORTAL) return String(AP_SSID);
                            return wifiConnected ? WiFi.SSID() : ""; }
 
-// Called from main.ino when a stack sequence finishes (the same moment the
-// BLE HID key would have fired).  Pushes a one-shot WS event so the web UI
-// can fire a browser Notification — BLE-free fallback for the stacker prompt.
-// The JS side plays 3 scheduled AudioContext beeps from this single message.
+// Called from main.ino when a stack sequence finishes (MIN_ACTIVE_DURATION of
+// shutter activity followed by SILENCE_DURATION quiet).  Pushes a one-shot WS
+// event so connected dashboards fire a browser Notification + the JS-side
+// 3-beep AudioContext cue, and optionally fires an ntfy.sh push.
 static void ntfyTask(void* param) {
     String* topic = static_cast<String*>(param);
     WiFiClient client;

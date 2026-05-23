@@ -274,7 +274,7 @@ Adafruit_LSM6DSOX lsm;
 
 // ─── PSRAMCanvas16 — drop-in GFXcanvas16 replacement using PSRAM ─────────────
 // On ESP32-S3 with 2 MB PSRAM the 6 sprites below occupy ~91 KB.  Moving them
-// to PSRAM frees that internal heap for BLE + WiFi stack headroom.
+// to PSRAM frees that internal heap for the WiFi / AsyncTCP / lwIP stack.
 // ps_malloc() falls back to malloc() automatically if PSRAM is absent or full.
 //
 // Why not subclass GFXcanvas16?  Its pixel buffer is declared *private*, so a
@@ -3111,7 +3111,7 @@ void handleWifiInfoTouch(TS_Point p) {
   if (btnWifiInfoForget.contains(p.x, p.y)) {
     // Flash label and schedule the actual clear+restart for 600 ms later.
     // The deferred timer is polled by loop(); this returns immediately so
-    // touch / BLE / WS handling all stay responsive during the flash window.
+    // touch / WS handling stays responsive during the flash window.
     btnWifiInfoForget.draw(tft, "CLEARING...", COLOR_MAROON, TFT_WHITE);
     wifiForgetAtMs = millis() + 600;
     return;
