@@ -4501,8 +4501,9 @@
         let uploadComplete = false;
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
-        xhr.setRequestHeader('X-OTA-Password', state.otaPassword);
-        xhr.setRequestHeader('X-OTA-SHA256',   sha);
+        xhr.setRequestHeader('X-AutoFOV-Token', csrfToken);
+        xhr.setRequestHeader('X-OTA-Password',  state.otaPassword);
+        xhr.setRequestHeader('X-OTA-SHA256',    sha);
 
         xhr.upload.onprogress = e => {
             if (!e.lengthComputable) return;

@@ -930,7 +930,7 @@ static void startFullServer() {
     //   * /cmd:   Content-Type: application/json triggers a preflight that
     //             fails without Allow-Origin, so the POST is never sent
     //   * /forget-wifi: requires X-AutoFOV-Token (custom header → preflight)
-    //   * /ota:   requires X-OTA-Password (custom header → preflight)
+    //   * /ota:   requires X-AutoFOV-Token AND X-OTA-Password (both gated)
     //   * WS:     filter requires ?tok= matching csrfToken (see below)
     // Earlier firmware advertised Access-Control-Allow-Origin: * which let any
     // visited webpage drive the device while the user was on the same LAN.
@@ -1109,8 +1109,16 @@ static void startFullServer() {
             };
 
             if (!index) {
-                if (!req->hasHeader("X-OTA-Password") ||
-                    req->header("X-OTA-Password") != String(otaPassword)) {
+                // Two gates: the per-boot CSRF token (defends against a same-LAN
+                // attacker who only has browser context — they can't read /token
+                // cross-origin) AND the persistent OTA password (defends against
+                // anyone who has the token but lacks the password the user typed
+                // / read off the WiFi Info screen). Both must match.
+                bool tokOk = req->hasHeader("X-AutoFOV-Token") &&
+                             req->header("X-AutoFOV-Token") == String(csrfToken);
+                bool pwOk  = req->hasHeader("X-OTA-Password") &&
+                             req->header("X-OTA-Password") == String(otaPassword);
+                if (!tokOk || !pwOk) {
                     markAborted();
                     req->send(401, "text/plain", "Unauthorized");
                     return;
