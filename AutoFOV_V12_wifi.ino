@@ -199,6 +199,25 @@ Point your browser to that address to open the control panel.</p>
 // ─────────────────────────────────────────────────────────────────────────────
 // FORWARD DECLARATIONS
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Idempotent mDNS registration. Safe to call on every transition into
+// WL_CONNECTED — the static flag suppresses re-registration once it's up.
+// We have to make sure this fires whenever WiFi *first* comes up in a given
+// session, even when that's via wifiLoop's reconnect retry after an initial
+// staConnectTask attempt failed. ESPmDNS re-announces on STA_GOT_IP events
+// internally, but only once the first MDNS.begin() has actually run.
+static bool mdnsStarted = false;
+static void ensureMdns() {
+    if (mdnsStarted) return;
+    if (MDNS.begin("autofov")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[mDNS] autofov.local registered");
+        mdnsStarted = true;
+    } else {
+        Serial.println("[mDNS] registration failed — will retry on next connect");
+    }
+}
+
 // Uniform random index in [0, n) using rejection sampling — drops esp_random()
 // draws that fall into the partial bucket so the result is bias-free for any n.
 // (Alphabets of 32 chars have no modulo bias on a uint32_t to begin with; the
@@ -530,6 +549,11 @@ void wifiLoop() {
                 Serial.printf("[WiFi] Reconnected: %s\n",
                               WiFi.localIP().toString().c_str());
                 if (currentMode == MAIN) drawWifiIndicator();   // patched3: update header
+                // Catch the case where the initial staConnectTask attempt
+                // failed and this is the first time we've actually had an IP
+                // in this session — without it, mDNS would stay unregistered
+                // for the rest of the boot.
+                ensureMdns();
                 String out; buildFullStateJson(out, false);    // reconnect: skip calGraphPoints
                 wsServer.textAll(out);
             } else {
@@ -884,17 +908,10 @@ static void staConnectTask(void* arg) {
         Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d  (%lu ms)\n",
                       WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
                       WiFi.channel(), (unsigned long)(millis() - tStart));
-        // mDNS — register only after the STA interface has an IP. The
-        // arduino-esp32 ESPmDNS hooks SYSTEM_EVENT_STA_GOT_IP internally and
-        // re-registers itself on reconnect, so this one-shot call covers the
-        // lifetime of the session. Heads-up: Android Chrome doesn't resolve
-        // .local from the URL bar — desktop browsers and iOS do.
-        if (MDNS.begin("autofov")) {
-            MDNS.addService("http", "tcp", 80);
-            Serial.println("[mDNS] autofov.local registered");
-        } else {
-            Serial.println("[mDNS] registration failed");
-        }
+        // mDNS — register only after the STA interface has an IP.
+        // Heads-up: Android Chrome doesn't resolve .local from the URL bar;
+        // desktop browsers and iOS do.
+        ensureMdns();
     } else {
         wifiConnected = false;
         lastReconnectMs = millis();
