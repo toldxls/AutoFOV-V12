@@ -2536,8 +2536,10 @@ static void vibSigScan() {
   vibSigCount = 0;
   File dir = LittleFS.open("/vibsig");
   if (dir && dir.isDirectory()) {
-    for (File e = dir.openNextFile(); e && vibSigCount < VIB_SIG_MAX; e = dir.openNextFile()) {
-      if (!e.isDirectory()) {
+    for (;;) {
+      File e = dir.openNextFile();
+      if (!e) break;
+      if (!e.isDirectory() && vibSigCount < VIB_SIG_MAX) {
         const char* fn = e.name();
         const char* slash = strrchr(fn, '/');
         const char* base = slash ? slash + 1 : fn;
