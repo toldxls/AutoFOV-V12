@@ -854,7 +854,7 @@
                             border-radius:3px; font-size:11px; font-weight:bold; cursor:pointer;">mg</div>
                 <div class="gfx-text" id="vib-lock" style="right: 8px; top: 195px; font-size: 11px; color: var(--text-muted);">lock -- Hz</div>
 
-                <input id="vib-capname" type="text" placeholder="signature name" maxlength="14"
+                <input id="vib-capname" type="text" placeholder="signature name" maxlength="15"
                        style="position:absolute; left:8px; top:222px; width:104px; height:26px; box-sizing:border-box;
                               background:#0c2b2e; color:#e3f7c9; border:1px solid #1f3a33; font-size:11px; padding:0 6px;">
                 <div class="gfx-btn" style="left: 120px; top: 222px; width: 84px; height: 26px; background-color: #006400; font-size: 12px;"
@@ -3261,17 +3261,25 @@
             d.appendChild(row);
         });
     }
+    // Firmware caps signature basenames at VIB_SIG_NAME_MAX (15) to match the
+    // on-disk VibSignature.name buffer. Apply the cap here too so the user
+    // sees the truncation in the input/prompt rather than getting a silent
+    // "rejected: bad name" from the device.
+    const VIB_SIG_NAME_MAX = 15;
+    function vibCleanName(s) {
+        return (s || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, VIB_SIG_NAME_MAX);
+    }
     function vibCapture() {
         const inp = document.getElementById('vib-capname');
-        const nm = (inp.value || '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+        const nm = vibCleanName(inp.value);
         if (!nm) { alert('Enter a signature name first'); return; }
         sendCommand('vibCapture', nm);
         inp.value = '';
     }
     function vibRename(fn) {
-        const nn = prompt('New name for "' + fn.replace(/\.bin$/, '') + '":');
+        const nn = prompt('New name for "' + fn.replace(/\.bin$/, '') + '" (max ' + VIB_SIG_NAME_MAX + ' chars):');
         if (!nn) return;
-        const clean = nn.trim().replace(/[^A-Za-z0-9_-]/g, '');
+        const clean = vibCleanName(nn);
         if (clean) sendCommand('vibRename', fn + '|' + clean);
     }
     function vibDelete(fn) {

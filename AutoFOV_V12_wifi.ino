@@ -221,17 +221,17 @@ static void generateCsrfToken() {
 // Signature names from the web must match /vibsig/*.bin's filename whitelist so
 // nothing from the network can write outside /vibsig/. `allowDotBin` is true
 // when the caller passes a full "name.bin" (vibDelSig); false for the bare
-// basename (vibCapture, the rename target).
+// basename (vibCapture, the rename target). The basename length cap is
+// VIB_SIG_NAME_MAX — see that constant for why the limit is what it is.
 static bool vibNameSafe(const char* s, bool allowDotBin) {
     if (!s || !*s) return false;
     size_t len = strlen(s);
-    if (len > 30) return false;
     size_t scanLen = len;
     if (allowDotBin) {
         if (len <= 4 || strcmp(s + len - 4, ".bin") != 0) return false;
         scanLen = len - 4;
-        if (scanLen == 0) return false;
     }
+    if (scanLen == 0 || scanLen > VIB_SIG_NAME_MAX) return false;
     for (size_t i = 0; i < scanLen; i++) {
         char c = s[i];
         bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -241,21 +241,22 @@ static bool vibNameSafe(const char* s, bool allowDotBin) {
     return true;
 }
 
-// One-shot: at boot, drop any /vibsig/ entries whose name doesn't match the
-// whitelist. Prior firmware revisions accepted unsanitised names from the
-// network, so a previously-exploited install could carry malicious filenames
-// that would later be displayed by the dashboard. Names are also bounded to
-// the 23-char vibSigList slot so anything over-long never reaches the UI.
+// One-shot: at boot, drop any /vibsig/ entries that fail the current name
+// whitelist (vibNameSafe with .bin). Prior firmware accepted longer or oddly-
+// charactered names from the network; this pass purges those so the dashboard
+// never displays a name the device can't round-trip through its buffers.
 static void vibSigCleanupLegacyNames() {
     File dir = LittleFS.open("/vibsig");
     if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return; }
     String bad[8]; int badN = 0;
-    for (File e = dir.openNextFile(); e && badN < 8; e = dir.openNextFile()) {
+    for (;;) {
+        File e = dir.openNextFile();
+        if (!e) break;
         if (!e.isDirectory()) {
             const char* fn = e.name();
             const char* slash = strrchr(fn, '/');
             const char* base = slash ? slash + 1 : fn;
-            if (!vibNameSafe(base, true) || strlen(base) > 23) {
+            if (!vibNameSafe(base, true) && badN < (int)(sizeof(bad)/sizeof(bad[0]))) {
                 bad[badN++] = String("/vibsig/") + base;
             }
         }

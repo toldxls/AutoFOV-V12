@@ -491,6 +491,15 @@ const char* const VIB_SIG_NAMES[8] = {
 #define VIB_SIG_ROW_H     26
 #define VIB_SIG_VIS_ROWS  4
 #define VIB_SIG_FRAMES    8         // FFT frames averaged per CAPTURE
+// Max basename length for /vibsig/*.bin (excluding the ".bin" extension).
+// Capped at 15 to match VibSignature.name[16] and vibSigCaptureName[16] —
+// every buffer in the pipeline (capture staging, on-disk struct, list cache,
+// cleanup pass, and the JS input) honours this single number. Earlier
+// firmware accepted names up to 30 chars from the network, but truncated
+// them silently into the 15-char buffers on save, and a separate boot-time
+// cleanup pass deleted any file whose name didn't fit, so renames to long
+// names were lost on the next reboot.
+#define VIB_SIG_NAME_MAX  15
 
 char     vibSigList[VIB_SIG_MAX][24];  // base filenames of saved signatures
 int      vibSigCount   = 0;
