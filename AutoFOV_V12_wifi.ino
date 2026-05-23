@@ -98,6 +98,11 @@ static char                    otaExpectedSha[65] = {0};   // hex, 64 chars + NU
 // browser sees a connection drop instead of the 200 OK.  We stash a timestamp
 // and let wifiLoop() (Core 1) restart after the response has had time to flush.
 static uint32_t                otaRestartPendingMs = 0;
+// Same problem outside OTA: /save (captive portal) and /forget-wifi reboot the
+// device, and inline ESP.restart() on Core 0 cuts the response short. Stash a
+// deadline and let wifiLoop() (Core 1) do the actual restart once the queued
+// HTML/JSON has had time to leave the wire.
+static uint32_t                restartPendingMs = 0;
 // Version string of the firmware in the *inactive* OTA slot — the rollback
 // target.  Read once at boot from NVS (see wifiSetup).  esp_app_desc_t can't
 // supply this: arduino-esp32 ships a precompiled esp_app_desc, so its
@@ -480,6 +485,16 @@ void wifiSetup() {
 // ─────────────────────────────────────────────────────────────────────────────
 void wifiLoop() {
 
+    // ── Generic deferred restart (set by /save, /forget-wifi, etc.) ──────────
+    // Checked before the portal early-return so it fires in either mode.
+    // 800 ms matches the OTA restart window — enough for AsyncTCP to flush
+    // the queued response and FIN to the client at LAN latency.
+    if (restartPendingMs && (millis() - restartPendingMs) > 800UL) {
+        Serial.println("[WiFi] deferred restart firing");
+        Serial.flush();
+        ESP.restart();
+    }
+
     // Captive portal: keep the DNS server ticking
     if (wifiServerMode == WMODE_PORTAL) {
         dnsServer.processNextRequest();
@@ -788,8 +803,7 @@ static void startPortalMode() {
             wifiPrefs.end();
 
             req->send_P(200, "text/html", PORTAL_SAVED_HTML);
-            delay(1500);
-            ESP.restart();
+            restartPendingMs = millis();   // wifiLoop() reboots once flushed
         }
     );
 
@@ -1020,8 +1034,7 @@ static void startFullServer() {
         wifiPrefs.clear();
         wifiPrefs.end();
         req->send(200, "text/plain", "WiFi credentials cleared. Restarting into setup portal…");
-        delay(500);
-        ESP.restart();
+        restartPendingMs = millis();   // wifiLoop() reboots once flushed
     });
 
     // Serve individual signature .bin files — the web dashboard fetches these
