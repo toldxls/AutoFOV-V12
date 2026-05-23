@@ -199,27 +199,44 @@ Point your browser to that address to open the control panel.</p>
 // ─────────────────────────────────────────────────────────────────────────────
 // FORWARD DECLARATIONS
 // ─────────────────────────────────────────────────────────────────────────────
+// Uniform random index in [0, n) using rejection sampling — drops esp_random()
+// draws that fall into the partial bucket so the result is bias-free for any n.
+// (Alphabets of 32 chars have no modulo bias on a uint32_t to begin with; the
+// 56-char CSRF alphabet does. One helper keeps every caller uniform regardless
+// of how a future alphabet is sized.)
+static uint32_t uniformRandom(uint32_t n) {
+    if (n == 0) return 0;
+    uint32_t limit = (uint32_t)0xFFFFFFFFUL - ((uint32_t)0xFFFFFFFFUL % n);
+    for (;;) {
+        uint32_t r = esp_random();
+        if (r < limit) return r % n;
+    }
+}
+
 static void generatePortalCode() {
     // 8 chars: WPA2-PSK requires an 8-character minimum — softAP() rejects
     // anything shorter and the AP never starts.
     // Omit visually ambiguous characters (0/O, 1/I/L).
     static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const uint32_t N = sizeof(CHARS) - 1;
     for (int i = 0; i < 8; i++)
-        portalCode[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
+        portalCode[i] = CHARS[uniformRandom(N)];
     portalCode[8] = '\0';
 }
 
 static void generateOtaPassword() {
     static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const uint32_t N = sizeof(CHARS) - 1;
     for (int i = 0; i < 12; i++)
-        otaPassword[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
+        otaPassword[i] = CHARS[uniformRandom(N)];
     otaPassword[12] = '\0';
 }
 
 static void generateCsrfToken() {
     static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghijkmnpqrstuvwxyz";
+    const uint32_t N = sizeof(CHARS) - 1;
     for (int i = 0; i < 16; i++)
-        csrfToken[i] = CHARS[esp_random() % (sizeof(CHARS) - 1)];
+        csrfToken[i] = CHARS[uniformRandom(N)];
     csrfToken[16] = '\0';
 }
 
