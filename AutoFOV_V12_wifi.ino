@@ -1696,8 +1696,8 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     } else if (strcmp(key, "ntfyTest") == 0) {
         if (ntfyTopic.length() > 0) {
-            String* t = new String(ntfyTopic);
-            xTaskCreate(ntfyTask, "ntfy", 4096, t, 1, nullptr);
+            String* body = new String("AutoFOV test");
+            xTaskCreate(ntfyTask, "ntfy", 4096, body, 1, nullptr);
             Serial.println("[NTFY] test fired");
         } else {
             Serial.println("[NTFY] test skipped — no topic set");
@@ -2051,25 +2051,44 @@ String wifiGetSSID()     { if (wifiServerMode == WMODE_PORTAL) return String(AP_
 // event so connected dashboards fire a browser Notification + the JS-side
 // 3-beep AudioContext cue, and optionally fires an ntfy.sh push.
 static void ntfyTask(void* param) {
-    String* topic = static_cast<String*>(param);
+    String* body = static_cast<String*>(param);
     WiFiClient client;
     HTTPClient http;
-    http.begin(client, "http://ntfy.sh/" + *topic);
+    http.begin(client, "http://ntfy.sh/" + ntfyTopic);
     http.setTimeout(4000);
     http.addHeader("X-Priority", "high");
     http.addHeader("X-Title", "AutoFOV");
-    int code = http.POST("Focus stack complete");
+    int code = http.POST(*body);
     Serial.printf("[NTFY] -> %d\n", code);
     http.end();
-    delete topic;
+    delete body;
     vTaskDelete(nullptr);
 }
 
 void wifiNotifyStackComplete() {
-    if (wsServer.count() > 0) wsServer.textAll("{\"stackDone\":1}");
+    float avgDist = sensorAvgDist.load(std::memory_order_acquire) / 10.0f;
+    float mult    = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
+    float fov     = mult * (avgDist * CTRLX + CTRLY);
+    unsigned long durMs = lastPulseTime - firstPulseTime;
+
+    if (wsServer.count() > 0) {
+        StaticJsonDocument<256> doc;
+        doc["stackDone"] = 1;
+        doc["fov"]    = roundf(fov * 1000.0f) / 1000.0f;
+        doc["dist"]   = roundf(avgDist * 10.0f) / 10.0f;
+        doc["obj"]    = currentobj;
+        doc["stepMm"] = roundf(stackStepSize * 1000.0f) / 1000.0f;
+        doc["imgs"]   = stackTotalImgs;
+        doc["durS"]   = (int)(durMs / 1000UL);
+        doc["vst"]    = (int)vibState.load();
+        String out; serializeJson(doc, out);
+        wsServer.textAll(out);
+    }
     if (ntfyTopic.length() > 0) {
-        String* t = new String(ntfyTopic);
-        xTaskCreate(ntfyTask, "ntfy", 4096, t, 1, nullptr);
+        char buf[56];
+        snprintf(buf, sizeof(buf), "Focus stack complete \xe2\x80\x94 FOV %.3f mm", fov);
+        String* body = new String(buf);
+        xTaskCreate(ntfyTask, "ntfy", 4096, body, 1, nullptr);
     }
 }
 

@@ -1577,6 +1577,7 @@
     let vibTrendLast    = 0;
     let vibTrendDispMax = 0;             // sticky Y-ceiling: fast rise, slow decay
     let vibWfInit    = false;
+    let _stackDoneData = null;  // snapshot from last stackDone event, held for the Save button
 
     // ── Spectrum peak-hold (smooths the panel trace) ────────────────────────
     //   At rest, per-frame noise jitter makes bin-to-bin amplitudes flicker so
@@ -4960,6 +4961,71 @@
         } catch {}
     }
 
+    function showStackToast(data) {
+        const existing = document.getElementById('stack-toast');
+        if (existing) existing.remove();
+        const fovStr = (data.fov || 0).toFixed(3);
+        const toast = document.createElement('div');
+        toast.id = 'stack-toast';
+        toast.style.cssText =
+            'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
+            'background:#1e1e1e;border:1px solid #ADFF2F;border-radius:8px;' +
+            'padding:10px 14px;z-index:9999;font-family:monospace;color:#ccc;' +
+            'display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.6);';
+        toast.innerHTML =
+            '<span style="color:#ADFF2F">&#10003;</span>' +
+            '<span>Stack complete &mdash; <strong style="color:#ADFF2F">' + fovStr + ' mm</strong></span>' +
+            '<button onclick="saveStackCard(_stackDoneData)"' +
+            ' style="background:#ADFF2F;color:#111;border:none;border-radius:4px;' +
+            'padding:4px 10px;cursor:pointer;font-family:monospace;font-weight:bold;">Save PNG</button>' +
+            '<button onclick="document.getElementById(\'stack-toast\').remove()"' +
+            ' style="background:none;border:none;color:#666;cursor:pointer;font-size:16px;">&#10005;</button>';
+        document.body.appendChild(toast);
+        setTimeout(() => { const t = document.getElementById('stack-toast'); if (t) t.remove(); }, 60000);
+    }
+
+    function saveStackCard(data) {
+        if (!data) return;
+        const W = 480, H = 270;
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d');
+
+        ctx.fillStyle = '#111'; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#1e1e1e'; ctx.fillRect(0, 0, W, 48);
+        ctx.strokeStyle = '#ADFF2F'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, 48); ctx.lineTo(W, 48); ctx.stroke();
+
+        ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 18px monospace';
+        ctx.fillText('AutoFOV', 18, 30);
+        ctx.fillStyle = '#555'; ctx.font = '11px monospace';
+        ctx.fillText(new Date().toLocaleString(), 120, 30);
+
+        ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 62px monospace';
+        ctx.fillText((data.fov || 0).toFixed(3), 18, 128);
+        ctx.fillStyle = '#777'; ctx.font = '14px monospace';
+        ctx.fillText('mm  AVG FOV', 18, 150);
+
+        const objLabel = ['—', '5\xd7', '10\xd7', '20\xd7'][data.obj] || String(data.obj || '');
+        const durM = Math.floor((data.durS || 0) / 60);
+        const durS = String((data.durS || 0) % 60).padStart(2, '0');
+        const vib  = ['calm', 'moderate', 'strong'][data.vst];
+        const lines = [
+            'Objective  ' + objLabel,
+            'Step       ' + (data.stepMm || 0).toFixed(3) + ' mm \xd7 ' + (data.imgs || 0) + ' images',
+            'Duration   ' + durM + ':' + durS,
+            vib ? 'Vibration  ' + vib : '',
+        ].filter(Boolean);
+        ctx.fillStyle = '#ccc'; ctx.font = '14px monospace';
+        lines.forEach((ln, i) => ctx.fillText(ln, 18, 183 + i * 22));
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const a  = document.createElement('a');
+        a.download = 'autofov_stack_' + ts + '.png';
+        a.href = cv.toDataURL('image/png');
+        a.click();
+    }
+
     function applyFullState(data) {
         // Unpack minified fast-telem keys → canonical long names so the
         // rest of the handler never needs to know which frame type arrived.
@@ -5129,6 +5195,8 @@
                 try { new Notification('AutoFOV', { body: 'Stack complete', tag: 'stack-done' }); } catch {}
             }
             playAlertBeeps();
+            _stackDoneData = data;
+            showStackToast(data);
         }
         // TEST ALERT button (device or web) — BLE-free beep confirmation.
         if (data.beep) playAlertBeeps();
