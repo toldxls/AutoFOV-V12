@@ -4974,7 +4974,7 @@
             'display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.6);';
         toast.innerHTML =
             '<span style="color:#ADFF2F">&#10003;</span>' +
-            '<span>Stack complete &mdash; <strong style="color:#ADFF2F">' + fovStr + ' mm</strong></span>' +
+            '<span>Stack finished &mdash; <strong style="color:#ADFF2F">' + fovStr + ' mm</strong></span>' +
             '<button onclick="saveStackCard(_stackDoneData)"' +
             ' style="background:#ADFF2F;color:#111;border:none;border-radius:4px;' +
             'padding:4px 10px;cursor:pointer;font-family:monospace;font-weight:bold;">Save PNG</button>' +
@@ -5192,7 +5192,7 @@
         // BLE-free fallback for the stacker app's "stack done" prompt.
         if (data.stackDone) {
             if ('Notification' in window && Notification.permission === 'granted') {
-                try { new Notification('AutoFOV', { body: 'Stack complete', tag: 'stack-done' }); } catch {}
+                try { new Notification('AutoFOV', { body: 'Stack finished', tag: 'stack-done' }); } catch {}
             }
             playAlertBeeps();
             _stackDoneData = data;

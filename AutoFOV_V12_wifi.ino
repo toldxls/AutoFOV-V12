@@ -2087,7 +2087,7 @@ void wifiNotifyStackComplete() {
     if (ntfyTopic.length() > 0) {
         int errCentimm = (int)sensorErrInt.load(std::memory_order_acquire);
         char buf[64];
-        snprintf(buf, sizeof(buf), "Focus stack complete \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
+        snprintf(buf, sizeof(buf), "Stack finished \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
         String* body = new String(buf);
         xTaskCreate(ntfyTask, "ntfy", 4096, body, 1, nullptr);
     }
