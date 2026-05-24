@@ -4571,6 +4571,15 @@
     let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
     let ghManifest = null;     // {version, sha256, bin} from the last good check
 
+    // Escape any string that gets concatenated into ghSetStatus, since that
+    // sink uses innerHTML (it has to — the two-line "Up to date" message
+    // needs a literal <br>). Callers pass <br> in the static template and
+    // ghEsc() around each variable bit.
+    function ghEsc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        })[c]);
+    }
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
         if (el) { el.innerHTML = msg; el.style.color = color || 'var(--text-disabled)'; }
@@ -4640,26 +4649,26 @@
             if (cmp > 0) {
                 // Manifest is strictly newer than what's running → real update.
                 ghPhase = 'available';
-                ghSetStatus('Update available: v' + m.version
-                    + (running ? '  (running v' + running + ')' : ''), '#ffb84a');
+                ghSetStatus('Update available: v' + ghEsc(m.version)
+                    + (running ? '  (running v' + ghEsc(running) + ')' : ''), '#ffb84a');
                 ghSetButton('UPDATE TO v' + m.version, true, '#0a5a2a');
             } else if (cmp === 0) {
                 ghPhase = 'current';
-                ghSetStatus('Up to date — v' + m.version, '#6abf6a');
+                ghSetStatus('Up to date — v' + ghEsc(m.version), '#6abf6a');
                 ghSetButton('CHECK FOR UPDATES', true);
             } else {
                 // running > manifest — device has a local build that hasn't
                 // been released yet. Treat as current; surface the gap so the
                 // user knows there's an unreleased delta.
                 ghPhase = 'current';
-                ghSetStatus('Up to date — running v' + running
-                    + '<br>(latest release v' + m.version + ')', '#6abf6a');
+                ghSetStatus('Up to date — running v' + ghEsc(running)
+                    + '<br>(latest release v' + ghEsc(m.version) + ')', '#6abf6a');
                 ghSetButton('CHECK FOR UPDATES', true);
             }
         } catch (e) {
             ghPhase = 'error';
             ghManifest = null;
-            ghSetStatus('Update check failed — ' + e.message, '#bf4a4a');
+            ghSetStatus('Update check failed — ' + ghEsc(e.message), '#bf4a4a');
             ghSetButton('RETRY CHECK', true);
         }
     }

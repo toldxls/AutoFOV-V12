@@ -3766,6 +3766,13 @@ void vibTask(void *pvParameters) {
       inStack      = true;
       stackDispMin = stackDispMax = stackDispSum = 0.0f;
       stackDispN   = 0;
+      // Zero the published atomics so a wifiNotifyStackComplete() that
+      // somehow fires before the first FFT hop can't surface the previous
+      // stack's values. The `da > 0` gate on the wifi side then naturally
+      // omits the vda/vdn/vdx keys until we have real data this stack.
+      vibStackDispAvg.store(0);
+      vibStackDispMin.store(0);
+      vibStackDispMax.store(0);
     }
     uint32_t ds = vibStackDoneSeq.load();
     if (ds != lastDoneSeen) {
