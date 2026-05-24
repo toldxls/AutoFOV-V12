@@ -532,9 +532,15 @@ int      vibSigCount   = 0;
 int      vibSigSel     = -1;           // selected list index, -1 = none
 int      vibSigScroll  = 0;
 bool     vibSigPicker  = false;        // name-picker overlay open
-bool     vibSigCapturing = false;      // averaging frames for a CAPTURE
+bool     vibSigCapturing = false;      // peak-holding frames for a CAPTURE
 int      vibSigFrames  = 0;
-uint32_t vibSigAccum[VIB_FFT_BINS];    // running sum for the capture average
+uint32_t vibSigAccum[VIB_FFT_BINS];    // per-bin peak hold (deci-mg) for capture
+// Per-bin noise-floor snapshot taken at capture arm. Subtracted from each
+// frame before the peak-hold so the stored signature is "max excursion above
+// ambient" rather than "max excursion" — a long-running fan baked into the
+// living-room hum no longer paints a smooth dome across the signature plot,
+// only the source's actual narrowband peaks survive.
+float    vibSigBaseSnap[VIB_FFT_BINS];
 char     vibSigCaptureName[16];
 VibSignature vibSigLoaded;             // currently-selected decoded signature
 bool     vibSigLoadedValid = false;
@@ -2641,15 +2647,20 @@ void vibCapturePoll() {
     if (vibSpecSeq.load() == s) break;
   }
   vibCapSeqSeen = s;
-  // Peak-hold across frames — vibSigAccum[b] retains the strongest excursion
-  // seen at bin b during the capture window. Mean-averaging (the old behaviour)
-  // smeared slowly-drifting tones into a broad hump because the same tone
-  // wandering across ±1 bin over 10 s shows up at half-amplitude in three
-  // bins; peak-hold keeps full amplitude in each bin the tone visited, so the
-  // resulting signature mirrors the narrow vertical bands visible in the
-  // waterfall instead of looking like the time-average.
+  // Peak-hold above the noise-floor snapshot — vibSigAccum[b] retains the
+  // strongest *excursion above ambient* seen at bin b during the capture
+  // window. Mean-averaging (the old behaviour) smeared slowly-drifting tones
+  // into a broad hump because the same tone wandering across ±1 bin over
+  // 10 s shows up at half-amplitude in three bins; peak-hold keeps full
+  // amplitude in each bin the tone visited. Subtracting the floor snapshot
+  // additionally strips the constant ambient hum that was inflating every
+  // bin's baseline, so the saved signature reads as a sparse "fingerprint"
+  // of just the source's tones rather than tones-plus-room.
   for (int b = 0; b < VIB_FFT_BINS; b++) {
-    if (spec[b] > vibSigAccum[b]) vibSigAccum[b] = spec[b];
+    float adj = (float)spec[b] - vibSigBaseSnap[b];
+    if (adj < 0) adj = 0;
+    uint32_t a = (uint32_t)lroundf(adj);
+    if (a > vibSigAccum[b]) vibSigAccum[b] = a;
   }
   vibSigFrames++;
   if (vibSigFrames >= VIB_SIG_FRAMES) {
@@ -2816,7 +2827,10 @@ void handleVibSignaturesTouch(TS_Point p) {
       if (p.x >= bx && p.x <= bx + 100 && p.y >= by && p.y <= by + 38) {
         strncpy(vibSigCaptureName, VIB_SIG_NAMES[i], sizeof(vibSigCaptureName) - 1);
         vibSigCaptureName[sizeof(vibSigCaptureName) - 1] = 0;
-        for (int b = 0; b < VIB_FFT_BINS; b++) vibSigAccum[b] = 0;
+        for (int b = 0; b < VIB_FFT_BINS; b++) {
+          vibSigAccum[b]    = 0;
+          vibSigBaseSnap[b] = vibBaseV[b];
+        }
         vibSigFrames    = 0;
         vibCapSeqSeen   = vibSpecSeq.load();
         vibSigCapturing = true;

@@ -1631,7 +1631,10 @@ static void handleWifiCommand(const char* key, const char* val) {
         if (vibNameSafe(val, false)) {
             strncpy(vibSigCaptureName, val, sizeof(vibSigCaptureName) - 1);
             vibSigCaptureName[sizeof(vibSigCaptureName) - 1] = '\0';
-            for (int b = 0; b < VIB_FFT_BINS; b++) vibSigAccum[b] = 0;
+            for (int b = 0; b < VIB_FFT_BINS; b++) {
+                vibSigAccum[b]    = 0;
+                vibSigBaseSnap[b] = vibBaseV[b];     // freeze ambient for subtraction
+            }
             vibSigFrames    = 0;
             vibCapSeqSeen   = vibSpecSeq.load();
             vibSigCapturing = true;
