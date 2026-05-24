@@ -2729,7 +2729,6 @@
     // displacement RMS) so the trend can render in either unit without
     // re-scanning history when the toggle flips.
     function vibTrendSample() {
-        if (!vibPanelOpen) return;
         const now = Date.now();
         if (now - vibTrendLast < 250) return;     // ~4 Hz is plenty for a 90 s view
         vibTrendLast = now;
@@ -2741,7 +2740,7 @@
         });
         const cut = now - 92000;
         while (vibTrend.length && vibTrend[0].t < cut) vibTrend.shift();
-        vibDrawTrend();
+        if (vibPanelOpen) vibDrawTrend();
     }
 
     // ── Wait analysis screen ───────────────────────────────────────────────────
@@ -5141,10 +5140,16 @@
         if (data.vsh !== undefined) {
             // Persisted shutter pref — sync the dropdown + local var without
             // sending a vibShutter back (firmware is the source of truth here).
-            vibShutterDenom = data.vsh | 0;
-            const sel = document.getElementById('vibp-shutter');
-            if (sel && sel.value !== String(vibShutterDenom)) sel.value = String(vibShutterDenom);
-            vibBlurEma = null;
+            // vsh rides every 30 Hz fast-telem frame, so guard the EMA reset
+            // on an actual value change — otherwise we'd re-prime vibBlurEma
+            // 30×/s and the blur readout would never smooth.
+            const newDenom = data.vsh | 0;
+            if (newDenom !== vibShutterDenom) {
+                vibShutterDenom = newDenom;
+                const sel = document.getElementById('vibp-shutter');
+                if (sel && sel.value !== String(vibShutterDenom)) sel.value = String(vibShutterDenom);
+                vibBlurEma = null;
+            }
         }
         if (data.vs  !== undefined) {
             vibSpec = data.vs;
@@ -5198,12 +5203,16 @@
              data.vw !== undefined || data.vrh !== undefined || data.vcw !== undefined ||
              data.vst !== undefined))
             vibUpdateReadout();
-        if (vibPanelOpen) {
-            if (data.vd !== undefined || data.vr !== undefined ||
-                data.vh !== undefined || data.vst !== undefined ||
-                data.vs !== undefined || data.hs !== undefined) vibPanelReadout();
-            if (data.vr !== undefined || data.vh !== undefined) vibTrendSample();
+        if (vibPanelOpen &&
+            (data.vd !== undefined || data.vr !== undefined ||
+             data.vh !== undefined || data.vst !== undefined ||
+             data.vs !== undefined || data.hs !== undefined)) {
+            vibPanelReadout();
         }
+        // Trend sampling runs regardless of panel visibility so the 90 s
+        // history stays continuous across screen navigation (and across a
+        // stack that the user happens to monitor from another page).
+        if (data.vr !== undefined || data.vh !== undefined) vibTrendSample();
         if (data.vw !== undefined || data.vcw !== undefined) {
             vibWaitSample();
         }

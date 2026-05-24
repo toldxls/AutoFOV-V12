@@ -674,13 +674,16 @@ void wifiLoop() {
         }
     }
 
-    // V12: vibration spectrum stream — ~5 Hz, only while a web panel is open,
-    // and dropped (not queued) when any client's TX buffer is full. Pushed as
-    // a binary WebSocket frame (raw little-endian uint16) — the old JSON
-    // serialisation cost ~3.4 KB of String heap per push and another ~3.4 KB
-    // in the per-client AWS TX queue. Binary is ~1 KB, recurring at 5 Hz, so
-    // this saves ~4-5 KB of transient heap every 200 ms.
-    if (vibWebPanelOpen && (now - lastVibPushMs >= 200)) {
+    // V12: vibration spectrum stream — ~5 Hz, streamed continuously to every
+    // connected client (the wsServer.count()==0 early-return above already
+    // skips us when nobody's listening). Used to be gated on vibWebPanelOpen
+    // but that broke the 90 s RMS trend pane: navigating off the analyzer
+    // mid-stack stopped the µm samples, leaving a visible gap when the user
+    // came back. Bandwidth is ~5 KB/s/client; backpressure is handled below.
+    // Pushed as a binary WebSocket frame (raw little-endian uint16) — the old
+    // JSON form cost ~3.4 KB of String heap per push and another ~3.4 KB in
+    // the per-client AWS TX queue. Binary is ~1 KB.
+    if (now - lastVibPushMs >= 200) {
         lastVibPushMs = now;
         if (wsServer.availableForWriteAll()) {
             pushVibSpectrumBinary();
