@@ -3486,7 +3486,9 @@ void vibTask(void *pvParameters) {
   uint32_t lastStartSeen = vibStackStartSeq.load();
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
   // Per-stack broadband displacement accumulators — reset on stack start,
-  // published to vibStackDisp* atomics on stack done.
+  // published to vibStackDisp* atomics after every FFT hop during the stack
+  // so wifiNotifyStackComplete() can read current values without a race.
+  bool     inStack       = false;
   float    stackDispMin  = 0.0f;
   float    stackDispMax  = 0.0f;
   float    stackDispSum  = 0.0f;
@@ -3645,10 +3647,12 @@ void vibTask(void *pvParameters) {
         if (b >= 4 && vibFftReal[b] > domMag) { domMag = vibFftReal[b]; domBin = b; }
       }
 
-      // Broadband displacement for this FFT frame — sum displacement
-      // contributions in quadrature across bins 4+ (skip DC and <3 Hz).
-      // a (m/s²) / ω² gives RMS displacement (m); sum in quadrature → µm.
-      if (stackDispN < 0xFFFFFFFFu) {  // always true; guards against wrap
+      // Broadband displacement for this FFT frame — only during a stack.
+      // Sum displacement contributions in quadrature across bins 4+
+      // (skip DC and <3 Hz to avoid 1/f² blow-up).
+      // Published after every hop so wifiNotifyStackComplete() on Core 1
+      // can read current values without waiting for vibStackDoneSeq processing.
+      if (inStack) {
         double dispSumSq = 0.0;
         for (int b = 4; b < VIB_FFT_BINS; b++) {
           float a_ms2 = (dst[b] / 10.0f) * 9.81e-3f;   // deci-mg → mg → m/s²
@@ -3666,6 +3670,10 @@ void vibTask(void *pvParameters) {
         }
         stackDispSum += dispUm;
         stackDispN++;
+        float avg = stackDispSum / stackDispN;
+        vibStackDispAvg.store((uint32_t)lroundf(avg          * 100.0f));
+        vibStackDispMin.store((uint32_t)lroundf(stackDispMin * 100.0f));
+        vibStackDispMax.store((uint32_t)lroundf(stackDispMax * 100.0f));
       }
 
       // ── Combined-horizontal spectrum — one complex-packed FFT: hx into the
@@ -3753,21 +3761,19 @@ void vibTask(void *pvParameters) {
     }
     uint32_t ss = vibStackStartSeq.load();
     if (ss != lastStartSeen) {
-      lastStartSeen  = ss;
+      lastStartSeen = ss;
       vibSettleLogCount = 0;
+      inStack      = true;
       stackDispMin = stackDispMax = stackDispSum = 0.0f;
       stackDispN   = 0;
     }
     uint32_t ds = vibStackDoneSeq.load();
     if (ds != lastDoneSeen) {
       lastDoneSeen = ds;
+      inStack      = false;
       vibComputeAggregate();
-      if (stackDispN > 0) {
-        float avg = stackDispSum / stackDispN;
-        vibStackDispAvg.store((uint32_t)lroundf(avg          * 100.0f));
-        vibStackDispMin.store((uint32_t)lroundf(stackDispMin * 100.0f));
-        vibStackDispMax.store((uint32_t)lroundf(stackDispMax * 100.0f));
-      }
+      // Displacement atomics are already current from the last hop publish;
+      // no extra store needed here.
     }
 
     if (millis() - lastPrint >= 2000) {

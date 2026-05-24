@@ -4964,7 +4964,7 @@
     function showStackToast(data) {
         const existing = document.getElementById('stack-toast');
         if (existing) existing.remove();
-        const fovStr = (data.fov || 0).toFixed(3);
+        const fovStr = (data.fov || 0).toFixed(2) + '(' + (data.err || 0) + ')';
         const toast = document.createElement('div');
         toast.id = 'stack-toast';
         toast.style.cssText =
