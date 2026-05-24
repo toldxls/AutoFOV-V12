@@ -429,6 +429,15 @@ uint16_t vibSpec[2][VIB_FFT_BINS];
 // same FFT pass as vibSpec so one vibSpecSeq covers both.
 uint16_t vibSpecH[2][VIB_FFT_BINS];
 
+// Per-bin noise-floor EMAs (deci-mg) — track stationary IMU/ambient hum so the
+// blur calculation only counts excursions above the floor. Mirrors the web
+// analyzer's vibBaseV/H (τ ≈ 8 s). Updated by vibTask each FFT hop only when
+// !inStack, so the floor freezes for the duration of a stack and the
+// subtraction can't drift into the stack's own motion. .bss arrays — 2 KB.
+static float vibBaseV[VIB_FFT_BINS] = { 0 };
+static float vibBaseH[VIB_FFT_BINS] = { 0 };
+static bool  vibBasePrimed = false;
+
 // PSRAM-backed buffers, allocated by vibBegin(). vibRaw: AC accel ring (LSB,
 // gravity removed). vibWF: waterfall RGB565 image, owned by the UI thread.
 int16_t  *vibRaw = nullptr;
@@ -463,6 +472,14 @@ PSRAMCanvas16 vibPlotSprite(232, 104);
 
 float    vibResonanceHz   = VIB_RES_DEFAULT;  // Goertzel lock frequency (NVS-persisted)
 int      vibCurrentWaitMs = 1500;             // controller's WAIT setting, user-entered (NVS)
+// Shutter denominator (T = 1/N s) used to weight blur bins by |sin(πfT)|.
+// NVS-persisted; matches the web analyzer's vibShutterDenom so the firmware-
+// computed V/H blur stats line up with what the analyzer panel shows live.
+uint16_t vibShutterDenom  = 60;
+// Lowest bin included in the broadband blur sum. Matches the web's
+// VIB_DISP_MIN_BIN (= 4) — bin 4 ≈ 3.25 Hz. Skipping bins 1-3 stops the 1/ω²
+// weighting from blowing up the sub-3-Hz IMU noise.
+#define VIB_DISP_MIN_BIN  4
 float    vibEnvPlot[VIB_SETTLE_BLOCKS];       // last decay envelope (vibTask writes, UI reads)
 float    vibEnvPeak       = 0.0f;             // peak envelope value of the last analysis
 uint16_t vibSettleLog[VIB_SETTLE_LOG_MAX];    // per-stack settle times, ms (vibTask only)
@@ -844,9 +861,16 @@ std::atomic<uint32_t> vibSpecSeq{0};       // bumped each time a new FFT spectru
 std::atomic<uint32_t> vibPulseSeq{0};      // bumped by loop() / RUN TEST on each shutter pulse
 std::atomic<uint32_t> vibStackStartSeq{0}; // bumped by loop() when a focus stack begins
 std::atomic<uint32_t> vibStackDoneSeq{0};  // bumped by loop() at stack-complete
-std::atomic<uint32_t> vibStackDispAvg{0};  // broadband displacement avg over stack, µm × 100
-std::atomic<uint32_t> vibStackDispMin{0};  // broadband displacement min over stack, µm × 100
-std::atomic<uint32_t> vibStackDispMax{0};  // broadband displacement max over stack, µm × 100
+// Per-stack blur stats — shutter-weighted broadband displacement, with the
+// per-bin noise floor subtracted. Mirrors what vibDispStats() computes on the
+// web side, so the PNG card's V/H pixel-blur numbers match the analyzer's
+// "broadband" row line-for-line. µm × 100 (centi-µm).
+std::atomic<uint32_t> vibStackBlurVAvg{0};
+std::atomic<uint32_t> vibStackBlurVMin{0};
+std::atomic<uint32_t> vibStackBlurVMax{0};
+std::atomic<uint32_t> vibStackBlurHAvg{0};
+std::atomic<uint32_t> vibStackBlurHMin{0};
+std::atomic<uint32_t> vibStackBlurHMax{0};
 std::atomic<uint32_t> vibSettleSeq{0};     // bumped when a decay analysis is published
 std::atomic<uint32_t> vibSettleMs{0};      // last single-pulse settle time, ms
 std::atomic<uint32_t> vibSettleTauMs{0};   // last fitted decay constant τ, ms
@@ -1807,18 +1831,21 @@ void loadVibPrefs() {
   vibResonanceHz   = preferences.getFloat("resHz", VIB_RES_DEFAULT);
   vibSuggestedWait.store(preferences.getUInt("wait", 0));
   vibCurrentWaitMs = preferences.getInt("curWait", 1500);
+  vibShutterDenom  = preferences.getUShort("shut", 60);
   preferences.end();
   if (vibResonanceHz < VIB_RES_MIN_HZ || vibResonanceHz > VIB_RES_MAX_HZ)
     vibResonanceHz = VIB_RES_DEFAULT;
   if (vibCurrentWaitMs < 0)     vibCurrentWaitMs = 0;
   if (vibCurrentWaitMs > 20000) vibCurrentWaitMs = 20000;
+  if (vibShutterDenom < 1 || vibShutterDenom > 2000) vibShutterDenom = 60;
 }
 
 void saveVibPrefs() {
   preferences.begin("vib", false);
-  preferences.putFloat("resHz",   vibResonanceHz);
-  preferences.putUInt ("wait",    vibSuggestedWait.load());
-  preferences.putInt  ("curWait", vibCurrentWaitMs);
+  preferences.putFloat (  "resHz",   vibResonanceHz);
+  preferences.putUInt  (  "wait",    vibSuggestedWait.load());
+  preferences.putInt   (  "curWait", vibCurrentWaitMs);
+  preferences.putUShort(  "shut",    vibShutterDenom);
   preferences.end();
   vibPrefsDirty = false;
 }
@@ -3485,14 +3512,19 @@ void vibTask(void *pvParameters) {
   uint32_t lastPulseSeen = vibPulseSeq.load();
   uint32_t lastStartSeen = vibStackStartSeq.load();
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
-  // Per-stack broadband displacement accumulators — reset on stack start,
-  // published to vibStackDisp* atomics after every FFT hop during the stack
-  // so wifiNotifyStackComplete() can read current values without a race.
+  // Per-stack V/H blur accumulators (stage-µm, shutter-weighted). Reset on
+  // stack start, published to vibStackBlur{V,H}{Avg,Min,Max} after every FFT
+  // hop so wifiNotifyStackComplete() can read current values without a race.
+  // Mirrors the web analyzer's broadband-blur formula bin-for-bin so the PNG
+  // card's V/H pixel-blur lines up with what the analyzer panel shows live.
   bool     inStack       = false;
-  float    stackDispMin  = 0.0f;
-  float    stackDispMax  = 0.0f;
-  float    stackDispSum  = 0.0f;
-  uint32_t stackDispN    = 0;
+  float    stackBlurMinV = 0.0f, stackBlurMaxV = 0.0f, stackBlurSumV = 0.0f;
+  float    stackBlurMinH = 0.0f, stackBlurMaxH = 0.0f, stackBlurSumH = 0.0f;
+  uint32_t stackBlurN    = 0;
+  // Per-hop EMA coefficient for vibBaseV/H. Matches the web analyzer's
+  // τ = 8 s: α = 1 - exp(-T_hop / τ), T_hop = VIB_HOP / VIB_SAMPLE_RATE.
+  const float VIB_BASE_ALPHA =
+      1.0f - expf(-((float)VIB_HOP / VIB_SAMPLE_RATE) / 8.0f);
 
   for (;;) {
     vTaskDelay(period);
@@ -3647,35 +3679,6 @@ void vibTask(void *pvParameters) {
         if (b >= 4 && vibFftReal[b] > domMag) { domMag = vibFftReal[b]; domBin = b; }
       }
 
-      // Broadband displacement for this FFT frame — only during a stack.
-      // Sum displacement contributions in quadrature across bins 4+
-      // (skip DC and <3 Hz to avoid 1/f² blow-up).
-      // Published after every hop so wifiNotifyStackComplete() on Core 1
-      // can read current values without waiting for vibStackDoneSeq processing.
-      if (inStack) {
-        double dispSumSq = 0.0;
-        for (int b = 4; b < VIB_FFT_BINS; b++) {
-          float a_ms2 = (dst[b] / 10.0f) * 9.81e-3f;   // deci-mg → mg → m/s²
-          float omega  = 2.0f * M_PI * b * VIB_BIN_HZ;
-          float d_m    = a_ms2 / (omega * omega);
-          dispSumSq   += (double)d_m * d_m;
-        }
-        float dispUm = sqrtf((float)dispSumSq) * 1e6f;
-        if (stackDispN == 0) {
-          stackDispMin = dispUm;
-          stackDispMax = dispUm;
-        } else {
-          if (dispUm < stackDispMin) stackDispMin = dispUm;
-          if (dispUm > stackDispMax) stackDispMax = dispUm;
-        }
-        stackDispSum += dispUm;
-        stackDispN++;
-        float avg = stackDispSum / stackDispN;
-        vibStackDispAvg.store((uint32_t)lroundf(avg          * 100.0f));
-        vibStackDispMin.store((uint32_t)lroundf(stackDispMin * 100.0f));
-        vibStackDispMax.store((uint32_t)lroundf(stackDispMax * 100.0f));
-      }
-
       // ── Combined-horizontal spectrum — one complex-packed FFT: hx into the
       //    real input, hy into the imaginary input. The horizontal power at
       //    bin k is (|X[k]|^2 + |X[N-k]|^2)/2 (a Hermitian-symmetry identity),
@@ -3716,6 +3719,78 @@ void vibTask(void *pvParameters) {
           dstH[b] = (uint16_t)m;
         }
       }
+
+      // ── Noise-floor EMA + shutter-weighted V/H blur ───────────────────────
+      // The web analyzer subtracts a per-bin EMA noise floor before integrating
+      // bins to displacement; this mirror keeps the PNG card's V/H blur lines
+      // numerically equal to what the analyzer panel shows live.
+      //
+      // The floor only advances when !inStack so it can't be inflated by the
+      // stack's own motion. When inStack each bin is converted to
+      //   d_amp = max(0, dst[b] - vibBaseV/H[b]) × (deci-mg→m/s²) / ω²
+      //   bl     = 2 · d_amp · |sin(πfT)|        (T = 1/vibShutterDenom)
+      // and summed in quadrature; blur_µm = √(Σbl² / 2) × 1e6 — the same
+      // amplitude-to-sinusoid-RMS conversion vibDispStats() uses in JS.
+      {
+        uint16_t *dstH = vibSpecH[specSeq & 1];
+        if (!inStack) {
+          if (!vibBasePrimed) {
+            for (int b = 0; b < VIB_FFT_BINS; b++) {
+              vibBaseV[b] = (float)dst[b];
+              vibBaseH[b] = (float)dstH[b];
+            }
+            vibBasePrimed = true;
+          } else {
+            for (int b = 0; b < VIB_FFT_BINS; b++) {
+              vibBaseV[b] += ((float)dst[b]  - vibBaseV[b]) * VIB_BASE_ALPHA;
+              vibBaseH[b] += ((float)dstH[b] - vibBaseH[b]) * VIB_BASE_ALPHA;
+            }
+          }
+        } else {
+          const float T   = 1.0f / (float)vibShutterDenom;
+          const float k_a = 9.81e-3f / 10.0f;   // deci-mg → m/s²
+          double blurSqV  = 0.0;
+          double blurSqH  = 0.0;
+          for (int b = VIB_DISP_MIN_BIN; b < VIB_FFT_BINS; b++) {
+            const float fb      = b * VIB_BIN_HZ;
+            const float omega   = 2.0f * (float)M_PI * fb;
+            const float invW2   = 1.0f / (omega * omega);
+            const float sinW    = fabsf(sinf((float)M_PI * fb * T));
+            float aV = (float)dst[b]  - vibBaseV[b]; if (aV < 0) aV = 0;
+            float aH = (float)dstH[b] - vibBaseH[b]; if (aH < 0) aH = 0;
+            const float dV = (aV * k_a) * invW2;     // m amplitude
+            const float dH = (aH * k_a) * invW2;
+            const float blV = 2.0f * dV * sinW;
+            const float blH = 2.0f * dH * sinW;
+            blurSqV += (double)blV * blV;
+            blurSqH += (double)blH * blH;
+          }
+          // sinusoid-amplitude → RMS: √(Σbl² / 2). Result × 1e6 → µm.
+          const float blurVum = sqrtf((float)(blurSqV * 0.5)) * 1e6f;
+          const float blurHum = sqrtf((float)(blurSqH * 0.5)) * 1e6f;
+          if (stackBlurN == 0) {
+            stackBlurMinV = stackBlurMaxV = blurVum;
+            stackBlurMinH = stackBlurMaxH = blurHum;
+          } else {
+            if (blurVum < stackBlurMinV) stackBlurMinV = blurVum;
+            if (blurVum > stackBlurMaxV) stackBlurMaxV = blurVum;
+            if (blurHum < stackBlurMinH) stackBlurMinH = blurHum;
+            if (blurHum > stackBlurMaxH) stackBlurMaxH = blurHum;
+          }
+          stackBlurSumV += blurVum;
+          stackBlurSumH += blurHum;
+          stackBlurN++;
+          const float avgV = stackBlurSumV / stackBlurN;
+          const float avgH = stackBlurSumH / stackBlurN;
+          vibStackBlurVAvg.store((uint32_t)lroundf(avgV          * 100.0f));
+          vibStackBlurVMin.store((uint32_t)lroundf(stackBlurMinV * 100.0f));
+          vibStackBlurVMax.store((uint32_t)lroundf(stackBlurMaxV * 100.0f));
+          vibStackBlurHAvg.store((uint32_t)lroundf(avgH          * 100.0f));
+          vibStackBlurHMin.store((uint32_t)lroundf(stackBlurMinH * 100.0f));
+          vibStackBlurHMax.store((uint32_t)lroundf(stackBlurMaxH * 100.0f));
+        }
+      }
+
       vibSpecSeq.store(specSeq);
 
       // Cross-core scalars.
@@ -3763,23 +3838,23 @@ void vibTask(void *pvParameters) {
     if (ss != lastStartSeen) {
       lastStartSeen = ss;
       vibSettleLogCount = 0;
-      inStack      = true;
-      stackDispMin = stackDispMax = stackDispSum = 0.0f;
-      stackDispN   = 0;
+      inStack       = true;
+      stackBlurMinV = stackBlurMaxV = stackBlurSumV = 0.0f;
+      stackBlurMinH = stackBlurMaxH = stackBlurSumH = 0.0f;
+      stackBlurN    = 0;
       // Zero the published atomics so a wifiNotifyStackComplete() that
       // somehow fires before the first FFT hop can't surface the previous
-      // stack's values. The `da > 0` gate on the wifi side then naturally
-      // omits the vda/vdn/vdx keys until we have real data this stack.
-      vibStackDispAvg.store(0);
-      vibStackDispMin.store(0);
-      vibStackDispMax.store(0);
+      // stack's values. The `vva > 0` gate on the wifi side then naturally
+      // omits the vva/vvn/... keys until we have real data this stack.
+      vibStackBlurVAvg.store(0); vibStackBlurVMin.store(0); vibStackBlurVMax.store(0);
+      vibStackBlurHAvg.store(0); vibStackBlurHMin.store(0); vibStackBlurHMax.store(0);
     }
     uint32_t ds = vibStackDoneSeq.load();
     if (ds != lastDoneSeen) {
       lastDoneSeen = ds;
       inStack      = false;
       vibComputeAggregate();
-      // Displacement atomics are already current from the last hop publish;
+      // Blur atomics are already current from the last hop publish;
       // no extra store needed here.
     }
 

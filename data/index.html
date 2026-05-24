@@ -1913,10 +1913,13 @@
         };
     }
     // Shutter selector (1/N s) for the blur readout — recompute on change.
+    // Also pushed to the firmware so the per-stack V/H blur stats baked into
+    // the next stackDone (and rendered onto the PNG card) use the same T.
     function vibSetShutter(v) {
         vibShutterDenom = parseInt(v, 10) || 60;
         vibBlurEma = null;          // re-prime so the new shutter shows at once
         vibPanelReadout();
+        sendCommand('vibShutter', vibShutterDenom);
     }
     function vibToggleUnits() {
         vibUnitsUm = !vibUnitsUm;
@@ -4984,7 +4987,8 @@
 
     function saveStackCard(data) {
         if (!data) return;
-        const W = 480, H = 300;
+        const hasBlur = data.vva !== undefined;
+        const W = 480, H = hasBlur ? 350 : 300;
         const cv = document.createElement('canvas');
         cv.width = W; cv.height = H;
         const ctx = cv.getContext('2d');
@@ -5006,22 +5010,61 @@
         ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 62px monospace';
         ctx.fillText((data.fov || 0).toFixed(2) + '(' + (data.err || 0) + ') mm', 18, 128);
 
-        // Stack parameters
+        // Stack parameters + vibration. Magnification mirrors the analyzer:
+        // true on-sensor mag = (pixel µm / 1000) × sensor width px ÷ FOV mm.
         const objLabel = ['—', '5\xd7', '10\xd7', '20\xd7'][data.obj] || String(data.obj || '');
         const durM = Math.floor((data.durS || 0) / 60);
         const durSec = String((data.durS || 0) % 60).padStart(2, '0');
-        const vib  = ['calm', 'moderate', 'strong'][data.vst];
-        const vibDisp = (data.vda !== undefined)
-            ? vib + '  ' + data.vda.toFixed(2) + ' \xb5m avg (' + data.vdn.toFixed(2) + '–' + data.vdx.toFixed(2) + ')'
+        const vib  = ['calm', 'moderate', 'strong'][data.vst] || '';
+        const fov  = data.fov || 0;
+        const mag  = fov > 0
+            ? (CAM_PIXEL_UM / 1000) * CAM_WIDTH_PX / fov
+            : (OBJ_MAG[data.obj] || 0);
+        const objHdr = mag > 0
+            ? objLabel + ' (true ' + mag.toFixed(1) + '\xd7)'
+            : objLabel;
+        const vibLine = hasBlur
+            ? (vib || '—') + '  @ 1/' + (data.shut || 60) + ' s shutter'
             : vib || '';
         const lines = [
-            'Objective  ' + objLabel,
+            'Objective  ' + objHdr,
             'Step       ' + (data.stepMm || 0).toFixed(3) + ' mm \xd7 ' + (data.imgs || 0) + ' images',
             'Duration   ' + durM + ':' + durSec,
-            vibDisp ? 'Vibration  ' + vibDisp : '',
+            vibLine ? 'Vibration  ' + vibLine : '',
         ].filter(Boolean);
         ctx.fillStyle = '#ccc'; ctx.font = '14px monospace';
         lines.forEach((ln, i) => ctx.fillText(ln, 18, 158 + i * 22));
+
+        // V/H broadband-blur rows — stage µm × mag ÷ pixel pitch = on-image px.
+        // Format matches the analyzer panel's broadband row: "avg / peak px
+        // (on-image µm)". Same formula bin-for-bin; values differ only in
+        // time integration (per-hop min/avg/max across the stack vs the
+        // analyzer's 8-s EMA).
+        if (hasBlur && mag > 0) {
+            const toPx = um => (um * mag) / CAM_PIXEL_UM;
+            const pxCol = px => px > 3 ? '#ff4444' : px > 2 ? '#ff9000' : '#3ddb7a';
+            const vAvgPx = toPx(data.vva), vMaxPx = toPx(data.vvx);
+            const hAvgPx = toPx(data.vha), hMaxPx = toPx(data.vhx);
+            const blurY = 158 + lines.length * 22 + 10;
+            ctx.fillStyle = '#777'; ctx.font = '12px monospace';
+            ctx.fillText('broadband blur (avg / peak)', 18, blurY);
+            ctx.font = '14px monospace';
+            const drawRow = (label, avgPx, maxPx, avgUm, maxUm, y) => {
+                ctx.fillStyle = '#ccc';
+                ctx.fillText(label, 18, y);
+                ctx.fillStyle = pxCol(avgPx);
+                ctx.fillText(avgPx.toFixed(1), 110, y);
+                ctx.fillStyle = '#ccc'; ctx.fillText('/', 152, y);
+                ctx.fillStyle = pxCol(maxPx);
+                ctx.fillText(maxPx.toFixed(1), 168, y);
+                ctx.fillStyle = '#7ab4a2';
+                ctx.fillText('px  (' + (avgUm * mag).toFixed(2) + ' / ' +
+                             (maxUm * mag).toFixed(2) + ' \xb5m on-image)',
+                             210, y);
+            };
+            drawRow('V', vAvgPx, vMaxPx, data.vva, data.vvx, blurY + 22);
+            drawRow('H', hAvgPx, hMaxPx, data.vha, data.vhx, blurY + 42);
+        }
 
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const a  = document.createElement('a');
@@ -5050,6 +5093,14 @@
         if (data.vst !== undefined) state.vibState = data.vst;
         if (data.vrh !== undefined) state.vibLock  = data.vrh;
         if (data.vcw !== undefined) state.vibCur   = data.vcw;
+        if (data.vsh !== undefined) {
+            // Persisted shutter pref — sync the dropdown + local var without
+            // sending a vibShutter back (firmware is the source of truth here).
+            vibShutterDenom = data.vsh | 0;
+            const sel = document.getElementById('vibp-shutter');
+            if (sel && sel.value !== String(vibShutterDenom)) sel.value = String(vibShutterDenom);
+            vibBlurEma = null;
+        }
         if (data.vs  !== undefined) {
             vibSpec = data.vs;
             if (state.screen === 'screen-vibration') drawVibSpectrum();

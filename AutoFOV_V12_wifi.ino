@@ -1613,6 +1613,16 @@ static void handleWifiCommand(const char* key, const char* val) {
         vibCurrentWaitMs = constrain(iVal, 0, 20000);
         vibPrefsDirty = true; lastVibEditMs = millis();
 
+    } else if (strcmp(key, "vibShutter") == 0) {
+        // 1/N s exposure used by the web analyzer's blur readout. Persisted so
+        // the firmware's per-stack V/H blur stats (vibStackBlur*) apply the
+        // same |sin(πfT)| weight the analyzer is showing live.
+        int d = constrain(iVal, 1, 2000);
+        if ((uint16_t)d != vibShutterDenom) {
+            vibShutterDenom = (uint16_t)d;
+            vibPrefsDirty = true; lastVibEditMs = millis();
+        }
+
     } else if (strcmp(key, "vibCapture") == 0) {
         // val = source name. Arms a capture; vibCapturePoll() finishes it.
         // vibNameSafe enforces [A-Za-z0-9_-]{1,30} so the eventual
@@ -1896,6 +1906,7 @@ static void buildFastTelemJson(String& out) {
     doc["vw"]  = (int)vibSuggestedWait.load();
     doc["vst"] = (int)vibState.load();
     doc["vcw"] = vibCurrentWaitMs;                               // controller WAIT setting
+    doc["vsh"] = (int)vibShutterDenom;                           // analyzer/PNG-card shutter 1/N s
 
     serializeJson(doc, out);
 }
@@ -2082,12 +2093,19 @@ void wifiNotifyStackComplete() {
         doc["imgs"]   = stackTotalImgs;
         doc["durS"]   = (int)(durMs / 1000UL);
         doc["vst"]    = (int)vibState.load();
-        // Broadband displacement stats over the stack period (µm, 2 dp).
-        uint32_t da = vibStackDispAvg.load();
-        if (da > 0) {
-            doc["vda"] = roundf(vibStackDispAvg.load() / 100.0f * 100.0f) / 100.0f;
-            doc["vdn"] = roundf(vibStackDispMin.load() / 100.0f * 100.0f) / 100.0f;
-            doc["vdx"] = roundf(vibStackDispMax.load() / 100.0f * 100.0f) / 100.0f;
+        // Per-stack V/H broadband blur (stage µm, 2 dp) and the shutter T = 1/N
+        // s it was computed for. Matches the web analyzer's broadband row;
+        // the PNG card uses the FOV-derived magnification to convert to
+        // on-image µm and camera pixels.
+        uint32_t vva = vibStackBlurVAvg.load();
+        if (vva > 0) {
+            doc["vva"] = roundf(vva                       / 100.0f * 100.0f) / 100.0f;
+            doc["vvn"] = roundf(vibStackBlurVMin.load()   / 100.0f * 100.0f) / 100.0f;
+            doc["vvx"] = roundf(vibStackBlurVMax.load()   / 100.0f * 100.0f) / 100.0f;
+            doc["vha"] = roundf(vibStackBlurHAvg.load()   / 100.0f * 100.0f) / 100.0f;
+            doc["vhn"] = roundf(vibStackBlurHMin.load()   / 100.0f * 100.0f) / 100.0f;
+            doc["vhx"] = roundf(vibStackBlurHMax.load()   / 100.0f * 100.0f) / 100.0f;
+            doc["shut"] = (int)vibShutterDenom;
         }
         String out; serializeJson(doc, out);
         wsServer.textAll(out);
