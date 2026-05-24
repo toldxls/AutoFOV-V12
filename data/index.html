@@ -3271,12 +3271,54 @@
     function vibCleanName(s) {
         return (s || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, VIB_SIG_NAME_MAX);
     }
+    // Capture is now ~10 s of FFT-frame averaging (firmware VIB_SIG_FRAMES = 32
+    // at 128/416 = 308 ms/hop). Without feedback the user wouldn't know the
+    // button "did" anything — disable it for the expected window and surface a
+    // progress label. Re-enabled by the vibsigs WS push when the firmware
+    // finishes (or by the safety timeout if that push gets lost).
+    const VIB_CAPTURE_SECONDS = 10;
+    let   vibCaptureBusy      = false;
+    let   vibCapturePendingNm = '';
+    let   vibCaptureT0        = 0;
+    let   vibCaptureTimer     = null;
+    function vibCaptureSetButton(label, enabled) {
+        // The CAPTURE button is the first .gfx-btn with onclick="vibCapture()".
+        const btns = document.querySelectorAll('div.gfx-btn');
+        for (const b of btns) {
+            if (b.getAttribute('onclick') === 'vibCapture()') {
+                b.textContent = label;
+                b.style.opacity       = enabled ? '' : '0.45';
+                b.style.pointerEvents = enabled ? '' : 'none';
+                return;
+            }
+        }
+    }
+    function vibCaptureTick() {
+        if (!vibCaptureBusy) return;
+        const elapsed = (Date.now() - vibCaptureT0) / 1000;
+        const remain  = Math.max(0, VIB_CAPTURE_SECONDS - elapsed);
+        vibCaptureSetButton(remain > 0 ? remain.toFixed(0) + 's...' : 'Saving...', false);
+        if (remain > 0) vibCaptureTimer = setTimeout(vibCaptureTick, 250);
+        else            vibCaptureTimer = setTimeout(vibCaptureDone, 4000); // safety timeout
+    }
+    function vibCaptureDone() {
+        if (!vibCaptureBusy) return;
+        vibCaptureBusy = false;
+        vibCapturePendingNm = '';
+        if (vibCaptureTimer) { clearTimeout(vibCaptureTimer); vibCaptureTimer = null; }
+        vibCaptureSetButton('CAPTURE', true);
+    }
     function vibCapture() {
+        if (vibCaptureBusy) return;
         const inp = document.getElementById('vib-capname');
         const nm = vibCleanName(inp.value);
         if (!nm) { alert('Enter a signature name first'); return; }
         sendCommand('vibCapture', nm);
         inp.value = '';
+        vibCaptureBusy      = true;
+        vibCapturePendingNm = nm;
+        vibCaptureT0        = Date.now();
+        vibCaptureTick();
     }
     function vibRename(fn) {
         const nn = prompt('New name for "' + fn.replace(/\.bin$/, '') + '" (max ' + VIB_SIG_NAME_MAX + ' chars):');
@@ -5137,7 +5179,17 @@
             vibDrawSpectrum();
             vibDrawWaterfall(data.vs !== undefined);
         }
-        if (data.vibsigs !== undefined) { vibSigs = data.vibsigs; vibRenderSigList(); }
+        if (data.vibsigs !== undefined) {
+            vibSigs = data.vibsigs;
+            vibRenderSigList();
+            // If a CAPTURE we initiated just landed in the list, drop the
+            // "Capturing… Ns..." button label early — the safety timeout in
+            // vibCaptureTick is just a fallback for missed pushes.
+            if (vibCaptureBusy && vibCapturePendingNm &&
+                vibSigs.some(s => s === vibCapturePendingNm + '.bin')) {
+                vibCaptureDone();
+            }
+        }
         if (state.screen === 'screen-vibration' &&
             (data.vd !== undefined || data.vr !== undefined || data.vh !== undefined ||
              data.vw !== undefined || data.vrh !== undefined || data.vcw !== undefined ||

@@ -507,7 +507,14 @@ const char* const VIB_SIG_NAMES[8] = {
 #define VIB_SIG_LIST_TOP  42
 #define VIB_SIG_ROW_H     26
 #define VIB_SIG_VIS_ROWS  4
-#define VIB_SIG_FRAMES    8         // FFT frames averaged per CAPTURE
+// FFT frames averaged per CAPTURE. At 128-sample hop / 416 Hz ODR each frame
+// is 308 ms of new data on a 512-sample (1.23 s) Hann window — 75 % overlap.
+// 32 frames runs ~10 s of capture and converges the signature spectrum about
+// 2× better than the original 8 (frame variance shrinks ~linearly with N for
+// stationary sources after the overlap correction). Bump higher for slowly-
+// varying sources (washer/dryer cycles); transients (footsteps) gain less
+// since they're diluted by the longer quiet window.
+#define VIB_SIG_FRAMES    32
 // Max basename length for /vibsig/*.bin (excluding the ".bin" extension).
 // Capped at 15 to match VibSignature.name[16] and vibSigCaptureName[16] —
 // every buffer in the pipeline (capture staging, on-disk struct, list cache,
