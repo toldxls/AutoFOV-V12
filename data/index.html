@@ -1158,6 +1158,11 @@
             <div id="screen-ota" class="screen">
                 <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#1a4a6a;">FIRMWARE</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
+                <div style="position:absolute; left:88px; top:2px; width:113px; height:33px;
+                     display:flex; align-items:center; justify-content:center;
+                     text-align:center; color:#ff9900; font-size:8px; line-height:1.25;">
+                    &#9888; Device reboots after flashing. Do not cut power during the update.
+                </div>
 
                 <div style="position:absolute; left:10px; top:36px; width:220px;
                      color:#6a9ab0; font-size:10px; white-space:nowrap;
@@ -1167,49 +1172,42 @@
                 <!-- GitHub check result — set by checkGithubUpdate() -->
                 <div id="gh-status"
                      style="position:absolute; left:10px; top:50px; width:220px;
-                            font-size:10px; color:var(--text-disabled); white-space:nowrap;
-                            overflow:hidden; text-overflow:ellipsis;">
+                            font-size:10px; color:var(--text-disabled); line-height:1.4;">
                     Checking GitHub for updates…
                 </div>
 
-                <div style="position:absolute; left:10px; top:66px; width:220px; height:1px; background:#303030;"></div>
+                <div style="position:absolute; left:10px; top:82px; width:220px; height:1px; background:#303030;"></div>
 
                 <!-- Contextual GitHub action button — label/handler set by JS -->
                 <div id="gh-update-btn" class="gfx-btn"
-                     style="left:10px; top:71px; width:220px; height:38px;
-                            background:#003a5a; border:1px solid #005a8a; font-size:12px;
+                     style="left:10px; top:87px; width:220px; height:28px;
+                            background:#003a5a; border:1px solid #005a8a; font-size:11px;
                             opacity:0.35; pointer-events:none;"
                      onclick="githubAction()">
                     CHECKING…
                 </div>
 
-                <div style="position:absolute; left:10px; top:113px; width:220px;
-                     color:#ff9900; font-size:10px; line-height:1.4;">
-                    &#9888; Device reboots after flashing.<br>
-                    Do not cut power during the update.
-                </div>
-
                 <!-- Progress bar — shared by the GitHub and manual flash paths -->
-                <div style="position:absolute; left:10px; top:146px; width:220px; height:14px;
+                <div style="position:absolute; left:10px; top:120px; width:220px; height:14px;
                      background:#111; border:1px solid #2a3a3a; border-radius:2px; overflow:hidden;">
                     <div id="ota-progress-fill"
                          style="height:100%; width:0%; background:#2a7abf;
                                 transition:width 0.2s; border-radius:2px;"></div>
                 </div>
                 <div id="ota-progress-pct"
-                     style="position:absolute; left:0; top:146px; width:240px;
+                     style="position:absolute; left:0; top:120px; width:240px;
                             text-align:center; font-size:10px; color:#5e8c7e; line-height:14px;">
                 </div>
 
                 <div id="ota-status"
-                     style="position:absolute; left:10px; top:166px; width:220px;
+                     style="position:absolute; left:10px; top:140px; width:220px;
                             font-size:11px; color:var(--text-disabled); text-align:center;
                             line-height:1.2;">
                     Ready
                 </div>
 
-                <div style="position:absolute; left:10px; top:194px; width:220px; height:1px; background:#303030;"></div>
-                <div style="position:absolute; left:10px; top:198px; width:220px;
+                <div style="position:absolute; left:10px; top:168px; width:220px; height:1px; background:#303030;"></div>
+                <div style="position:absolute; left:10px; top:172px; width:220px;
                      font-size:9px; color:var(--text-disabled);">
                     ADVANCED — flash a local .bin file
                 </div>
@@ -1218,20 +1216,20 @@
                 <input type="file" id="ota-file-input" accept=".bin"
                        style="display:none;" onchange="otaFileSelected(this)">
                 <div id="ota-choose-btn" class="gfx-btn"
-                     style="left:10px; top:209px; width:106px; height:26px;
+                     style="left:10px; top:183px; width:106px; height:26px;
                             background:#0d2535; border:1px solid #2a5a7a; font-size:10px;"
                      onclick="document.getElementById('ota-file-input').click()">
                     CHOOSE .bin
                 </div>
                 <div id="ota-flash-btn" class="gfx-btn"
-                     style="left:124px; top:209px; width:106px; height:26px;
+                     style="left:124px; top:183px; width:106px; height:26px;
                             background:#003a5a; border:1px solid #005a8a; font-size:10px;
                             opacity:0.35; pointer-events:none;"
                      onclick="otaFlash()">
                     FLASH
                 </div>
                 <div id="ota-filename"
-                     style="position:absolute; left:10px; top:238px; width:220px;
+                     style="position:absolute; left:10px; top:212px; width:220px;
                             font-size:9px; color:var(--text-disabled); text-align:center;
                             white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                     No file selected
@@ -1240,7 +1238,7 @@
                 <!-- Rollback row — dual-OTA's "undo" button.  Hidden when the
                      inactive slot is blank (first ever flash); the device sets
                      state.rollbackAvailable from /state. -->
-                <div id="ota-rollback-row" style="display:none; position:absolute; left:10px; top:252px; width:220px;">
+                <div id="ota-rollback-row" style="display:none; position:absolute; left:10px; top:226px; width:220px;">
                     <div style="height:1px; background:#303030; margin-bottom:6px;"></div>
                     <div id="ota-rollback-built"
                          style="font-size:9px; color:#6a9ab0; text-align:center; margin-bottom:2px;">
@@ -4575,7 +4573,7 @@
 
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
-        if (el) { el.textContent = msg; el.style.color = color || 'var(--text-disabled)'; }
+        if (el) { el.innerHTML = msg; el.style.color = color || 'var(--text-disabled)'; }
     }
     function ghSetButton(label, enabled, accent) {
         const btn = document.getElementById('gh-update-btn');
@@ -4613,7 +4611,7 @@
             ghSetButton('UPDATE TO v' + ghManifest.version, true, '#0a5a2a');
         } else if (ghManifest) {
             ghPhase = 'current';
-            ghSetButton('CHECK AGAIN', true);
+            ghSetButton('CHECK FOR UPDATES', true);
         } else {
             ghPhase = 'error';
             ghSetButton('RETRY CHECK', true);
@@ -4648,15 +4646,15 @@
             } else if (cmp === 0) {
                 ghPhase = 'current';
                 ghSetStatus('Up to date — v' + m.version, '#6abf6a');
-                ghSetButton('CHECK AGAIN', true);
+                ghSetButton('CHECK FOR UPDATES', true);
             } else {
                 // running > manifest — device has a local build that hasn't
                 // been released yet. Treat as current; surface the gap so the
                 // user knows there's an unreleased delta.
                 ghPhase = 'current';
                 ghSetStatus('Up to date — running v' + running
-                    + ' (latest release v' + m.version + ')', '#6abf6a');
-                ghSetButton('CHECK AGAIN', true);
+                    + '<br>(latest release v' + m.version + ')', '#6abf6a');
+                ghSetButton('CHECK FOR UPDATES', true);
             }
         } catch (e) {
             ghPhase = 'error';
