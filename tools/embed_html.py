@@ -8,7 +8,12 @@ import gzip, os, subprocess
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
-VERSION_MINOR = 0   # bump manually for milestone releases
+VERSION_MINOR = 1   # bump manually for milestone releases
+# Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
+# commit count at the bump commit so patch = HEAD_count - base.  Without this,
+# the 12.1 series would start at .101 instead of .0.  JS semver compare still
+# orders 12.1.x > 12.0.y because minor wins, so the OTA update gate is unaffected.
+VERSION_PATCH_BASE = 101
 # ─────────────────────────────────────────────────────────────────────────────
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
@@ -22,8 +27,12 @@ def git(cmd):
     except Exception:
         return '?'
 
-patch  = git(['git', 'rev-list', '--count', 'HEAD'])
+count  = git(['git', 'rev-list', '--count', 'HEAD'])
 commit = git(['git', 'rev-parse', '--short', 'HEAD'])
+try:
+    patch = max(0, int(count) - VERSION_PATCH_BASE)
+except ValueError:
+    patch = count  # git unavailable — leave whatever git() returned
 version = f'{VERSION_MAJOR}.{VERSION_MINOR}.{patch}'
 
 with open(src, 'rb') as f:
