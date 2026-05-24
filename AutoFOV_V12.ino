@@ -507,13 +507,15 @@ const char* const VIB_SIG_NAMES[8] = {
 #define VIB_SIG_LIST_TOP  42
 #define VIB_SIG_ROW_H     26
 #define VIB_SIG_VIS_ROWS  4
-// FFT frames averaged per CAPTURE. At 128-sample hop / 416 Hz ODR each frame
+// FFT frames peak-held per CAPTURE. At 128-sample hop / 416 Hz ODR each frame
 // is 308 ms of new data on a 512-sample (1.23 s) Hann window — 75 % overlap.
-// 32 frames runs ~10 s of capture and converges the signature spectrum about
-// 2× better than the original 8 (frame variance shrinks ~linearly with N for
-// stationary sources after the overlap correction). Bump higher for slowly-
-// varying sources (washer/dryer cycles); transients (footsteps) gain less
-// since they're diluted by the longer quiet window.
+// 32 frames covers ~10 s. Peak-hold (vs mean) preserves narrow tonal peaks
+// even when they drift across bins during the capture, so the saved signature
+// resembles the bright vertical bands in the waterfall instead of a smoothed
+// time-average. More frames = more chances for each drifting tone to hit
+// every bin in its range at full amplitude — bump for slow-drifting sources;
+// transients now bake their peak in, so a single bump during capture will
+// contaminate the signature and warrants a re-capture.
 #define VIB_SIG_FRAMES    32
 // Max basename length for /vibsig/*.bin (excluding the ".bin" extension).
 // Capped at 15 to match VibSignature.name[16] and vibSigCaptureName[16] —
@@ -2601,7 +2603,12 @@ static bool vibSigLoad(const char* base) {
   return ok;
 }
 
-// Finalise an in-flight CAPTURE: average the accumulator, write the .bin file.
+// Finalise an in-flight CAPTURE: copy the peak-hold accumulator out, write
+// the .bin file. The on-disk layout is unchanged (uint16 per bin); only the
+// semantics flipped from "mean magnitude over N frames" to "peak magnitude
+// observed during the capture window". Cosine similarity is scale-invariant
+// so existing live-match math still works; a re-capture is recommended for
+// pre-12.1.2 signatures so library entries are comparable to each other.
 static void vibSigFinishCapture() {
   VibSignature sig;
   memset(&sig, 0, sizeof(sig));
@@ -2610,7 +2617,7 @@ static void vibSigFinishCapture() {
   sig.frameCount = (uint16_t)vibSigFrames;
   sig.epoch      = millis();
   for (int b = 0; b < VIB_FFT_BINS; b++)
-    sig.mag[b] = vibSigFrames ? (uint16_t)(vibSigAccum[b] / vibSigFrames) : 0;
+    sig.mag[b] = (uint16_t)vibSigAccum[b];
   LittleFS.mkdir("/vibsig");
   char path[48];
   snprintf(path, sizeof(path), "/vibsig/%s.bin", vibSigCaptureName);
@@ -2634,7 +2641,16 @@ void vibCapturePoll() {
     if (vibSpecSeq.load() == s) break;
   }
   vibCapSeqSeen = s;
-  for (int b = 0; b < VIB_FFT_BINS; b++) vibSigAccum[b] += spec[b];
+  // Peak-hold across frames — vibSigAccum[b] retains the strongest excursion
+  // seen at bin b during the capture window. Mean-averaging (the old behaviour)
+  // smeared slowly-drifting tones into a broad hump because the same tone
+  // wandering across ±1 bin over 10 s shows up at half-amplitude in three
+  // bins; peak-hold keeps full amplitude in each bin the tone visited, so the
+  // resulting signature mirrors the narrow vertical bands visible in the
+  // waterfall instead of looking like the time-average.
+  for (int b = 0; b < VIB_FFT_BINS; b++) {
+    if (spec[b] > vibSigAccum[b]) vibSigAccum[b] = spec[b];
+  }
   vibSigFrames++;
   if (vibSigFrames >= VIB_SIG_FRAMES) {
     vibSigFinishCapture();
