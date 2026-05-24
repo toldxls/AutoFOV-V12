@@ -844,6 +844,9 @@ std::atomic<uint32_t> vibSpecSeq{0};       // bumped each time a new FFT spectru
 std::atomic<uint32_t> vibPulseSeq{0};      // bumped by loop() / RUN TEST on each shutter pulse
 std::atomic<uint32_t> vibStackStartSeq{0}; // bumped by loop() when a focus stack begins
 std::atomic<uint32_t> vibStackDoneSeq{0};  // bumped by loop() at stack-complete
+std::atomic<uint32_t> vibStackDispAvg{0};  // broadband displacement avg over stack, µm × 100
+std::atomic<uint32_t> vibStackDispMin{0};  // broadband displacement min over stack, µm × 100
+std::atomic<uint32_t> vibStackDispMax{0};  // broadband displacement max over stack, µm × 100
 std::atomic<uint32_t> vibSettleSeq{0};     // bumped when a decay analysis is published
 std::atomic<uint32_t> vibSettleMs{0};      // last single-pulse settle time, ms
 std::atomic<uint32_t> vibSettleTauMs{0};   // last fitted decay constant τ, ms
@@ -3482,6 +3485,12 @@ void vibTask(void *pvParameters) {
   uint32_t lastPulseSeen = vibPulseSeq.load();
   uint32_t lastStartSeen = vibStackStartSeq.load();
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
+  // Per-stack broadband displacement accumulators — reset on stack start,
+  // published to vibStackDisp* atomics on stack done.
+  float    stackDispMin  = 0.0f;
+  float    stackDispMax  = 0.0f;
+  float    stackDispSum  = 0.0f;
+  uint32_t stackDispN    = 0;
 
   for (;;) {
     vTaskDelay(period);
@@ -3636,6 +3645,29 @@ void vibTask(void *pvParameters) {
         if (b >= 4 && vibFftReal[b] > domMag) { domMag = vibFftReal[b]; domBin = b; }
       }
 
+      // Broadband displacement for this FFT frame — sum displacement
+      // contributions in quadrature across bins 4+ (skip DC and <3 Hz).
+      // a (m/s²) / ω² gives RMS displacement (m); sum in quadrature → µm.
+      if (stackDispN < 0xFFFFFFFFu) {  // always true; guards against wrap
+        double dispSumSq = 0.0;
+        for (int b = 4; b < VIB_FFT_BINS; b++) {
+          float a_ms2 = (dst[b] / 10.0f) * 9.81e-3f;   // deci-mg → mg → m/s²
+          float omega  = 2.0f * M_PI * b * VIB_BIN_HZ;
+          float d_m    = a_ms2 / (omega * omega);
+          dispSumSq   += (double)d_m * d_m;
+        }
+        float dispUm = sqrtf((float)dispSumSq) * 1e6f;
+        if (stackDispN == 0) {
+          stackDispMin = dispUm;
+          stackDispMax = dispUm;
+        } else {
+          if (dispUm < stackDispMin) stackDispMin = dispUm;
+          if (dispUm > stackDispMax) stackDispMax = dispUm;
+        }
+        stackDispSum += dispUm;
+        stackDispN++;
+      }
+
       // ── Combined-horizontal spectrum — one complex-packed FFT: hx into the
       //    real input, hy into the imaginary input. The horizontal power at
       //    bin k is (|X[k]|^2 + |X[N-k]|^2)/2 (a Hermitian-symmetry identity),
@@ -3720,9 +3752,23 @@ void vibTask(void *pvParameters) {
       vibAnalyzeSettle(startPos);
     }
     uint32_t ss = vibStackStartSeq.load();
-    if (ss != lastStartSeen) { lastStartSeen = ss; vibSettleLogCount = 0; }
+    if (ss != lastStartSeen) {
+      lastStartSeen  = ss;
+      vibSettleLogCount = 0;
+      stackDispMin = stackDispMax = stackDispSum = 0.0f;
+      stackDispN   = 0;
+    }
     uint32_t ds = vibStackDoneSeq.load();
-    if (ds != lastDoneSeen)  { lastDoneSeen = ds; vibComputeAggregate(); }
+    if (ds != lastDoneSeen) {
+      lastDoneSeen = ds;
+      vibComputeAggregate();
+      if (stackDispN > 0) {
+        float avg = stackDispSum / stackDispN;
+        vibStackDispAvg.store((uint32_t)lroundf(avg          * 100.0f));
+        vibStackDispMin.store((uint32_t)lroundf(stackDispMin * 100.0f));
+        vibStackDispMax.store((uint32_t)lroundf(stackDispMax * 100.0f));
+      }
+    }
 
     if (millis() - lastPrint >= 2000) {
       lastPrint = millis();

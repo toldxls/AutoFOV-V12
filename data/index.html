@@ -4986,7 +4986,7 @@
 
     function saveStackCard(data) {
         if (!data) return;
-        const W = 480, H = 270;
+        const W = 480, H = 300;
         const cv = document.createElement('canvas');
         cv.width = W; cv.height = H;
         const ctx = cv.getContext('2d');
@@ -4996,28 +4996,34 @@
         ctx.strokeStyle = '#ADFF2F'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, 48); ctx.lineTo(W, 48); ctx.stroke();
 
+        // Header: title + timestamp
         ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 18px monospace';
         ctx.fillText('AutoFOV', 18, 30);
         ctx.fillStyle = '#555'; ctx.font = '11px monospace';
         ctx.fillText(new Date().toLocaleString(), 120, 30);
 
-        ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 62px monospace';
-        ctx.fillText((data.fov || 0).toFixed(3), 18, 128);
+        // AVG FOV label above the value, value with 2dp + error in parens
         ctx.fillStyle = '#777'; ctx.font = '14px monospace';
-        ctx.fillText('mm  AVG FOV', 18, 150);
+        ctx.fillText('AVG FOV', 18, 70);
+        ctx.fillStyle = '#ADFF2F'; ctx.font = 'bold 62px monospace';
+        ctx.fillText((data.fov || 0).toFixed(2) + '(' + (data.err || 0) + ') mm', 18, 128);
 
+        // Stack parameters
         const objLabel = ['—', '5\xd7', '10\xd7', '20\xd7'][data.obj] || String(data.obj || '');
         const durM = Math.floor((data.durS || 0) / 60);
-        const durS = String((data.durS || 0) % 60).padStart(2, '0');
+        const durSec = String((data.durS || 0) % 60).padStart(2, '0');
         const vib  = ['calm', 'moderate', 'strong'][data.vst];
+        const vibDisp = (data.vda !== undefined)
+            ? vib + '  ' + data.vda.toFixed(2) + ' \xb5m avg (' + data.vdn.toFixed(2) + '–' + data.vdx.toFixed(2) + ')'
+            : vib || '';
         const lines = [
             'Objective  ' + objLabel,
             'Step       ' + (data.stepMm || 0).toFixed(3) + ' mm \xd7 ' + (data.imgs || 0) + ' images',
-            'Duration   ' + durM + ':' + durS,
-            vib ? 'Vibration  ' + vib : '',
+            'Duration   ' + durM + ':' + durSec,
+            vibDisp ? 'Vibration  ' + vibDisp : '',
         ].filter(Boolean);
         ctx.fillStyle = '#ccc'; ctx.font = '14px monospace';
-        lines.forEach((ln, i) => ctx.fillText(ln, 18, 183 + i * 22));
+        lines.forEach((ln, i) => ctx.fillText(ln, 18, 158 + i * 22));
 
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const a  = document.createElement('a');

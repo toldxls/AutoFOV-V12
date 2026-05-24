@@ -2072,15 +2072,23 @@ void wifiNotifyStackComplete() {
     unsigned long durMs = lastPulseTime - firstPulseTime;
 
     if (wsServer.count() > 0) {
-        StaticJsonDocument<256> doc;
+        StaticJsonDocument<512> doc;
         doc["stackDone"] = 1;
         doc["fov"]    = roundf(fov * 1000.0f) / 1000.0f;
+        doc["err"]    = (int)sensorErrInt.load(std::memory_order_acquire);
         doc["dist"]   = roundf(avgDist * 10.0f) / 10.0f;
         doc["obj"]    = currentobj;
         doc["stepMm"] = roundf(stackStepSize * 1000.0f) / 1000.0f;
         doc["imgs"]   = stackTotalImgs;
         doc["durS"]   = (int)(durMs / 1000UL);
         doc["vst"]    = (int)vibState.load();
+        // Broadband displacement stats over the stack period (µm, 2 dp).
+        uint32_t da = vibStackDispAvg.load();
+        if (da > 0) {
+            doc["vda"] = roundf(vibStackDispAvg.load() / 100.0f * 100.0f) / 100.0f;
+            doc["vdn"] = roundf(vibStackDispMin.load() / 100.0f * 100.0f) / 100.0f;
+            doc["vdx"] = roundf(vibStackDispMax.load() / 100.0f * 100.0f) / 100.0f;
+        }
         String out; serializeJson(doc, out);
         wsServer.textAll(out);
     }
