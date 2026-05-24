@@ -386,12 +386,11 @@ PSRAMCanvas16 objSprite(240, 67);
 #define VIB_MG_PER_LSB   0.061f
 #define VIB_HOP          128                          // FFT every 128 new samples (75% overlap)
 #define VIB_RAW_LEN      8192                         // raw ring — ~19.7 s look-back (Phase 2)
-// Band-RMS warning thresholds (mg). MODERATE was 2.0 — at 26 Hz a 1 mg tone
-// already pushes ~0.4 µm of stage displacement (and ~3 px of blur on-image at
-// 15× true mag, 1/60 s shutter), so the old threshold under-reported real
-// blur-relevant motion. STRONG kept at 8 mg — that's still the "stop, this
-// run is wasted" line.
-#define VIB_RMS_MODERATE 1.0f
+// Band-RMS warning thresholds (mg). MODERATE was 2.0, briefly 1.0 (too
+// twitchy on quiet benches); 1.4 lands above typical ambient hum but still
+// catches a tone that paints meaningful on-image blur (~2 px at 1/60 s,
+// 15× mag, ~26 Hz). STRONG kept at 8 mg — the "stop, this run is wasted" line.
+#define VIB_RMS_MODERATE 1.4f
 #define VIB_RMS_STRONG   8.0f
 // Narrowband-tonal promotion. A persistent tonal — a dryer at 26 Hz, a stepper
 // holding torque, a desk fan — can push the rig 1-3 µm without ever crossing
