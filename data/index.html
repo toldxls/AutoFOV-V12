@@ -267,7 +267,7 @@
         .stack-row { position: absolute; left: 0; width: 240px; cursor: pointer; height: 33px; }
         .stack-row:active { background-color: #111; }
 
-        #plot-area { position: absolute; left: 45px; top: 40px; width: 189px; height: 242px;
+        #plot-area { position: absolute; left: 25px; top: 40px; width: 200px; height: 242px;
                      box-sizing: border-box; }
         #legend-box { position: absolute; left: 159px; top: 50px; width: 75px; height: 100px;
                       background-color: #111; border: 1px solid #404040; padding: 4px;
@@ -582,7 +582,7 @@
 
             <!-- ===================== FOV INFO ===================== -->
             <div id="screen-fovinfo" class="screen">
-                <div class="title-stripe" style="left: 5px; top: 5px; width: 90px;">CALIB INFO</div>
+                <div class="title-stripe" style="left: 5px; top: 5px; width: 105px;">CALIB INFO</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
                 <div id="fovinfo-status" class="gfx-text" style="width: 240px; text-align: center; top: 60px; color: var(--accent-green); font-size: 12px;">Status: —</div>
@@ -606,17 +606,23 @@
             <!-- ===================== CAL GRAPH ===================== -->
             <div id="screen-calgraph" class="screen">
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-fovinfo')">X</div>
-                <!-- Y-axis label rotated -->
-                <div class="gfx-text" style="left:2px; top:150px; color: var(--accent-red-dark); font-size:9px;
+                <!-- Y-axis label rotated. left:-8 hugs the screen's left edge
+                     so the rotated text sits just left of the canvas y-tick
+                     column without a wasted gutter. -->
+                <div class="gfx-text" style="left:-8px; top:150px; color: var(--accent-red-dark); font-size:9px;
                      transform:rotate(-90deg); transform-origin:center center; white-space:nowrap;">FOV (mm)</div>
-                <!-- X-axis label -->
-                <div class="gfx-text" style="width:189px; left:45px; text-align:center; top:288px; color: var(--accent-red-dark); font-size:9px;">Distance (mm)</div>
+                <!-- X-axis label — top tightened so it sits just under the
+                     x-tick numbers instead of with a visible gap below them. -->
+                <div class="gfx-text" style="width:200px; left:25px; text-align:center; top:282px; color: var(--accent-red-dark); font-size:9px;">Distance (mm)</div>
 
-                <!-- Plot area: axes drawn on canvas, not CSS borders -->
-                <div id="plot-area" style="position:absolute; left:45px; top:40px; width:188px; height:241px; overflow:hidden;">
+                <!-- Plot area: axes drawn on canvas, not CSS borders.
+                     Shifted left:45 → 25 (and width 188 → 200) so the plot
+                     fills the screen instead of leaving a black band on the
+                     left between the rotated FOV label and the y-axis. -->
+                <div id="plot-area" style="position:absolute; left:25px; top:40px; width:200px; height:241px; overflow:hidden;">
                     <!-- 2× canvas buffer for crisp rendering at the 2× CSS transform -->
-                    <canvas id="cal-canvas" width="376" height="482"
-                            style="position:absolute; left:0; top:0; width:188px; height:241px; display:block;"></canvas>
+                    <canvas id="cal-canvas" width="400" height="482"
+                            style="position:absolute; left:0; top:0; width:200px; height:241px; display:block;"></canvas>
                 </div>
 
                 <!-- Legend (sits over the graph, top-right) -->
@@ -3988,7 +3994,7 @@
         const g = (id) => document.getElementById(id);
 
         const stEl = g('fovinfo-status');
-        if (stEl) { stEl.innerText = 'Status: ' + (isCustom ? 'CUSTOM CAL' : 'FACTORY DEFAULT'); stEl.style.color = isCustom ? '#ADFF2F' : '#FFA500'; }
+        if (stEl) { stEl.innerText = 'Status: ' + (isCustom ? 'CUSTOM CAL' : 'FACTORY DEFAULT'); stEl.style.color = isCustom ? '#00FFFF' : '#ADFF2F'; }
         if (g('fovinfo-slope'))     g('fovinfo-slope').innerText     = slope !== null ? slope.toFixed(5)        : '—';
         if (g('fovinfo-intercept')) g('fovinfo-intercept').innerText = intc  !== null ? intc.toFixed(4)         : '—';
         if (g('fovinfo-err'))  { g('fovinfo-err').innerText  = err !== null ? err.toFixed(4) + ' mm' : '—';
@@ -4133,9 +4139,18 @@
         const canvas = document.getElementById('cal-canvas');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        // Canvas is 376×482 buffer displayed at 188×241 CSS (2× for the outer transform).
-        // All sizes below are in canvas-buffer pixels.
-        const CW = 376, CH = 482;
+        // Logical drawing space: 400×482 (matches the 200×241 CSS size × the
+        // outer device-frame's scale(2.0)). All sizes below stay in this
+        // space — DPR scaling below resizes the backing buffer to match the
+        // real physical pixel density, so HiDPI screens render crisp instead
+        // of nearest-neighbour upscaling the 400-wide buffer.
+        const CW = 400, CH = 482;
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const bufW = Math.round(CW * dpr), bufH = Math.round(CH * dpr);
+        if (canvas.width !== bufW || canvas.height !== bufH) {
+            canvas.width = bufW; canvas.height = bufH;
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, CW, CH);
 
         const pts   = state.calGraphPoints || FACTORY_POINTS;
@@ -4149,10 +4164,14 @@
             ctx.fillText('No data', CW / 2, CH / 2); return;
         }
 
-        // ── Plot margins (canvas pixels) ──
-        const ML = 56, MR = 12, MT = 10, MB = 38;
-        const PW = CW - ML - MR;   // plot width  = 308
-        const PH = CH - MT - MB;   // plot height = 434
+        // ── Plot margins (logical px) ──
+        // ML needs to be wide enough that the right-aligned y-tick labels
+        // (e.g. "1.57" at 16px ≈ 30 logical px wide) don't run off the
+        // canvas left edge. Plot stays left-shifted by moving the canvas
+        // itself, not by squeezing ML.
+        const ML = 44, MR = 12, MT = 10, MB = 38;
+        const PW = CW - ML - MR;
+        const PH = CH - MT - MB;
 
         // ── Data ranges with 5% padding ──
         const xVals = pts.map(p => p.dist), yVals = pts.map(p => p.fov);
@@ -4188,30 +4207,35 @@
         ctx.stroke();
 
         // ── Tick marks + labels ──
+        // System-ui at this size renders cleaner per-glyph than Courier — the
+        // monospace was a leftover from the device-TFT look but added nothing
+        // on the web side.
         const N_TICKS = 4;
         ctx.fillStyle  = '#909090';
         ctx.strokeStyle= '#787878';
         ctx.lineWidth  = 1;
-        ctx.font       = '18px "Courier New", monospace';
+        ctx.font       = '16px system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
 
-        // X ticks
-        ctx.textAlign  = 'center';
+        // X ticks — edge-anchor the leftmost/rightmost labels so the longest
+        // tick value (e.g. "129") sits inside the canvas instead of getting
+        // clipped at the right margin.
         ctx.textBaseline = 'top';
         for (let i = 0; i <= N_TICKS; i++) {
             const xv = xa + (xb - xa) * i / N_TICKS;
             const px = toX(xv);
             ctx.beginPath(); ctx.moveTo(px, MT + PH); ctx.lineTo(px, MT + PH + 7); ctx.stroke();
+            ctx.textAlign = i === 0 ? 'left' : i === N_TICKS ? 'right' : 'center';
             ctx.fillText(xv.toFixed(0), px, MT + PH + 9);
         }
 
-        // Y ticks
+        // Y ticks — gutter shrunk to match the tighter ML.
         ctx.textAlign   = 'right';
         ctx.textBaseline = 'middle';
         for (let i = 0; i <= N_TICKS; i++) {
             const yv = ya + (yb - ya) * i / N_TICKS;
             const py = toY(yv);
-            ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML - 7, py); ctx.stroke();
-            ctx.fillText(yv.toFixed(2), ML - 10, py);
+            ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML - 5, py); ctx.stroke();
+            ctx.fillText(yv.toFixed(2), ML - 7, py);
         }
 
         // ── Regression line (clipped to plot area) ──
