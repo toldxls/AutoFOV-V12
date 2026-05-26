@@ -2545,7 +2545,9 @@ void handleVibSettleTouch(TS_Point p) {
     // so the result appears on the next refresh tick. Disturb the rig (or run a
     // motor step) within ~2.5 s before tapping.
     vibPulseRingPos = vibRawHead;
-    vibPulseSeq.fetch_add(1, std::memory_order_relaxed);
+    // Release on the seq bump pairs with acquire in vibTask so the
+    // ringPos write above is visible there before settle analysis runs.
+    vibPulseSeq.fetch_add(1, std::memory_order_release);
     vibSettleWaiting = true;
     refreshVibSettleValues(true);
     return;
@@ -2628,10 +2630,23 @@ static void vibSigFinishCapture() {
   for (int b = 0; b < VIB_FFT_BINS; b++)
     sig.mag[b] = (uint16_t)vibSigAccum[b];
   LittleFS.mkdir("/vibsig");
-  char path[48];
+  char path[48], tmp[52];
   snprintf(path, sizeof(path), "/vibsig/%s.bin", vibSigCaptureName);
-  File f = LittleFS.open(path, "w");
-  if (f) { f.write((const uint8_t*)&sig, sizeof(sig)); f.close(); }
+  snprintf(tmp,  sizeof(tmp),  "%s.tmp", path);
+  // Atomic write: fill a .tmp sibling, then rename over the target. A
+  // partial write or power loss leaves the previous signature intact.
+  bool ok = false;
+  File f = LittleFS.open(tmp, "w");
+  if (f) {
+    size_t wrote = f.write((const uint8_t*)&sig, sizeof(sig));
+    f.close();
+    ok = (wrote == sizeof(sig));
+  }
+  if (ok) ok = LittleFS.rename(tmp, path);
+  if (!ok) {
+    LittleFS.remove(tmp);
+    Serial.printf("[vib] save failed: %s\n", path);
+  }
   vibSigCapturing = false;
   vibSigScan();
   vibSigUiDirty = true;
@@ -3868,7 +3883,9 @@ void vibTask(void *pvParameters) {
     // ── Settle-time analysis: on each shutter pulse, analyse the window of
     //    ring buffer ending at the pulse — it already holds the motor move +
     //    the full hold/wait settle, so analysis is immediate (no waiting).
-    uint32_t ps = vibPulseSeq.load();
+    // Acquire pairs with the producer's release in loop()/RUN TEST so the
+    // vibPulseRingPos write that precedes the seq bump is visible here.
+    uint32_t ps = vibPulseSeq.load(std::memory_order_acquire);
     if (ps != lastPulseSeen) {
       lastPulseSeen = ps;
       uint32_t startPos = (vibPulseRingPos + VIB_RAW_LEN - VIB_SETTLE_SAMPLES) % VIB_RAW_LEN;
@@ -3945,7 +3962,9 @@ void setup() {
 
   preferences.begin("calib", false);
   size_t sch = preferences.getBytes("settings", &settings, sizeof(CalibData));
-  if (sch > 0 && settings.magic == CALIB_MAGIC) {
+  // Require a full-length read so a struct extension that forgets to bump
+  // CALIB_MAGIC can't slip through with the trailing fields uninitialised.
+  if (sch == sizeof(CalibData) && settings.magic == CALIB_MAGIC) {
     CTRLX = settings.ctrlX; CTRLY = settings.ctrlY;
     sensorWidthPixels = settings.sensorWidth; demarcationDist = settings.demarcation;
     CALIB_ERROR = settings.calibError; 
@@ -4300,7 +4319,9 @@ void loop() {
     // V12: note the shutter-pulse edge for passive settle-time analysis.
     // Passive only — nothing here delays or gates the trigger path.
     vibPulseRingPos = vibRawHead;
-    vibPulseSeq.fetch_add(1, std::memory_order_relaxed);
+    // Release on the seq bump pairs with acquire in vibTask so the
+    // ringPos write above is visible there before settle analysis runs.
+    vibPulseSeq.fetch_add(1, std::memory_order_release);
   } else if (!validTrigger && shutterActive) {
     fireTriggerLed(false);
     if (currentMode == MAIN) {

@@ -1672,12 +1672,28 @@ static void handleWifiCommand(const char* key, const char* val) {
             } else if (vibSigLoad(oldbase)) {
                 strncpy(vibSigLoaded.name, newName, sizeof(vibSigLoaded.name) - 1);
                 vibSigLoaded.name[sizeof(vibSigLoaded.name) - 1] = '\0';
-                char oldp[48], newp[48];
+                char oldp[48], newp[48], tmpp[52];
                 snprintf(oldp, sizeof(oldp), "/vibsig/%s", oldbase);
                 snprintf(newp, sizeof(newp), "/vibsig/%s.bin", newName);
-                File f = LittleFS.open(newp, "w");
-                if (f) { f.write((const uint8_t*)&vibSigLoaded, sizeof(VibSignature)); f.close(); }
-                if (strcmp(oldp, newp) != 0) LittleFS.remove(oldp);
+                snprintf(tmpp, sizeof(tmpp), "%s.tmp", newp);
+                // Atomic write: .tmp sibling, then rename. Only after the
+                // new file is durably in place do we remove the old name —
+                // any failure leaves the original signature recoverable.
+                bool ok = false;
+                File f = LittleFS.open(tmpp, "w");
+                if (f) {
+                    size_t wrote = f.write((const uint8_t*)&vibSigLoaded,
+                                           sizeof(VibSignature));
+                    f.close();
+                    ok = (wrote == sizeof(VibSignature));
+                }
+                if (ok) ok = LittleFS.rename(tmpp, newp);
+                if (!ok) {
+                    LittleFS.remove(tmpp);
+                    Serial.printf("[vib] vibRename write failed: %s\n", newp);
+                } else if (strcmp(oldp, newp) != 0) {
+                    LittleFS.remove(oldp);
+                }
                 wifiPushVibSigList();
             }
         }
