@@ -46,7 +46,18 @@ if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
 fi
 
 commit_count=$(git rev-list --count HEAD)
-current="12.0.$commit_count"
+
+# Mirror tools/embed_html.py's version formula. Reading the constants out of
+# that file keeps the two in lockstep — bumping VERSION_MINOR or rebasing
+# VERSION_PATCH_BASE there updates this check automatically.
+embed_py="tools/embed_html.py"
+v_major=$(sed -n 's/^VERSION_MAJOR[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
+v_minor=$(sed -n 's/^VERSION_MINOR[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
+v_base=$(sed -n 's/^VERSION_PATCH_BASE[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
+: "${v_major:=12}" "${v_minor:=0}" "${v_base:=0}"
+patch=$((commit_count - v_base))
+[ "$patch" -lt 0 ] && patch=0
+current="$v_major.$v_minor.$patch"
 
 if [ -z "$released" ]; then
     [ "$QUIET" = 1 ] || echo "${YEL}gh-pages has no release yet${RST} — current: v$current"
@@ -58,16 +69,16 @@ released_patch=${released##*.}
 
 # Guard against a malformed manifest.json (non-numeric patch). Don't error —
 # the script is a status check, not a validator.
-if ! [[ "$released_patch" =~ ^[0-9]+$ ]] || ! [[ "$commit_count" =~ ^[0-9]+$ ]]; then
+if ! [[ "$released_patch" =~ ^[0-9]+$ ]] || ! [[ "$patch" =~ ^[0-9]+$ ]]; then
     [ "$QUIET" = 1 ] || echo "${YEL}gh-pages manifest version is malformed${RST}: $released"
     exit 0
 fi
 
-if [ "$released_patch" -eq "$commit_count" ]; then
+if [ "$released_patch" -eq "$patch" ]; then
     [ "$QUIET" = 1 ] || echo "${GRN}gh-pages in sync${RST} — v$released"
     exit 0
-elif [ "$released_patch" -lt "$commit_count" ]; then
-    gap=$((commit_count - released_patch))
+elif [ "$released_patch" -lt "$patch" ]; then
+    gap=$((patch - released_patch))
 
     # Suppress the false positive every release naturally produces: release.sh
     # regenerates web_ui.h (because BUILD_COMMIT changed) and that artifact
