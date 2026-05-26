@@ -91,7 +91,9 @@
            Coordinates roughly mirror firmware (113, 298). */
         #shutter-sphere {
             position: absolute;
-            left: 105px;  top: 290px;  width: 16px;  height: 16px;
+            /* Centered between calib-block (right edge x=96) and CALIBRATE
+               (left edge x=144) — gap midline at x=120, sphere half-width 8. */
+            left: 112px;  top: 290px;  width: 16px;  height: 16px;
             border-radius: 50%;
             background: radial-gradient(circle at 33% 30%,
                 #DFFFFF 0%, #00C8C0 35%, #006464 75%, #002424 100%);
@@ -133,19 +135,30 @@
             width: 100%;
             box-sizing: border-box;
         }
-        #bezel-bottom-row #connection-status {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            order: 2;
-        }
-        #bezel-trigger-led { order: 1; }
-        /* Build marker — bump suffix every iteration to see what's loaded. */
-        #bezel-bottom-row::before {
-            content: "v6";
+        /* The original connection-status text + trigger-LED dot are kept in
+           the DOM but display:none — the JS still updates them, but the
+           bezel area below the display now hosts MJKZZ controls instead.
+           The shutter sphere inside the simulated display still shows
+           trigger activity, and the WiFi badge inside the screen still
+           shows connection state, so nothing visible is lost. */
+        #mjkzz-label {
             font-family: monospace;
-            font-size: 8px;
-            color: #444;
+            font-size: 10px;
+            color: #5e8c7e;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 8px;   /* extra gap from the button row below */
+        }
+        #mjkzz-buttons {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Buttons inside #mjkzz-buttons participate in flex layout, so
+           override the absolute positioning .gfx-btn enforces by default. */
+        #mjkzz-buttons .gfx-btn {
+            position: relative;
         }
 
         #ili9341-display {
@@ -426,10 +439,10 @@
 
                 <div id="calib-block" onclick="switchScreen('screen-about')">
                     <div id="calib-status" style="color: #FFA500; font-size: 10px; font-weight: bold;">CALIB: FACTORY</div>
-                    <div style="color: var(--text-disabled); font-size: 9px; margin-top: 1px;">Auto FOV V12</div>
+                    <div style="color: var(--text-disabled); font-size: 9px; margin-top: 1px;">AutoFOV V12</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 139px; top: 280px; width: 92px; height: 35px;
+                <div class="gfx-btn" style="left: 144px; top: 280px; width: 94px; height: 35px;
                      background-color: #008894; font-size: 11px;" onclick="switchScreen('screen-calsettings')">CALIBRATE</div>
 
                 <!-- patched3: shaded-sphere shutter indicator. Last in
@@ -1292,12 +1305,31 @@
 
         </div><!-- end ili9341-display -->
 
-        <!-- patched3: bottom row pairs connection-status text (left) with the
-             physical-LED mirror (right).  Flex layout guarantees the LED is
-             visible regardless of how the scaled display is positioned. -->
+        <!-- MJKZZ controls — the bottom-of-bezel row used to host a build
+             marker, a connection-status string, and a trigger-LED dot, all
+             redundant with the on-screen WiFi badge + shutter sphere.
+             Repurposed as a shortcut area for the two MJKZZ remote actions
+             a user reaches for the most.  The original connection-status
+             and bezel-trigger-led divs are kept hidden so the JS that
+             updates them doesn't have to grow null guards. -->
         <div id="bezel-bottom-row">
-            <div id="connection-status" style="font-family: monospace; color: var(--text-disabled);">WiFi: DISCONNECTED</div>
-            <div id="bezel-trigger-led" title="Camera trigger LED (mirrors A3 active-low)"></div>
+            <div id="mjkzz-label">MJKZZ controls</div>
+            <div id="mjkzz-buttons">
+                <div id="btn-stack-start" class="gfx-btn"
+                     style="width: 110px; height: 32px; font-size: 12px;
+                            letter-spacing: 0.6px; background-color: #006400;"
+                     onclick="toggleStackStart()" title="MJKZZ stack — start/stop">
+                    <span id="btn-stack-start-label">&#9654; STACK</span>
+                </div>
+                <div id="btn-capture" class="gfx-btn"
+                     style="width: 110px; height: 32px; font-size: 12px;
+                            letter-spacing: 0.6px; background-color: #A800F8;"
+                     onclick="sendCommand('ir','capture')" title="MJKZZ capture photo">
+                    &#128247; CAPTURE
+                </div>
+            </div>
+            <div id="connection-status" style="display:none;"></div>
+            <div id="bezel-trigger-led" style="display:none;" title="Camera trigger LED (mirrors A3 active-low)"></div>
         </div>
     </div><!-- end hardware-bezel -->
     </div><!-- end bezel-scroller -->
@@ -3445,6 +3477,39 @@
         sendCommand('obj', id);
     }
 
+    // ── Main-screen MJKZZ stack toggle ──────────────────────────────────────
+    //   The MJKZZ controller has no status feedback channel, so the ON state
+    //   is tracked locally: first tap fires the START IR code and turns the
+    //   button bright green, second tap fires STOP and reverts.  Same two IR
+    //   commands the IR REMOTE screen already exposes — this is just a
+    //   single-tap shortcut from the main screen.
+    let stackStartActive = false;
+    function toggleStackStart() {
+        stackStartActive = !stackStartActive;
+        sendCommand('ir', stackStartActive ? 'start' : 'stop');
+        applyStackStartState();
+    }
+    function applyStackStartState() {
+        const btn = document.getElementById('btn-stack-start');
+        const lab = document.getElementById('btn-stack-start-label');
+        if (!btn) return;
+        if (stackStartActive) {
+            btn.style.backgroundColor = '#1cb84c';
+            // Replace .gfx-btn's default shadow with a brighter inset + a
+            // green outer glow so the ON state reads at a glance.
+            btn.style.boxShadow =
+                'inset 0 1px 0 rgba(255,255,255,0.45), ' +
+                'inset 0 -2px 3px rgba(0,0,0,0.30), ' +
+                '0 0 14px rgba(61,219,122,0.85), ' +
+                '0 1px 2px rgba(0,0,0,0.45)';
+            if (lab) lab.innerHTML = '&#9632; ACTIVE';
+        } else {
+            btn.style.backgroundColor = '#006400';
+            btn.style.boxShadow = '';     // revert to .gfx-btn CSS default
+            if (lab) lab.innerHTML = '&#9654; STACK';
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // STACK CALC
     // ─────────────────────────────────────────────────────────────────────────
@@ -5430,6 +5495,14 @@
             playAlertBeeps();
             _stackDoneData = data;
             showStackToast(data);
+            // MJKZZ controller has no status feedback channel, but the firmware's
+            // camera-trigger watcher fires this event when the sequence ends —
+            // use it to flip the STACK button back to its idle state so the
+            // visual reflects reality without the user having to click again.
+            if (stackStartActive) {
+                stackStartActive = false;
+                applyStackStartState();
+            }
         }
         // TEST ALERT button (device or web) — BLE-free beep confirmation.
         if (data.beep) playAlertBeeps();
