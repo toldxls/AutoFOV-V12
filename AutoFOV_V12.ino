@@ -3424,9 +3424,18 @@ static void imuSetup() {
   lsm.setAccelDataRate(LSM6DS_RATE_416_HZ);
   lsm.setGyroDataRate(LSM6DS_RATE_SHUTDOWN);   // accel-only — saves FIFO + power
 
+  // The accel digital filter takes ~20 ms to settle after an ODR change;
+  // samples produced during that window are filter-step-response garbage.
+  // Wait it out before any sample reaches the FIFO so dcG can't be primed
+  // to a transient value (and a one-shot 50+ mg RMS surface to the UI).
+  delay(30);
+
   // FIFO_CTRL3: BDR_XL = 0110b (416 Hz), BDR_GY = 0 (gyro not batched).
   imuWriteReg(LSM6DS_REG_FIFO_CTRL3, 0x06);
-  // FIFO_CTRL4: FIFO_MODE = 110b (Continuous — overwrite oldest when full).
+  // FIFO_CTRL4: Bypass (000b) first — flushes any samples that landed in
+  // the FIFO during begin_I2C / ODR setup — then Continuous (110b).
+  imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);
+  delayMicroseconds(200);
   imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x06);
 
   Serial.printf("LSM6DSOX online at 0x%02X — FIFO continuous, 416 Hz / +-2 g\n", imuAddr);

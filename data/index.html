@@ -1578,7 +1578,10 @@
     const VIB_BIN_HZ = 416 / 512;          // 0.8125 Hz per bin (matches firmware)
     let vibSpecH     = null;               // last horizontal 256-bin frame
     let vibPanelOpen = false;
-    let vibSpecYMax  = 100;                // smoothed spectrum y-ceiling (deci-mg)
+    let vibSpecYMax  = 0;                  // smoothed spectrum y-ceiling — 0 so the
+                                           // first paint snaps the ceiling to the
+                                           // observed peak instead of EMA-shrinking
+                                           // from a stale 100 over ~12 s.
     let vibCursorX   = -1;                 // hover x on the spectrum canvas (-1 = none)
     let vibTrend        = [];              // [{t,v,h}] rolling RMS history
     let vibTrendLast    = 0;
@@ -1639,7 +1642,14 @@
     }
     function vibHoldUpdate(spec, hold) {
         if (!spec || !spec.length) return hold;
-        if (!hold || hold.length !== spec.length) hold = new Float32Array(spec.length);
+        if (!hold || hold.length !== spec.length) {
+            // Prime from the first frame so the envelope starts at the live
+            // noise level and equilibrates to its true max-over-window shape
+            // within one decay τ — instead of visibly growing from zero.
+            hold = new Float32Array(spec.length);
+            for (let i = 0; i < spec.length; i++) hold[i] = spec[i];
+            return hold;
+        }
         for (let i = 0; i < spec.length; i++) if (spec[i] > hold[i]) hold[i] = spec[i];
         return hold;
     }
@@ -1767,7 +1777,14 @@
     let   vibBaseV = null, vibBaseH = null, vibBaseT = 0;
     function vibBaseUpdate(spec, base, now) {
         if (!spec || !spec.length) return base;
-        if (!base || base.length !== spec.length) base = new Float32Array(spec.length);
+        if (!base || base.length !== spec.length) {
+            // Prime the floor from the first frame so the µm subtraction
+            // works from t=0 instead of starting at zero and slowly EMA-
+            // growing toward the real floor over ~5τ (40 s).
+            base = new Float32Array(spec.length);
+            for (let i = 0; i < spec.length; i++) base[i] = spec[i];
+            return base;
+        }
         const dt = vibBaseT ? (now - vibBaseT) : 0;
         // EMA toward live: new = old * k + live * (1-k), k = e^(-dt/τ)
         const k = dt > 0 ? Math.exp(-dt / VIB_BASE_TAU_MS) : 1;
@@ -1869,6 +1886,71 @@
         if (!apply()) document.addEventListener('DOMContentLoaded', apply);
     })();
 
+    // ── Vib-panel paint scheduling ──────────────────────────────────────────
+    //   Two complementary mechanisms:
+    //
+    //   (a) Dirty-flag rAF scheduler — for paints that only change when WS
+    //       data arrives (spectrum bars, text readouts).  WS handler sets a
+    //       flag; one rAF callback drains them.  Coalesces back-to-back WS
+    //       messages into one paint per refresh tick.
+    //
+    //   (b) Continuous rAF loop — while the analyzer panel is open, repaints
+    //       the trend and waterfall composite every display frame.  These
+    //       paints depend on wall-clock time (the trend's "now" right edge,
+    //       the waterfall's "-Ns" labels), so painting only on WS arrivals
+    //       made the right edge jump in 200 ms steps when the cursor was
+    //       still — but slide smoothly while the cursor was moving because
+    //       mousemove fires at 60 Hz.  A constant-cadence rAF gives the
+    //       same smoothness without needing input events.
+    const VP_SPEC_BASIC = 0x01;   // basic vibration screen mini-spectrum
+    const VP_SPEC_PANEL = 0x02;   // analyzer panel spectrum
+    const VP_READOUT    = 0x10;   // basic screen text readout
+    const VP_READ_PANEL = 0x20;   // analyzer panel text readout
+    const VP_WAIT       = 0x40;   // wait-analyzer screen
+    let   vibPaintFlags = 0;
+    let   vibPaintRafPending = false;
+    function vibSchedulePaint(flags) {
+        vibPaintFlags |= flags;
+        if (vibPaintRafPending) return;
+        vibPaintRafPending = true;
+        requestAnimationFrame(() => {
+            vibPaintRafPending = false;
+            const f = vibPaintFlags;
+            vibPaintFlags = 0;
+            if (f & VP_SPEC_BASIC) drawVibSpectrum();
+            if (f & VP_SPEC_PANEL) vibDrawSpectrum();
+            if (f & VP_READOUT)    vibUpdateReadout();
+            if (f & VP_READ_PANEL) vibPanelReadout();
+            if (f & VP_WAIT)       { vibUpdateWaitReadout(); vibDrawWaitScreen(); }
+        });
+    }
+
+    // Continuous-rAF loop for trend + waterfall — see (b) above.
+    let vibRafLoopId    = 0;
+    let vibPendingWfRow = false;     // set by the WS handler when a spectrum frame arrives
+    function vibStartRafLoop() {
+        if (vibRafLoopId || !vibPanelOpen) return;
+        const tick = () => {
+            if (!vibPanelOpen) { vibRafLoopId = 0; return; }
+            // If a fresh spectrum frame arrived since the last tick, push it
+            // as a new waterfall row (state mutation); otherwise just
+            // composite the current state (cheap — drawImage + small overlays).
+            if (vibPendingWfRow) {
+                vibPendingWfRow = false;
+                vibDrawWaterfall(true);
+            } else {
+                vibDrawWaterfall(false);
+            }
+            vibDrawTrend();
+            vibRafLoopId = requestAnimationFrame(tick);
+        };
+        vibRafLoopId = requestAnimationFrame(tick);
+    }
+    function vibStopRafLoop() {
+        if (vibRafLoopId) cancelAnimationFrame(vibRafLoopId);
+        vibRafLoopId = 0;
+    }
+
     // ── Acceleration → displacement: D(µm) = a(mg) × 248.5 / f². The web does
     //    this in the frequency domain (per-bin division), so there's no time-
     //    domain integration drift. Bins below ~3 Hz are zeroed because the
@@ -1956,11 +2038,13 @@
         vibWfInit = false;
         vibPanelReadout();
         vibPanelResize();
+        vibStartRafLoop();                 // continuous 60 Hz repaint while open
     }
     function vibClosePanel() {
         const p = document.getElementById('vib-panel');
         if (p) p.classList.remove('open');
         vibPanelOpen = false;
+        vibStopRafLoop();
     }
     // Size every panel canvas buffer to its on-screen box x devicePixelRatio so
     // lines stay crisp and all 256 bins survive; then repaint.
@@ -2746,7 +2830,10 @@
         });
         const cut = now - 92000;
         while (vibTrend.length && vibTrend[0].t < cut) vibTrend.shift();
-        if (vibPanelOpen) vibDrawTrend();
+        // Sample push is synchronous (we don't want to lose data points).
+        // The paint is driven by the continuous rAF loop while the panel
+        // is open, so the trend's right-edge "now" slides at the display
+        // rate rather than jumping in WS-message-arrival steps.
     }
 
     // ── Wait analysis screen ───────────────────────────────────────────────────
@@ -5177,7 +5264,7 @@
         }
         if (data.vs  !== undefined) {
             vibSpec = data.vs;
-            if (state.screen === 'screen-vibration') drawVibSpectrum();
+            if (state.screen === 'screen-vibration') vibSchedulePaint(VP_SPEC_BASIC);
         }
         if (data.hs  !== undefined) vibSpecH = data.hs;
         // Peak-hold envelope feeds the panel spectrum — see VIB_HOLD_TAU_MS.
@@ -5208,8 +5295,12 @@
             vibScalarHoldTick(performance.now());
         }
         if (vibPanelOpen && (data.vs !== undefined || data.hs !== undefined)) {
-            vibDrawSpectrum();
-            vibDrawWaterfall(data.vs !== undefined);
+            // Spectrum bars repaint on WS arrival (no time-dependent slide).
+            // Waterfall new-row is flagged for the continuous rAF loop to
+            // ingest on its next tick — the loop also composites every frame
+            // so labels/cursor/filmstrip stay smooth between WS arrivals.
+            vibSchedulePaint(VP_SPEC_PANEL);
+            if (data.vs !== undefined) vibPendingWfRow = true;
         }
         if (data.vibsigs !== undefined) {
             vibSigs = data.vibsigs;
@@ -5226,12 +5317,12 @@
             (data.vd !== undefined || data.vr !== undefined || data.vh !== undefined ||
              data.vw !== undefined || data.vrh !== undefined || data.vcw !== undefined ||
              data.vst !== undefined))
-            vibUpdateReadout();
+            vibSchedulePaint(VP_READOUT);
         if (vibPanelOpen &&
             (data.vd !== undefined || data.vr !== undefined ||
              data.vh !== undefined || data.vst !== undefined ||
              data.vs !== undefined || data.hs !== undefined)) {
-            vibPanelReadout();
+            vibSchedulePaint(VP_READ_PANEL);
         }
         // Trend sampling runs regardless of panel visibility so the 90 s
         // history stays continuous across screen navigation (and across a
@@ -5243,8 +5334,7 @@
         if (state.screen === 'screen-vib-wait' &&
             (data.vw !== undefined || data.vcw !== undefined ||
              data.vr !== undefined || data.vh !== undefined || data.vd !== undefined)) {
-            vibUpdateWaitReadout();
-            vibDrawWaitScreen();
+            vibSchedulePaint(VP_WAIT);
         }
 
         // ── patched3: remote menu navigation (device → web) ──
