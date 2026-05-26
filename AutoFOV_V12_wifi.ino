@@ -1859,7 +1859,11 @@ static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOt
     // for deciding whether the chip needs a heatsink in your enclosure.
     doc["dieC"]        = temperatureRead();
     doc["chipInfo"]    = ESP.getChipModel();
-    // sourceLines is managed by the HTML default (3866) — not sent here to save space
+    // BUILD_SLOC / BUILD_SKB are computed by tools/embed_html.py across the
+    // hand-written .ino + .html + tools sources at build time, so the count
+    // stays current without anyone having to remember to update it.
+    doc["sourceLines"] = BUILD_SLOC;
+    doc["sourceKB"]    = BUILD_SKB;
 
     // ── WiFi ─────────────────────────────────────────────────────────────────
     doc["wifiSSID"]   = WiFi.SSID();

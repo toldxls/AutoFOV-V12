@@ -35,6 +35,29 @@ except ValueError:
     patch = count  # git unavailable — leave whatever git() returned
 version = f'{VERSION_MAJOR}.{VERSION_MINOR}.{patch}'
 
+# Source metrics — counted across the project's hand-written files so the
+# About screen reports an accurate, build-fresh figure.  web_ui.h is the
+# generated artifact (would double-count index.html) and is excluded.
+SOURCE_FILES = [
+    'AutoFOV_V12.ino', 'AutoFOV_V12_wifi.ino',
+    'data/index.html', 'data/FreeSans7pt7b.h',
+    'tools/build.sh', 'tools/drift-check.sh',
+    'tools/flash_firmware_only.sh', 'tools/release.sh',
+    'tools/embed_html.py',
+]
+sloc  = 0
+sbytes = 0
+for rel in SOURCE_FILES:
+    full = os.path.join(root, rel)
+    try:
+        with open(full, 'rb') as fp:
+            data = fp.read()
+            sbytes += len(data)
+            sloc   += data.count(b'\n') + (1 if data and not data.endswith(b'\n') else 0)
+    except OSError:
+        pass
+skb = (sbytes + 512) // 1024     # round to nearest KB
+
 with open(src, 'rb') as f:
     raw = f.read()
 
@@ -48,6 +71,8 @@ out.append('#include <pgmspace.h>')
 out.append('')
 out.append(f'#define BUILD_VERSION "{version}"')
 out.append(f'#define BUILD_COMMIT  "{commit}"')
+out.append(f'#define BUILD_SLOC    {sloc}')
+out.append(f'#define BUILD_SKB     {skb}')
 out.append('')
 out.append(f'// {len(raw)} bytes raw  ->  {len(compressed)} bytes gzip')
 out.append('static const uint8_t WEB_UI_HTML_GZ[] PROGMEM = {')
@@ -60,4 +85,4 @@ out.append(f'static const size_t WEB_UI_HTML_GZ_LEN = {len(compressed)};')
 with open(dst, 'w') as f:
     f.write('\n'.join(out) + '\n')
 
-print(f'v{version} ({commit})  |  html: {len(raw):,} -> {len(compressed):,} bytes')
+print(f'v{version} ({commit})  |  html: {len(raw):,} -> {len(compressed):,} bytes  |  sloc: {sloc:,} ({skb} KB)')

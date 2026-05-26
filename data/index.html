@@ -679,25 +679,37 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 70px;">ABOUT</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 75px; font-size: 20px; color: var(--accent-green);">Auto FOV V12</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 100px; font-size: 12px; color: var(--text-disabled);">Field-of-view calculator</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 70px; font-size: 20px; color: var(--accent-green);">AutoFOV V12</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 94px; font-size: 12px; color: var(--text-disabled);">Field-of-view calculator</div>
 
-                <div class="gfx-text" style="width:240px; text-align:center; top:122px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE</div>
-                <div id="about-version" class="gfx-text" style="width:240px; text-align:center; top:136px; font-size:18px; color:var(--accent-green); font-weight:bold;">—</div>
-                <div id="about-commit" class="gfx-text" style="width:240px; text-align:center; top:158px; font-size:10px; color:var(--text-disabled);">—</div>
-                <div id="about-built" class="gfx-text" style="width:240px; text-align:center; top:172px; font-size:10px; color:var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left: 15px; top: 176px; color: var(--text-disabled);">Sketch size:</div>
-                <div id="about-sketch" class="gfx-text" style="right: 15px; top: 176px; color: var(--accent-green);">—</div>
-                <div class="gfx-text" style="left: 15px; top: 198px; color: var(--text-disabled);">Free flash:</div>
-                <div id="about-freeflash" class="gfx-text" style="right: 15px; top: 198px; color: var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left: 15px; top: 218px; color: var(--text-disabled);">Source:</div>
-                <div id="about-lines" class="gfx-text" style="right: 15px; top: 218px; color: var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left: 15px; top: 238px; color: var(--text-disabled);">Chip:</div>
-                <div id="about-chip" class="gfx-text" style="right: 15px; top: 238px; color: var(--text-disabled);">—</div>
+                <div class="gfx-text" style="width:240px; text-align:center; top:114px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE</div>
+                <div id="about-version" class="gfx-text" style="width:240px; text-align:center; top:126px; font-size:18px; color:var(--accent-green); font-weight:bold;">—</div>
+                <div id="about-commit" class="gfx-text" style="width:240px; text-align:center; top:148px; font-size:10px; color:var(--text-disabled);">—</div>
+                <div id="about-built" class="gfx-text" style="width:240px; text-align:center; top:160px; font-size:10px; color:var(--text-disabled);">—</div>
 
-                <div style="position: absolute; left: 30px; top: 256px; width: 180px; height: 1px; background: #387038;"></div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 268px; color: var(--text-disabled);">Developed by</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 292px; font-size: 16px; color: var(--accent-magenta);">Travis Olds</div>
+                <!-- Hardware identity — sensors/peripherals on this device.
+                     None of these are reported elsewhere in the UI; the memory
+                     screen covers runtime state (heap / PSRAM / die temp /
+                     flash) so the About screen is left to describe what the
+                     device IS, not how it's currently doing. -->
+                <div class="gfx-text" style="width:240px; text-align:center; top:176px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">HARDWARE</div>
+                <div class="gfx-text" style="left: 15px; top: 188px; color: var(--text-disabled);">ToF:</div>
+                <div class="gfx-text" style="right: 15px; top: 188px; color: var(--accent-cyan);">VL53L4CX</div>
+                <div class="gfx-text" style="left: 15px; top: 204px; color: var(--text-disabled);">IMU:</div>
+                <div class="gfx-text" style="right: 15px; top: 204px; color: var(--accent-cyan);">LSM6DSOX</div>
+                <div class="gfx-text" style="left: 15px; top: 220px; color: var(--text-disabled);">Touch:</div>
+                <div class="gfx-text" style="right: 15px; top: 220px; color: var(--accent-cyan);">FT6206</div>
+                <div class="gfx-text" style="left: 15px; top: 236px; color: var(--text-disabled);">Display:</div>
+                <div class="gfx-text" style="right: 15px; top: 236px; color: var(--accent-cyan);">ILI9341 240&times;320</div>
+                <div class="gfx-text" style="left: 15px; top: 252px; color: var(--text-disabled);">Source:</div>
+                <div id="about-source" class="gfx-text" style="right: 15px; top: 252px; color: var(--text-disabled);">—</div>
+
+                <div style="position: absolute; left: 30px; top: 270px; width: 180px; height: 1px; background: #387038;"></div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 276px; color: var(--text-disabled);">Developed by</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 290px; font-size: 16px; color: var(--accent-magenta);">Travis Olds</div>
+                <a href="https://www.mindat.org/user-8894.html" target="_blank" rel="noopener"
+                   class="gfx-text" style="width: 240px; text-align: center; top: 308px; font-size: 10px;
+                                           color: #5e9fff; text-decoration: underline;">mindat.org/user-8894</a>
             </div>
 
             <!-- ===================== CALIBRATOR SETTINGS ===================== -->
@@ -1506,7 +1518,7 @@
         // About / build info (fallbacks shown until device connects and overrides)
         buildVersion: '—', buildCommit: '—', buildDate: '—', buildTime: '—', sketchKB: null, freeFlashKB: null,
         partKB: null, rollbackAvailable: false, rollbackBuilt: null,
-        sourceLines: 5818, chipInfo: 'ESP32-S3',
+        sourceLines: null, sourceKB: null, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
         otaPassword: '',
@@ -4246,9 +4258,14 @@
         // System info
         if (g('mem-cpu'))    g('mem-cpu').innerText    = state.cpu + ' MHz';
         if (g('mem-sdk'))    g('mem-sdk').innerText    = state.sdk || '—';
-        if (g('mem-source')) g('mem-source').innerText = state.sourceLines
-            ? state.sourceLines + ' ln / ~254 KB'
-            : '5818 ln / ~254 KB';
+        if (g('mem-source')) {
+            // Both numbers are pushed from BUILD_SLOC / BUILD_SKB so the row
+            // is always fresh — no stale fallback string.
+            const sl = state.sourceLines, sk = state.sourceKB;
+            g('mem-source').innerText = (sl && sk)
+                ? sl.toLocaleString() + ' ln / ~' + sk + ' KB'
+                : '—';
+        }
         if (g('mem-flash')) {
             const sk = state.sketchKB, ff = state.freeFlashKB;
             g('mem-flash').innerText = (sk !== null && ff !== null)
@@ -4275,13 +4292,17 @@
     // ─────────────────────────────────────────────────────────────────────────
     function updateAboutUI() {
         const g = (id) => document.getElementById(id);
-        if (g('about-version'))   g('about-version').innerText   = state.buildVersion ? 'v' + state.buildVersion : '—';
-        if (g('about-commit'))    g('about-commit').innerText    = state.buildCommit  ? state.buildCommit + '  ·  ' + (state.buildDate || '') : '—';
-        if (g('about-built'))     g('about-built').innerText     = state.buildTime    || '—';
-        if (g('about-sketch'))    g('about-sketch').innerText    = state.sketchKB    !== null ? state.sketchKB    + ' KB' : '—';
-        if (g('about-freeflash')) g('about-freeflash').innerText = state.freeFlashKB !== null ? state.freeFlashKB + ' KB' : '—';
-        if (g('about-lines'))     g('about-lines').innerText     = state.sourceLines !== null ? '~' + state.sourceLines + ' lines' : '—';
-        if (g('about-chip'))      g('about-chip').innerText      = state.chipInfo    || '—';
+        if (g('about-version'))  g('about-version').innerText = state.buildVersion ? 'v' + state.buildVersion : '—';
+        if (g('about-commit'))   g('about-commit').innerText  = state.buildCommit  ? state.buildCommit + '  ·  ' + (state.buildDate || '') : '—';
+        if (g('about-built'))    g('about-built').innerText   = state.buildTime    || '—';
+        if (g('about-source')) {
+            // Source lines + size on disk — both pushed from BUILD_SLOC /
+            // BUILD_SKB by tools/embed_html.py so they refresh on every build.
+            const sl = state.sourceLines, sk = state.sourceKB;
+            g('about-source').innerText = (sl && sk)
+                ? sl.toLocaleString() + ' ln / ' + sk + ' KB'
+                : '—';
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -5542,32 +5563,36 @@
         }
 
         // ── Memory ──
-        let memDirty = false;
-        if (data.freeHeap   !== undefined) { state.freeHeap   = data.freeHeap;   memDirty = true; }
+        // aboutDirty is declared up here too because the about screen now
+        // displays free heap / PSRAM / CPU / die temperature alongside the
+        // build info, so the same telemetry fields drive both screens.
+        let memDirty   = false;
+        let aboutDirty = false;
+        if (data.freeHeap   !== undefined) { state.freeHeap   = data.freeHeap;   memDirty = true; aboutDirty = true; }
         if (data.totalHeap  !== undefined) { state.totalHeap  = data.totalHeap;  memDirty = true; }
         if (data.lowestFree !== undefined) { state.lowestFree = data.lowestFree; memDirty = true; }
         if (data.spriteKB   !== undefined) { state.spriteKB   = data.spriteKB;   memDirty = true; }
-        if (data.psramFree  !== undefined) { state.psramFree  = data.psramFree;  memDirty = true; }
-        if (data.psramTotal !== undefined) { state.psramTotal = data.psramTotal; memDirty = true; }
-        if (data.cpu        !== undefined) { state.cpu        = data.cpu;        memDirty = true; }
+        if (data.psramFree  !== undefined) { state.psramFree  = data.psramFree;  memDirty = true; aboutDirty = true; }
+        if (data.psramTotal !== undefined) { state.psramTotal = data.psramTotal; memDirty = true; aboutDirty = true; }
+        if (data.cpu        !== undefined) { state.cpu        = data.cpu;        memDirty = true; aboutDirty = true; }
         if (data.sdk        !== undefined) { state.sdk        = data.sdk;        memDirty = true; }
         if (memDirty && state.screen === 'screen-memory') updateMemoryUI();
 
         // ── About / build info ──
-        let aboutDirty = false;
         let otaDirty   = false;   // rollback availability lives in /state too
         if (data.buildVersion !== undefined) { state.buildVersion = data.buildVersion; aboutDirty = true; }
         if (data.buildCommit  !== undefined) { state.buildCommit  = data.buildCommit;  aboutDirty = true; }
         if (data.buildDate    !== undefined) { state.buildDate    = data.buildDate;    aboutDirty = true; }
         if (data.buildTime    !== undefined) { state.buildTime    = data.buildTime;    aboutDirty = true; }
-        if (data.sketchKB    !== undefined) { state.sketchKB    = data.sketchKB;    aboutDirty = true; memDirty = true; }
-        if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; aboutDirty = true; memDirty = true; }
+        if (data.sketchKB    !== undefined) { state.sketchKB    = data.sketchKB;    memDirty = true; }
+        if (data.freeFlashKB !== undefined) { state.freeFlashKB = data.freeFlashKB; memDirty = true; }
+        if (data.sourceKB    !== undefined) { state.sourceKB    = data.sourceKB;    aboutDirty = true; memDirty = true; }
+        if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; memDirty = true; }
         if (data.partKB      !== undefined) { state.partKB      = data.partKB;      memDirty = true; }
         if (data.partRunning !== undefined) { state.partRunning = data.partRunning; memDirty = true; }
         if (data.rollbackAvailable !== undefined) { state.rollbackAvailable = !!data.rollbackAvailable; otaDirty = true; }
         if (data.rollbackBuilt     !== undefined) { state.rollbackBuilt     = data.rollbackBuilt;     otaDirty = true; }
-        if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; }
-        if (data.sourceLines !== undefined) { state.sourceLines = data.sourceLines; aboutDirty = true; }
+        if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; aboutDirty = true; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();
         if (otaDirty   && state.screen === 'screen-ota')   updateOtaRollbackUI();
