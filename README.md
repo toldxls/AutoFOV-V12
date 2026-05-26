@@ -9,7 +9,7 @@ V12 adds a full real-time vibration monitoring and analysis system using the onb
 * **Real-Time FOV Calculation:** Uses a VL53L4CX ToF sensor to measure distance and computes FOV for 5×, 10×, and 20× objectives.
 * **Custom Calibration:** Calibrate the device to your specific optical setup using a scaled micrometer. Calculates standard error (RMSE) and R² of the calibration fit.
 * **Stack Calculator:** Automatically calculates image overlap % and total depth from step size, and required image count based on objective NA and depth of field.
-* **Stack-Complete Notifications:** Pushes a `stackDone` WebSocket event to every connected dashboard (browser Notification + audible alert beeps) and, optionally, an ntfy.sh push so a phone away from the bench can hear the stack finish.
+* **Stack-Complete Notifications:** Pushes a `stackDone` WebSocket event to every connected dashboard (browser Notification + audible alert beeps) and, optionally, an ntfy.sh push so a phone away from the bench can hear the stack finish. A dashboard toast also offers a one-click **Save PNG** summary card with run stats, vibration RMS, and per-axis estimated pixel blur.
 * **Web Dashboard & Telemetry:** Connects to WiFi to provide a ~30 Hz live data stream (distance, FOV, ToF signal rate, vibration) and full remote control of settings.
 * **Captive Portal Setup:** First-time WiFi setup via a built-in access point (AutoFOV-Setup).
 * **PSRAM-Backed UI:** Fluid, flicker-free UI using off-screen 16-bit sprites buffered in PSRAM.
@@ -133,7 +133,7 @@ Access via **SETTINGS → VIBRATION** on the device or web dashboard. The state 
 * *RMS Trend* — 90-second rolling plot of vertical and horizontal RMS with a 10-second moving-average marker on the y-axis.
 * *Wait Analysis* — 90-second timeline of the firmware's recommended settle wait vs the configured wait, with a cut/short/ok delta indicator.
 
-**Vibration Signatures** — capture a reference spectrum (averaged over 8 FFT frames) and save it to LittleFS (`/vibsig/*.bin`). Signatures persist across power cycles and are listed in the web dashboard on connect.
+**Vibration Signatures** — capture a reference spectrum over a 10-second window using peak-hold (not averaging, so transient events still register) with the ambient noise floor subtracted, and save it to LittleFS (`/vibsig/*.bin`). Signatures persist across power cycles and are listed in the web dashboard on connect.
 
 **Settle Time** — after each A4 shutter pulse, a Goertzel analysis fits the ring-down decay to estimate how long the bench needs to settle. The result is shown as the recommended wait time and can be used to tune the configured inter-shot delay.
 
