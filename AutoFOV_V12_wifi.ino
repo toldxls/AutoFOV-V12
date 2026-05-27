@@ -830,6 +830,15 @@ static void startPortalMode() {
             ssid.trim(); pass.trim(); ip.trim(); gw.trim();
             if (ssid.isEmpty()) { req->send(400, "text/plain", "SSID required"); return; }
 
+            // Reject oversized inputs before they hit Preferences / the heap.
+            // SSID ≤ 32 bytes (802.11), WPA passphrase 8-63 chars (we allow 0
+            // for open networks), IP/GW max 15 chars (xxx.xxx.xxx.xxx).
+            if (ssid.length() > 32 || pass.length() > 63 ||
+                ip.length() > 15   || gw.length()   > 15) {
+                req->send(400, "text/plain", "Input too long");
+                return;
+            }
+
             // Auto-derive gateway (x.x.x.1) when static IP is given but gateway omitted
             if (!ip.isEmpty() && gw.isEmpty()) {
                 int dot = ip.lastIndexOf('.');
@@ -1001,8 +1010,17 @@ static void startFullServer() {
         req->send(resp);
     });
 
-    // GET /state — full JSON snapshot (used by HTML on initial WiFi connect)
+    // GET /state — full JSON snapshot (used by HTML on initial WiFi connect).
+    // Gated by the same CSRF token as /cmd: the dashboard fetches /token first,
+    // then includes X-AutoFOV-Token here. Closes a same-LAN snooping vector
+    // where a raw HTTP client could read calibration, SSID/RSSI, and live
+    // sensor values without authenticating.
     httpServer.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!req->hasHeader("X-AutoFOV-Token") ||
+            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+            req->send(403, "text/plain", "Forbidden");
+            return;
+        }
         String out; buildFullStateJson(out);
         req->send(200, "application/json", out);
     });

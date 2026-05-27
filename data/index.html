@@ -5105,7 +5105,10 @@
             if (!tr.ok) throw new Error('token HTTP ' + tr.status);
             csrfToken = (await tr.text()).trim();
             if (!csrfToken) throw new Error('empty token');
-            const r = await fetch(wifiBase + '/state', { signal: AbortSignal.timeout(3000) });
+            const r = await fetch(wifiBase + '/state', {
+                signal: AbortSignal.timeout(3000),
+                headers: { 'X-AutoFOV-Token': csrfToken }
+            });
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
             applyFullState(data);

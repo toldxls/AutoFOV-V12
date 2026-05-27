@@ -4548,22 +4548,13 @@ void loop() {
     wifiForgetAndRestart();   // does not return
   }
 
-  if (currentMode != MAIN && currentMode != CAL_SUCCESS &&
-      currentMode != STACK_CALC && currentMode != STACK_TIME &&
-      currentMode != FOV_INFO && currentMode != CAL_REVIEW &&
-      currentMode != BRIGHTNESS_SETTINGS && currentMode != SENSOR_INFO &&
-      currentMode != MEM_INFO &&
-      currentMode != IR_CONTROL &&
-      currentMode != CAL_CONFIRM &&
-      currentMode != APP_SETTINGS &&
-      currentMode != ABOUT &&
-      currentMode != SCREEN_TIMEOUT &&
-      currentMode != CAL_GRAPH &&
-      currentMode != WIFI_INFO &&
-      currentMode != VIB_HOME &&
-      currentMode != VIB_SPECTRUM &&
-      currentMode != VIB_SETTLE &&
-      currentMode != VIB_SIGNATURES) {
+  // Compact live "D:XXXmm" + signal-health readout at the top-right header.
+  // Only the calibration-flow screens want it — every other screen either
+  // owns its own readout (MAIN's big FOV/dist block) or has no room. New
+  // screens default to "no header readout"; opt in by adding the mode here.
+  if (currentMode == CAL_SETTINGS ||
+      currentMode == CAL_RUN      ||
+      currentMode == CAL_SAMPLING) {
     if ((unsigned long)(millis() - lastCalibDistUpdate) > 600) {
       char distBuf[16];
       if (rangeValid) snprintf(distBuf, sizeof(distBuf), "D:%dmm", currentDist);
