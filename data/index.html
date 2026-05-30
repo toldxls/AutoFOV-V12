@@ -1661,12 +1661,13 @@
     // can show what was peaking in that historical row, and a ring of frame
     // arrival times so the y-axis can label rows in seconds-ago.
     const VIB_WF_MAX_ROWS = 600;            // generous — actual rows depend on canvas H
-    // Rows are only pushed from the rAF loop, which the browser pauses while the
-    // tab is backgrounded — so no rows are captured during that time even though
-    // the WS stream stays live. If the gap since the newest row exceeds this, the
-    // history is treated as discontinuous and the heatmap restarts fresh (see the
-    // reset in vibDrawWaterfall). Well above the normal sub-second frame cadence.
-    const VIB_WF_GAP_MS = 4000;
+    // Rows are captured in the WS message handler (vibWfCaptureRow), NOT the rAF
+    // render loop — the browser pauses rAF in a backgrounded tab but still
+    // delivers WebSocket messages, so history keeps accumulating while you work
+    // in another tab. Retain a rolling window: bounds memory and keeps the time
+    // span honest. A stall longer than the window (deep throttle, machine sleep,
+    // hour-away) is treated as discontinuous and the heatmap restarts fresh.
+    const VIB_WF_WINDOW_MS = 60000;         // keep ~60 s of rows (≈300 @ 5 Hz)
     let vibWfRows = [];                     // [{t, frame:Float32Array}] newest first
     let vibWfCursorY = -1, vibWfCursorX = -1;  // hover position on waterfall canvas
     // Cross-pane linked cursor: hover on the waterfall draws a vertical line
@@ -1693,6 +1694,7 @@
     // Sensitivity value that the current backing canvas was rendered with;
     // when this drifts from vibWfSensitivity the rows get re-tinted in place.
     let vibWfSensApplied = 1.0;
+    let vibWfDrawnT = 0;       // timestamp of the newest row the backing canvas was built from
     function vibHoldDecay(now) {
         if (!vibHoldT) { vibHoldT = now; return; }
         const dt = now - vibHoldT;
@@ -1924,7 +1926,7 @@
         vibWfRepaintPending = true;
         requestAnimationFrame(() => {
             vibWfRepaintPending = false;
-            vibDrawWaterfall(false);
+            vibDrawWaterfall();
         });
     }
     function vibSetWfSens(sliderVal) {
@@ -1989,20 +1991,14 @@
 
     // Continuous-rAF loop for trend + waterfall — see (b) above.
     let vibRafLoopId    = 0;
-    let vibPendingWfRow = false;     // set by the WS handler when a spectrum frame arrives
     function vibStartRafLoop() {
         if (vibRafLoopId || !vibPanelOpen) return;
         const tick = () => {
             if (!vibPanelOpen) { vibRafLoopId = 0; return; }
-            // If a fresh spectrum frame arrived since the last tick, push it
-            // as a new waterfall row (state mutation); otherwise just
-            // composite the current state (cheap — drawImage + small overlays).
-            if (vibPendingWfRow) {
-                vibPendingWfRow = false;
-                vibDrawWaterfall(true);
-            } else {
-                vibDrawWaterfall(false);
-            }
+            // Rows are captured in the WS handler (vibWfCaptureRow); this loop
+            // only renders. vibDrawWaterfall rebuilds the heatmap when rows or
+            // sensitivity changed, otherwise it just re-composites — cheap.
+            vibDrawWaterfall();
             vibDrawTrend();
             vibRafLoopId = requestAnimationFrame(tick);
         };
@@ -2121,7 +2117,7 @@
         });
         vibWfInit = false;                 // waterfall geometry changed — reset it
         vibDrawSpectrum();
-        vibDrawWaterfall(false);
+        vibDrawWaterfall();
         vibDrawTrend();
     }
     window.addEventListener('resize', vibPanelResize);
@@ -2315,7 +2311,35 @@
         return vibHeatWf((val || 0) / denom * vibWfSensitivity);
     }
 
-    function vibDrawWaterfall(newFrame) {
+    // Capture one spectrum frame as a waterfall row. Called from the WS message
+    // handler so rows accumulate even while the tab is backgrounded (the rAF
+    // render loop is paused then, but WebSocket onmessage still fires).
+    function vibWfCaptureRow(vs) {
+        if (!vibPanelOpen || !vs || !vs.length) return;
+        const now = performance.now();
+        // Discontinuity fallback: if the stream stalled longer than the whole
+        // retention window (deep tab-throttle, machine sleep, hour-away), the
+        // prior rows are stale and would render as a giant empty span — drop
+        // them and restart fresh, including the contrast reference.
+        if (vibWfRows.length && (now - vibWfRows[0].t) > VIB_WF_WINDOW_MS) {
+            vibWfRows = [];
+            vibWfRefMax = 30;
+        }
+        vibWfRows.unshift({ t: now, frame: Float32Array.from(vs) });
+        // Rolling age-trim (also caps memory): drop rows older than the window,
+        // then enforce a hard row cap as a backstop.
+        const cutoff = now - VIB_WF_WINDOW_MS;
+        while (vibWfRows.length > 1 && vibWfRows[vibWfRows.length - 1].t < cutoff)
+            vibWfRows.pop();
+        if (vibWfRows.length > VIB_WF_MAX_ROWS) vibWfRows.length = VIB_WF_MAX_ROWS;
+        // Asymmetric EMA contrast reference: rise fast so a real transient gets
+        // headroom, decay slow so one bump doesn't crush later silent rows.
+        let frameMx = 30;
+        for (let b = 2; b < vs.length; b++) if (vs[b] > frameMx) frameMx = vs[b];
+        const a = frameMx > vibWfRefMax ? VIB_WF_REF_ATTACK : VIB_WF_REF_RELEASE;
+        vibWfRefMax += (frameMx - vibWfRefMax) * a;
+    }
+    function vibDrawWaterfall() {
         const c = document.getElementById('vibp-wf');
         if (!c || !vibPanelOpen) return;
         const g = c.getContext('2d'), W = c.width, H = c.height;
@@ -2341,15 +2365,17 @@
             vibWfRows = [];
             vibWfInit = true;
             vibWfSensApplied = vibWfSensitivity;
+            vibWfDrawnT = 0;
         }
-        // If the user dragged the sensitivity slider, re-tint the whole back
-        // canvas from vibWfRows so the visible history reflects the new gain
-        // immediately (otherwise only rows arriving after the change would
-        // honour it, leaving a discontinuous strip).  Bulk-fill via a single
-        // putImageData — the previous fillRect-per-pixel loop did up to pw×H
-        // (~120k) calls per slider tick and made the slider feel "chuggy".
-        if (vibWfSensApplied !== vibWfSensitivity) {
+        // Rebuild the backing canvas from vibWfRows whenever the data changed
+        // (new rows captured in the WS handler) or the sensitivity slider moved.
+        // One putImageData repaints the whole visible window, so a backgrounded
+        // tab that piled up many rows catches up in a single frame on return;
+        // idle/hover frames skip the rebuild and just re-composite below.
+        const newestT = vibWfRows.length ? vibWfRows[0].t : 0;
+        if (vibWfSensApplied !== vibWfSensitivity || newestT !== vibWfDrawnT) {
             vibWfSensApplied = vibWfSensitivity;
+            vibWfDrawnT = newestT;
             bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, n, H);
             const rows = Math.min(vibWfRows.length, H);
             if (rows > 0) {
@@ -2377,38 +2403,6 @@
                     }
                 }
                 bg.putImageData(img, 0, 0);
-            }
-        }
-        // Scroll the heatmap inside the backing canvas, paint the new row,
-        // and record this frame in a parallel ring so the hover readout can
-        // resolve "row → wall-clock age + bin amplitude N seconds ago".
-        if (newFrame && vibSpec && vibSpec.length) {
-            // Discontinuity guard: if the tab was backgrounded, the rAF loop was
-            // paused so no rows were captured — yet WS frames kept the stream
-            // "live". Without this, the next row glues onto minutes-old history:
-            // the time span balloons (2000 s+), the y-axis labels collapse and
-            // overlap, and hover reads ancient rows as if they were recent. We
-            // have no real data for the gap, so start the heatmap fresh — the
-            // RMS trend already survives this because it trims by wall-clock age.
-            if (vibWfRows.length &&
-                (performance.now() - vibWfRows[0].t) > VIB_WF_GAP_MS) {
-                bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, n, H);
-                vibWfRows = [];
-                vibWfRefMax = 30;
-            }
-            bg.drawImage(vibWfBack, 0, 0, n, H - 1, 0, 1, n, H - 1);
-            vibWfRows.unshift({ t: performance.now(), frame: Float32Array.from(vibSpec) });
-            while (vibWfRows.length > Math.max(VIB_WF_MAX_ROWS, H)) vibWfRows.pop();
-            // Asymmetric EMA reference: rise quickly so a real transient still
-            // gets headroom, decay slowly so a single bump doesn't collapse
-            // the contrast of every later silent row.
-            let frameMx = 30;
-            for (let b = 2; b < n; b++) if (vibSpec[b] > frameMx) frameMx = vibSpec[b];
-            const a = frameMx > vibWfRefMax ? VIB_WF_REF_ATTACK : VIB_WF_REF_RELEASE;
-            vibWfRefMax += (frameMx - vibWfRefMax) * a;
-            for (let b = 0; b < n; b++) {
-                bg.fillStyle = vibWfTint(vibSpec[b]);
-                bg.fillRect(b, 0, 1, 1);
             }
         }
         // Composite: gutter background, then stretch n-wide heatmap to fill pw.
@@ -3133,7 +3127,7 @@
                     vibLinkedCursorAge = performance.now() - row.t;
                     vibCursorPane      = 'wf';
                 }
-                vibDrawWaterfall(false);   // redraw axis + cursor only
+                vibDrawWaterfall();   // redraw axis + cursor only
                 vibDrawTrend();            // mirror the cursor on the trend
             });
             wc.addEventListener('mouseleave', () => {
@@ -3143,7 +3137,7 @@
                     vibCursorPane      = null;
                     vibDrawTrend();
                 }
-                vibDrawWaterfall(false);
+                vibDrawWaterfall();
             });
         }
         const tc = document.getElementById('vibp-trend');
@@ -3159,13 +3153,13 @@
                 vibLinkedCursorAge = (1 - (cx - mL) / pw) * span;
                 vibCursorPane      = 'trend';
                 vibDrawTrend();
-                vibDrawWaterfall(false);
+                vibDrawWaterfall();
             });
             tc.addEventListener('mouseleave', () => {
                 if (vibCursorPane === 'trend') {
                     vibLinkedCursorAge = null;
                     vibCursorPane      = null;
-                    vibDrawWaterfall(false);
+                    vibDrawWaterfall();
                     vibDrawTrend();
                 }
             });
@@ -5536,11 +5530,11 @@
         }
         if (vibPanelOpen && (data.vs !== undefined || data.hs !== undefined)) {
             // Spectrum bars repaint on WS arrival (no time-dependent slide).
-            // Waterfall new-row is flagged for the continuous rAF loop to
-            // ingest on its next tick — the loop also composites every frame
-            // so labels/cursor/filmstrip stay smooth between WS arrivals.
             vibSchedulePaint(VP_SPEC_PANEL);
-            if (data.vs !== undefined) vibPendingWfRow = true;
+            // Capture the waterfall row HERE, in the WS handler, not the rAF
+            // loop — onmessage still fires in a backgrounded tab (rAF doesn't),
+            // so the heatmap history keeps filling while you work in another tab.
+            if (data.vs !== undefined) vibWfCaptureRow(data.vs);
         }
         if (data.vibsigs !== undefined) {
             vibSigs = data.vibsigs;
