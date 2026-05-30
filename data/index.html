@@ -1683,6 +1683,7 @@
     // so the visible canvas can be recomposited every mousemove without the
     // crosshair leaving a trail and without re-rasterising the full history.
     let vibWfBack = null;
+    let vibWfScratch = null;   // scratch canvas: crisp n->pw stretch, then sub-pixel vertical scroll
     // Sensitivity value that the current backing canvas was rendered with;
     // when this drifts from vibWfSensitivity the rows get re-tinted in place.
     let vibWfSensApplied = 1.0;
@@ -2395,7 +2396,36 @@
         // imageSmoothingEnabled=false → crisp per-bin columns, no blending blur.
         g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
         g.imageSmoothingEnabled = false;
-        g.drawImage(vibWfBack, mL, 0, pw, H);
+        // -- Smooth sub-pixel vertical scroll (same idea as the RMS-trend fix) --
+        //   The heatmap backing is a 1-px-per-row bitmap that only scrolls when a
+        //   new WS frame arrives, so on its own it jumps a whole row at the (slow)
+        //   data rate. Stretch it crisply into a scratch buffer (n->pw, smoothing
+        //   OFF so the per-bin columns stay sharp), then blit that to the visible
+        //   canvas shifted down by the fraction of a row elapsed since the newest
+        //   row -- smoothing ON for just that blit so the <1px offset renders
+        //   sub-pixel. The rows now glide at the display refresh rate instead of
+        //   ticking once per data frame, like the trend's continuous time-based X.
+        if (!vibWfScratch) vibWfScratch = document.createElement('canvas');
+        if (vibWfScratch.width !== pw || vibWfScratch.height !== H) {
+            vibWfScratch.width = pw; vibWfScratch.height = H;
+        }
+        const wfScrCtx = vibWfScratch.getContext('2d');
+        wfScrCtx.imageSmoothingEnabled = false;
+        wfScrCtx.clearRect(0, 0, pw, H);
+        wfScrCtx.drawImage(vibWfBack, 0, 0, n, H, 0, 0, pw, H);
+        let wfScrollFrac = 0;                         // 0..1 of a row since newest
+        if (vibWfRows.length >= 2) {
+            const wfKn = Math.min(8, vibWfRows.length - 1);
+            const wfMsPerRow = (vibWfRows[0].t - vibWfRows[wfKn].t) / wfKn;
+            if (wfMsPerRow > 0) {
+                wfScrollFrac = (performance.now() - vibWfRows[0].t) / wfMsPerRow;
+                if (wfScrollFrac < 0) wfScrollFrac = 0;
+                else if (wfScrollFrac > 1) wfScrollFrac = 1;
+            }
+        }
+        g.imageSmoothingEnabled = true;
+        g.drawImage(vibWfScratch, 0, 0, pw, H, mL, wfScrollFrac, pw, H);
+        g.imageSmoothingEnabled = false;
         g.imageSmoothingEnabled = true;
         g.font = '13px monospace'; g.lineWidth = 1;
         g.fillStyle = '#5e8c7e'; g.textAlign = 'right'; g.textBaseline = 'middle';
