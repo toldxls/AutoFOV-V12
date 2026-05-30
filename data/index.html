@@ -747,35 +747,46 @@
                      onclick="switchScreen('screen-main')">CANCEL</div>
             </div>
 
-            <!-- ===================== CAL RUN (stub) ===================== -->
+            <!-- ===================== CAL RUN ===================== -->
             <div id="screen-calrun" class="screen">
                 <div class="gfx-text" style="left: 10px; top: 10px; font-size: 13px; color: #0000CD; font-weight: bold;">POINT <span id="calrun-pt">1</span>/<span id="calrun-total">10</span></div>
 
-                <div style="position: absolute; left: 20px; top: 40px; width: 200px; height: 45px; background: #000;">
-                    <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 10px; font-size: 22px; color: var(--accent-green); font-weight: bold;">1920 px</div>
+                <!-- Live distance readout (top-right). FOV is intentionally omitted -
+                     during cal it would just reflect the stale slope and mislead. -->
+                <div class="gfx-text" style="left: 160px; top: 10px; font-size: 9px; color: var(--text-muted);">LIVE DIST</div>
+                <div id="calrun-live-dist" class="gfx-text" style="left: 160px; top: 22px; font-size: 14px; color: var(--accent-green); font-weight: bold;">— mm</div>
+
+                <div style="position: absolute; left: 20px; top: 42px; width: 200px; height: 40px; background: #000;">
+                    <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 8px; font-size: 20px; color: var(--accent-green); font-weight: bold;">1920 px</div>
                 </div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 95px; font-size: 10px; color: var(--text-disabled);">take photo, input pixel #</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 108px; font-size: 10px; color: var(--text-disabled);">and hit capture &amp; save</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 86px; font-size: 10px; color: var(--text-disabled);">take photo, input pixel # and capture</div>
 
-                <div class="adj-row" style="top: 135px;">
+                <div class="adj-row" style="top: 104px;">
                     <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">--</div>
                     <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCalRun(-1)">-</div>
                     <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCalRun(1)">+</div>
                     <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCalRun(2)">++</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 10px; top: 185px; width: 220px; height: 50px;
+                <div class="gfx-btn" style="left: 10px; top: 144px; width: 220px; height: 38px;
                      background: #ADFF2F; color: #000; font-size: 13px;" onclick="calCaptureSave()">CAPTURE &amp; SAVE</div>
 
-                <div class="gfx-btn" style="left: 5px; top: 245px; width: 72px; height: 35px;
+                <!-- Mini scatter+regression (hidden until ≥3 points). Lets the user
+                     spot outliers in real-time instead of waiting for finalize. -->
+                <div id="calrun-mini-wrap" style="position: absolute; left: 8px; top: 188px; width: 224px; height: 62px; display: none;">
+                    <canvas id="calrun-mini-graph" width="224" height="62" style="display: block; background: #050505;"></canvas>
+                    <div id="calrun-mini-resid" class="gfx-text" style="right: 4px; top: 2px; font-size: 9px; color: var(--text-muted);"></div>
+                </div>
+
+                <div class="gfx-btn" style="left: 5px; top: 256px; width: 72px; height: 32px;
                      background: #000; border: 1px solid #787878; font-size: 11px;" onclick="calGoBack()">BACK</div>
-                <div id="btn-review" class="gfx-btn" style="left: 82px; top: 245px; width: 72px; height: 35px;
+                <div id="btn-review" class="gfx-btn" style="left: 82px; top: 256px; width: 72px; height: 32px;
                      background: #101010; color: #787878; font-size: 11px;" onclick="calReview()">REVIEW</div>
-                <div class="gfx-btn" style="left: 159px; top: 245px; width: 76px; height: 35px;
+                <div class="gfx-btn" style="left: 159px; top: 256px; width: 76px; height: 32px;
                      background: #780000; font-size: 11px;" onclick="calCancel()">CANCEL</div>
 
-                <div id="calrun-status" class="gfx-text" style="left: 5px; top: 288px; color: var(--accent-green); font-size: 10px;"></div>
+                <div id="calrun-status" class="gfx-text" style="left: 5px; top: 295px; color: var(--accent-green); font-size: 10px;"></div>
             </div>
 
             <!-- ===================== BRIGHTNESS SETTINGS ===================== -->
@@ -3629,6 +3640,7 @@
         state.capturedPoints = [];
         sendCommand('calStart', 1);   // patched3: clears any stale pointsCaptured on ESP32
         updateCalRunUI(1);
+        drawCalMiniGraph();          // hides itself when capturedPoints is empty
         switchScreen('screen-calrun');
     }
 
@@ -3662,24 +3674,30 @@
         document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
     }
 
+    // Ack-driven capture: send calCapture, show SAMPLING…, then advance ONLY
+    // when the firmware echoes {calPointResult:{idx,dist,fov}}. A 2 s safety
+    // timer surfaces a retry hint if no ack ever lands (e.g. localBusy refusal
+    // raced past us, sensor invalid, or transport hiccup).
     let calCapturing = false;
+    let _pendingCalCapture = null;
     function calCaptureSave() {
         if (calCapturing) return;
         calCapturing = true;
         const status = document.getElementById('calrun-status');
         status.innerText = 'SAMPLING…';
-        setTimeout(() => {
-            calCapturing = false;
-            const ptIdx = state.calPointsCaptured;
-            state.capturedPoints[ptIdx] = { idx: ptIdx + 1, px: state.calRunPx, dist: null, fov: null };
-            state.calPointsCaptured++;
-            status.innerText = 'SAVED pt ' + state.calPointsCaptured;
-            updateCalRunUI(state.calPointsCaptured + 1);
-            if (state.calPointsCaptured >= state.calPoints) {
-                calReview(); // all points done → go straight to review
-            }
-        }, 600);
-        sendCommand('calCapture', state.calRunPx);
+        status.style.color = 'var(--accent-green)';
+
+        const px = state.calRunPx;
+        _pendingCalCapture = {
+            px,
+            timer: setTimeout(() => {
+                _pendingCalCapture = null;
+                calCapturing = false;
+                status.innerText = 'CAPTURE TIMED OUT — retry';
+                status.style.color = '#FFA500';
+            }, 2000)
+        };
+        sendCommand('calCapture', px);
     }
 
     // ── Cal Review ──────────────────────────────────────────────────────────
@@ -3741,6 +3759,7 @@
         state.calPointsCaptured = calRevSel;
         state.calRunPx = 1920;
         updateCalRunUI(calRevSel + 1);
+        drawCalMiniGraph();
         goBack('screen-calrun');
     }
 
@@ -3753,6 +3772,7 @@
             state.capturedPoints.splice(state.calPointsCaptured, 1);
             state.calRunPx = 1920;
             updateCalRunUI(state.calPointsCaptured + 1);
+            drawCalMiniGraph();
             sendCommand('calUndoPoint', state.calPointsCaptured + 1);
         }
     }
@@ -4435,6 +4455,89 @@
         // ── n= annotation ──
         const nEl = document.getElementById('graph-n');
         if (nEl) nEl.innerText = 'n=' + pts.length + (state.isCustomCalib ? '' : ' (factory)');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MINI CAL GRAPH (inline on screen-calrun) — outlier sanity check
+    //   Hidden until ≥3 captured points; then auto-scales, fits a fresh
+    //   regression on every redraw, and highlights the most recent point.
+    // ─────────────────────────────────────────────────────────────────────────
+    function drawCalMiniGraph() {
+        const wrap = document.getElementById('calrun-mini-wrap');
+        if (!wrap) return;
+        const pts = (state.capturedPoints || []).filter(p => p && p.dist != null && p.fov != null);
+        if (pts.length < 3) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+
+        const canvas = document.getElementById('calrun-mini-graph');
+        const ctx = canvas.getContext('2d');
+        const CW = 224, CH = 62;
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const bufW = Math.round(CW * dpr), bufH = Math.round(CH * dpr);
+        if (canvas.width !== bufW || canvas.height !== bufH) {
+            canvas.width = bufW; canvas.height = bufH;
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, CW, CH);
+
+        const ML = 6, MR = 6, MT = 4, MB = 6;
+        const PW = CW - ML - MR, PH = CH - MT - MB;
+
+        const xs = pts.map(p => p.dist), ys = pts.map(p => p.fov);
+        const xMin = Math.min(...xs), xMax = Math.max(...xs);
+        const yMin = Math.min(...ys), yMax = Math.max(...ys);
+        const xPad = (xMax - xMin) * 0.08 || 5;
+        const yPad = (yMax - yMin) * 0.15 || 0.01;
+        const xa = xMin - xPad, xb = xMax + xPad;
+        const ya = yMin - yPad, yb = yMax + yPad;
+        const toX = x => ML + ((x - xa) / (xb - xa)) * PW;
+        const toY = y => MT + PH - ((y - ya) / (yb - ya)) * PH;
+
+        // Plot frame
+        ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
+        ctx.strokeRect(ML + 0.5, MT + 0.5, PW - 1, PH - 1);
+
+        // Least-squares slope/intercept on the running captures
+        let sx = 0, sy = 0, sxy = 0, sxx = 0;
+        for (const p of pts) { sx += p.dist; sy += p.fov; sxy += p.dist * p.fov; sxx += p.dist * p.dist; }
+        const n = pts.length;
+        const denom = (n * sxx - sx * sx);
+        const slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0;
+        const intc  = (sy - slope * sx) / n;
+
+        // Regression line
+        ctx.save();
+        ctx.beginPath(); ctx.rect(ML, MT, PW, PH); ctx.clip();
+        ctx.strokeStyle = '#008B8B'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(toX(xa), toY(slope * xa + intc));
+        ctx.lineTo(toX(xb), toY(slope * xb + intc));
+        ctx.stroke();
+        ctx.restore();
+
+        // Dots — most recent in yellow to flag where the last capture landed
+        const lastIdx = pts.length - 1;
+        pts.forEach((p, i) => {
+            const px = toX(p.dist), py = toY(p.fov);
+            const isLast = i === lastIdx;
+            ctx.fillStyle   = isLast ? '#FFD700' : '#00DD00';
+            ctx.strokeStyle = isLast ? '#000000' : '#FFFFFF';
+            ctx.lineWidth   = 1;
+            ctx.beginPath(); ctx.arc(px, py, isLast ? 3.5 : 2.5, 0, 2 * Math.PI);
+            ctx.fill(); ctx.stroke();
+        });
+
+        // Residual of latest point — quick "is this an outlier?" cue
+        const last = pts[lastIdx];
+        const resid = last.fov - (slope * last.dist + intc);
+        const residEl = document.getElementById('calrun-mini-resid');
+        if (residEl) {
+            const absR = Math.abs(resid);
+            residEl.innerText = 'Δ ' + (resid >= 0 ? '+' : '') + resid.toFixed(4);
+            residEl.style.color = absR > 0.03 ? '#FF6600'
+                                : absR > 0.015 ? '#FFA500'
+                                :                '#ADFF2F';
+        }
     }
 
 
@@ -5444,8 +5547,13 @@
         {
             const now = Date.now();
             if (!state._lastLiveRenderMs || now - state._lastLiveRenderMs >= 333) {
-                if (state._pendingDist !== undefined)
+                if (state._pendingDist !== undefined) {
                     document.getElementById('val-dist').innerText = state._pendingDist + ' mm';
+                    // Mirror to the cal-run live readout if that screen exists.
+                    // Distance only — no FOV (would just reflect the stale fit).
+                    const calLive = document.getElementById('calrun-live-dist');
+                    if (calLive) calLive.innerText = state._pendingDist + ' mm';
+                }
                 if (state._pendingFov !== undefined) {
                     const errCentimm = state._pendingFovErr;
                     const errSpan = errCentimm !== undefined
@@ -5559,10 +5667,54 @@
         }
 
         // ── Cal point result (device echoes captured dist+fov) ──
+        //   Two cases:
+        //   1. Web-initiated capture in flight (_pendingCalCapture set) — this
+        //      ack drives the UI advance: append the row, bump the counter,
+        //      redraw the mini-graph, navigate to review when the last point
+        //      lands. The optimistic dist:null row that used to flash through
+        //      the review list is gone.
+        //   2. Late ack, or a capture triggered from the TFT itself — just
+        //      back-fill the corresponding row if it exists.
         if (data.calPointResult !== undefined) {
-            const p = state.capturedPoints[data.calPointResult.idx];
-            if (p) { p.dist = data.calPointResult.dist; p.fov = data.calPointResult.fov; }
+            const r = data.calPointResult;
+            if (_pendingCalCapture) {
+                clearTimeout(_pendingCalCapture.timer);
+                const px = _pendingCalCapture.px;
+                _pendingCalCapture = null;
+                calCapturing = false;
+                state.capturedPoints[r.idx] = { idx: r.idx + 1, px, dist: r.dist, fov: r.fov };
+                state.calPointsCaptured = Math.max(state.calPointsCaptured, r.idx + 1);
+                const status = document.getElementById('calrun-status');
+                if (status) {
+                    status.innerText = 'SAVED pt ' + state.calPointsCaptured;
+                    status.style.color = 'var(--accent-green)';
+                }
+                updateCalRunUI(state.calPointsCaptured + 1);
+                drawCalMiniGraph();
+                if (state.calPointsCaptured >= state.calPoints) calReview();
+            } else {
+                const p = state.capturedPoints[r.idx];
+                if (p) { p.dist = r.dist; p.fov = r.fov; }
+                drawCalMiniGraph();
+            }
             if (state.screen === 'screen-calreview') renderCalReview();
+        }
+
+        // ── Cal capture refused (device-local cal is in progress) ──
+        //   Firmware emits {calRefused:"localBusy"} when calStart/calCapture
+        //   is rejected because the TFT user is mid-capture. Clear the pending
+        //   in-flight capture so the user can retry once the local flow ends.
+        if (data.calRefused !== undefined) {
+            if (_pendingCalCapture) {
+                clearTimeout(_pendingCalCapture.timer);
+                _pendingCalCapture = null;
+            }
+            calCapturing = false;
+            const status = document.getElementById('calrun-status');
+            if (status) {
+                status.innerText = 'BUSY ON DEVICE — try again';
+                status.style.color = '#FFA500';
+            }
         }
 
         // ── Memory ──

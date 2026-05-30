@@ -371,6 +371,14 @@ static bool inCalibFlow() {
            currentMode == CAL_SUCCESS  || currentMode == CAL_CONFIRM;
 }
 
+// Narrower predicate for remote-write contention: the TFT is actively in the
+// capture half of the cal flow, so a remote calStart/calCapture would race on
+// pointsCaptured/distPoints[]/fovPoints[]. CAL_SETTINGS/CAL_REVIEW/CAL_SUCCESS
+// don't mutate those arrays, so remote captures are still safe there.
+static bool isLocalCalActive() {
+    return currentMode == CAL_RUN || currentMode == CAL_SAMPLING;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WEBSOCKET EVENT HANDLER  (runs on async task — enqueue only, no I²C/TFT)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1476,6 +1484,15 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    would cause new HTML captures to mix into the old data and
     //    finalizeCalibration() would fire early.
     } else if (strcmp(key, "calStart") == 0) {
+        if (isLocalCalActive()) {
+            // Device user is mid-capture on the TFT — refuse silently rather
+            // than zero pointsCaptured underneath them.
+            StaticJsonDocument<96> nak;
+            nak["calRefused"] = "localBusy";
+            String out; serializeJson(nak, out);
+            wsServer.textAll(out);
+            return;
+        }
         pointsCaptured = 0;
 
     // ── Calibration: capture a point ─────────────────────────────────────────
@@ -1483,6 +1500,14 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    Formula: fov_mm = (demarcationDist / pixels) * sensorWidthPixels
     } else if (strcmp(key, "calCapture") == 0) {
         if (iVal < 1) return;  // guard against zero/negative pixel counts
+        if (isLocalCalActive()) {
+            // Refuse — TFT is mid-capture; UI would race on the cal arrays.
+            StaticJsonDocument<96> nak;
+            nak["calRefused"] = "localBusy";
+            String out; serializeJson(nak, out);
+            wsServer.textAll(out);
+            return;
+        }
         uint32_t st   = sensorState.load(std::memory_order_acquire);
         bool     valid = (st >> 31) & 1;
         float    dist  = (float)(st & 0x7FFFFFFF);          // mm integer from EMA
