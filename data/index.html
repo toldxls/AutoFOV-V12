@@ -1661,6 +1661,12 @@
     // can show what was peaking in that historical row, and a ring of frame
     // arrival times so the y-axis can label rows in seconds-ago.
     const VIB_WF_MAX_ROWS = 600;            // generous — actual rows depend on canvas H
+    // Rows are only pushed from the rAF loop, which the browser pauses while the
+    // tab is backgrounded — so no rows are captured during that time even though
+    // the WS stream stays live. If the gap since the newest row exceeds this, the
+    // history is treated as discontinuous and the heatmap restarts fresh (see the
+    // reset in vibDrawWaterfall). Well above the normal sub-second frame cadence.
+    const VIB_WF_GAP_MS = 4000;
     let vibWfRows = [];                     // [{t, frame:Float32Array}] newest first
     let vibWfCursorY = -1, vibWfCursorX = -1;  // hover position on waterfall canvas
     // Cross-pane linked cursor: hover on the waterfall draws a vertical line
@@ -2377,6 +2383,19 @@
         // and record this frame in a parallel ring so the hover readout can
         // resolve "row → wall-clock age + bin amplitude N seconds ago".
         if (newFrame && vibSpec && vibSpec.length) {
+            // Discontinuity guard: if the tab was backgrounded, the rAF loop was
+            // paused so no rows were captured — yet WS frames kept the stream
+            // "live". Without this, the next row glues onto minutes-old history:
+            // the time span balloons (2000 s+), the y-axis labels collapse and
+            // overlap, and hover reads ancient rows as if they were recent. We
+            // have no real data for the gap, so start the heatmap fresh — the
+            // RMS trend already survives this because it trims by wall-clock age.
+            if (vibWfRows.length &&
+                (performance.now() - vibWfRows[0].t) > VIB_WF_GAP_MS) {
+                bg.fillStyle = '#040d0b'; bg.fillRect(0, 0, n, H);
+                vibWfRows = [];
+                vibWfRefMax = 30;
+            }
             bg.drawImage(vibWfBack, 0, 0, n, H - 1, 0, 1, n, H - 1);
             vibWfRows.unshift({ t: performance.now(), frame: Float32Array.from(vibSpec) });
             while (vibWfRows.length > Math.max(VIB_WF_MAX_ROWS, H)) vibWfRows.pop();
