@@ -2448,7 +2448,15 @@
             // that has scrolled off-screen — don't let it stretch the span.
             const bottomIx = Math.min(vibWfRows.length - 1, H - 1);
             const oldestT = vibWfRows[bottomIx].t;
-            const spanSec = Math.max(1, (now - oldestT) / 1000);
+            let spanSec = Math.max(1, (now - oldestT) / 1000);
+            // Pin the span to the retention window once near-full. The trim
+            // (vibWfCaptureRow) uses capture-time now while this runs every rAF
+            // frame on render-time now, so the oldest row's age oscillates
+            // across exactly 60 s each capture cycle — which made the top
+            // ("-60s") label blink on/off at the ~5 Hz frame rate. Snapping to
+            // the window inside a guard band wider than that jitter holds it put.
+            const windowSec = VIB_WF_WINDOW_MS / 1000;
+            if (spanSec >= windowSec - 2) spanSec = windowSec;
             const step = spanSec <= 12 ? 2 : spanSec <= 30 ? 5 : spanSec <= 90 ? 10 : 20;
             // For each label seconds-ago value, find the row index whose
             // timestamp is closest to (now − sec). Row index == pixel-y.
