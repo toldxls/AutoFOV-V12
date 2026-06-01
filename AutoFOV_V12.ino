@@ -808,6 +808,11 @@ int currentLedDuty = TRIGGER_LED_DUTY;  // V17b: persisted LED brightness (0=off
 bool ledEnabled = false;                // V17b: whether trigger LED fires at all
 bool sensorSleeping = false;            // V17b: TOF sensor user-sleep state
 bool highReflMode   = false;            // High-Reflectivity mode: 8ms timing budget (vs 33ms default)
+// Sensor auto-power-off (1 h idle). sensorsAutoOff = both sensors currently
+// auto-powered-down; tofAutoSlept = WE slept the TOF (vs the user having it
+// manually slept already, which we must not auto-wake). See loop().
+bool sensorsAutoOff = false;
+bool tofAutoSlept   = false;
 Preferences preferences;
 
 float distPoints[20]; 
@@ -893,6 +898,10 @@ std::atomic<uint32_t> vibStackBlurHMax{0};
 std::atomic<uint32_t> vibSettleSeq{0};     // bumped when a decay analysis is published
 std::atomic<uint32_t> vibSettleMs{0};      // last single-pulse settle time, ms
 std::atomic<uint32_t> vibSettleTauMs{0};   // last fitted decay constant τ, ms
+// Auto-power-off request for the accelerometer. loop() (Core 1) sets it after
+// 1 h idle; vibTask (Core 0) owns the actual LSM6DSOX power-down/up so all IMU
+// register access stays on one core (see vibTask).
+std::atomic<bool> vibAutoOff{false};
 bool imuPresent = false;                   // set true once the LSM6DSOX answers
 uint8_t imuAddr = 0x6A;                    // resolved to 0x6A or 0x6B at init
 
@@ -1520,6 +1529,13 @@ const unsigned long DIM_MIN_MS    = 30UL * 1000UL;     // 30s minimum
 const unsigned long DIM_MAX_MS    = 30UL * 60UL * 1000UL;   // 30 min max
 const unsigned long SLEEP_MIN_MS  = 60UL * 1000UL;     // 1 min minimum
 const unsigned long SLEEP_MAX_MS  = 60UL * 60UL * 1000UL;   // 60 min max
+
+// Sensor auto-power-off: after this long with no activity at all (no device
+// touch, no camera-trigger pulse, no web menu/settings change — the 1 Hz web
+// latency ping does NOT count), the TOF sensor and the accelerometer are
+// powered down. The next interaction brings them back. Independent of, and
+// much longer than, the screen dim/sleep timeouts above.
+const unsigned long SENSOR_IDLE_OFF_MS = 30UL * 60UL * 1000UL;   // 30 minutes
 
 // Helper: format milliseconds as "Mm Ss" (or "Ss" if under a minute).
 static void formatDurationMs(unsigned long ms, char* out, size_t outSize) {
@@ -3598,10 +3614,45 @@ void vibTask(void *pvParameters) {
   // τ = 8 s: α = 1 - exp(-T_hop / τ), T_hop = VIB_HOP / VIB_SAMPLE_RATE.
   const float VIB_BASE_ALPHA =
       1.0f - expf(-((float)VIB_HOP / VIB_SAMPLE_RATE) / 8.0f);
+  bool imuPoweredDown = false;     // tracks the auto-off power state (this task only)
 
   for (;;) {
     vTaskDelay(period);
     if (!imuPresent || !vibReady) continue;
+
+    // ── Auto power-off (1 h idle) ──
+    // loop() sets vibAutoOff; we own every LSM6DSOX register write so the
+    // transition happens here, on this core. Power the accel down (ODR off,
+    // FIFO bypassed) while off; re-arm exactly like imuSetup() on wake, with
+    // the 30 ms filter-settle delay taken with the I²C mutex released.
+    bool wantOff = vibAutoOff.load(std::memory_order_acquire);
+    if (wantOff && !imuPoweredDown) {
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
+        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);     // FIFO → bypass (stop batching)
+        lsm.setAccelDataRate(LSM6DS_RATE_SHUTDOWN);   // accelerometer power-down
+        xSemaphoreGive(i2cMutex);
+      }
+      imuPoweredDown = true;
+      vibBandRms.store(0, std::memory_order_relaxed);     // publish "off" to UI/telemetry
+      vibHorizRms.store(0, std::memory_order_relaxed);
+      vibDominant.store(0, std::memory_order_relaxed);
+      vibState.store(0, std::memory_order_relaxed);
+    } else if (!wantOff && imuPoweredDown) {
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
+        lsm.setAccelDataRate(LSM6DS_RATE_416_HZ);
+        xSemaphoreGive(i2cMutex);
+      }
+      vTaskDelay(pdMS_TO_TICKS(30));                  // filter settle, mutex released
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
+        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);     // bypass → flush stale samples
+        delayMicroseconds(200);
+        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x06);     // back to continuous
+        xSemaphoreGive(i2cMutex);
+      }
+      imuPoweredDown = false;
+      newSamples = 0; dcPrimed = false; basisInited = false;   // re-prime cleanly
+    }
+    if (imuPoweredDown) continue;
 
     // ── Refresh the horizontal-plane basis from the current gravity vector ──
     // Combined horizontal power is basis-invariant, so any in-plane (e1,e2)
@@ -4263,6 +4314,41 @@ void loop() {
     } else if (!isScreenSleep && !isScreenDim && idle > dimTimeoutMs) {
       isScreenDim = true;
       analogWrite(LITE_PIN, DIM_BRIGHTNESS);
+    }
+
+    // ── Sensor auto-power-off after prolonged inactivity (1 h) ──
+    // Same idle clock as the screen timeouts. Powers down the TOF (reusing the
+    // manual-sleep stop path) and the accelerometer (vibTask honours vibAutoOff)
+    // once idle, and restores them the moment any activity resets lastActivityTime
+    // (touch, camera-trigger pulse, or a web menu/settings change).
+    if (!sensorsAutoOff && idle > SENSOR_IDLE_OFF_MS) {
+      if (!sensorSleeping) {                 // leave a user-slept TOF as-is
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+          sensor.VL53L4CX_StopMeasurement();
+          xSemaphoreGive(i2cMutex);
+        }
+        sensorSleeping = true;
+        sensorState.store(0, std::memory_order_release);
+        sensorHealth.store(0xFF000000UL, std::memory_order_release);
+        tofAutoSlept = true;
+      }
+      vibAutoOff.store(true, std::memory_order_release);   // vibTask powers the IMU down
+      sensorsAutoOff = true;
+      Serial.println("[idle] inactivity timeout — TOF + accelerometer powered down");
+    } else if (sensorsAutoOff && idle < SENSOR_IDLE_OFF_MS) {
+      if (tofAutoSlept) {                    // only wake the TOF if WE slept it
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+          applyHighReflConfig();
+          sensor.VL53L4CX_StartMeasurement();
+          xSemaphoreGive(i2cMutex);
+        }
+        sensorEmaReset.store(true, std::memory_order_release);
+        sensorSleeping = false;
+        tofAutoSlept = false;
+      }
+      vibAutoOff.store(false, std::memory_order_release);  // vibTask re-powers the IMU
+      sensorsAutoOff = false;
+      Serial.println("[idle] activity resumed — TOF + accelerometer back on");
     }
   }
 

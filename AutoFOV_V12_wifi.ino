@@ -1460,6 +1460,12 @@ static void handleWifiCommand(const char* key, const char* val) {
     float fVal = atof(val);
     int   iVal = atoi(val);
 
+    // Any genuine web interaction (menu nav, settings change, button) counts as
+    // activity and resets the idle clock that drives screen + sensor timeouts.
+    // The 1 Hz latency "ping" is excluded — the dashboard merely being open must
+    // not keep the sensors awake. Runs on Core 1 (wifiLoop), same as the timer.
+    if (strcmp(key, "ping") != 0) lastActivityTime = millis();
+
     // ── Objective ────────────────────────────────────────────────────────────
     if (strcmp(key, "obj") == 0) {
         if (iVal >= 1 && iVal <= 3) currentobj = iVal;
