@@ -1938,6 +1938,16 @@ static void handleWifiCommand(const char* key, const char* val) {
             }
         }
 
+    // ── Activity beacon ──────────────────────────────────────────────────────
+    //    The dashboard sends {"activity":1} on any pointerdown so a tap that
+    //    doesn't land on a control still counts as use. The whole effect is the
+    //    idle-clock reset at the top of this function (the lastActivityTime line
+    //    above the obj branch) — it wakes an auto-slept TOF/IMU and holds off
+    //    screen dim/sleep. Deliberately a no-op body; unlike "ping" it is NOT
+    //    excluded from that reset.
+    } else if (strcmp(key, "activity") == 0) {
+        // intentionally empty — lastActivityTime was already refreshed above
+
     // ── Latency ping ─────────────────────────────────────────────────────────
     //    The web dashboard sends {"ping":1} and times the round-trip to this
     //    {"pong":1} echo.  Routed through the normal command queue (same as

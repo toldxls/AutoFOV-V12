@@ -4054,6 +4054,23 @@
         document.addEventListener('pointercancel', release, { passive: true });
     })();
 
+    // ── Activity beacon ───────────────────────────────────────────────────────
+    //   Any pointer interaction in the dashboard — even a tap on empty space that
+    //   hits no control — counts as use and resets the device idle clock that
+    //   drives screen dim/sleep and the 1 h sensor auto-power-off. The 1 Hz
+    //   heartbeat ping is deliberately excluded from that clock (merely being
+    //   open must not keep sensors awake), so without this a bare click could
+    //   never wake an auto-slept sensor. Coarsely throttled — a beacon never
+    //   needs the slider-grade 100 ms cadence — and sendCommand() no-ops when the
+    //   socket is closed, so it costs nothing while disconnected.
+    let _lastActivityBeacon = 0;
+    document.addEventListener('pointerdown', () => {
+        const now = Date.now();
+        if (now - _lastActivityBeacon < 5000) return;   // at most one every 5 s
+        _lastActivityBeacon = now;
+        sendCommand('activity', 1);
+    }, { passive: true });
+
     function updateSettingsUI() {
         const pct = Math.round(state.brightness / 255 * 100);
         const w   = pct + '%';
