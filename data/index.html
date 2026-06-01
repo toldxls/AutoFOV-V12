@@ -1428,7 +1428,7 @@
 
     <!-- OTA reboot overlay — viewport-scoped so it veils the bezel, the device
          frame, and the connection-status row all at once.  Shown once the flash
-         hits 100% (or when the user triggers a rollback).  JS polls /token and
+         hits 100% (or when the user triggers a rollback).  JS polls /ping and
          reloads on first response from the new boot; manual button surfaces if
          the device hasn't returned in 20 s. -->
     <style>
@@ -1554,7 +1554,7 @@
         sourceLines: null, sourceKB: null, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
-        otaPassword: '',
+        hasCustomPw: 0,
         // isCustomCalib flag (false = factory defaults shown)
         isCustomCalib: false,
     };
@@ -4631,11 +4631,11 @@
     let wifiBase = '';
     let wifiIP = '';
     let reconnectAttempts = 0;
-    // Per-boot CSRF token from GET /token. Required as ?tok=… on the WS
-    // upgrade and as X-AutoFOV-Token on /cmd POST. Cross-origin pages can
-    // request /token but the browser blocks the body from JS without an
-    // Access-Control-Allow-Origin header — see the C++ comments in
-    // startFullServer().
+    // Per-boot session token from POST /login (issued only after the device
+    // password is verified). Required as ?tok=… on the WS upgrade and as
+    // X-AutoFOV-Token on /cmd, /state, etc. Cached across WS reconnects; only
+    // re-fetched (re-login) on a full connectWifi() cycle or a 403. See the C++
+    // comments in startFullServer().
     let csrfToken = '';
     // Single shared AudioContext for the stack-complete beep. Reused across
     // every stack so we never exhaust the browser's concurrent-context cap.
@@ -4871,11 +4871,8 @@
     async function otaFlash() {
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
-        if (!state.otaPassword) {
-            document.getElementById('ota-status').textContent =
-                'Waiting for device… check the WiFi screen on the device for the OTA password.';
-            return;
-        }
+        const otaPw = window.prompt('Re-enter the device password to flash firmware:');
+        if (otaPw === null) return;   // cancelled
         const file = input.files[0];
         const st   = document.getElementById('ota-status');
         otaLockControls();
@@ -4892,14 +4889,15 @@
             otaUnlockControls(); ghRestoreButton();
             return;
         }
-        doOtaUpload(file, file.name, sha);
+        doOtaUpload(file, file.name, sha, otaPw);
     }
 
     // Shared upload path — POSTs already-hashed firmware bytes to the device's
     // /ota endpoint.  Used by both the manual file picker (otaFlash) and the
     // GitHub updater (githubUpdate).  `blob` is a File or Blob; `sha` is its
-    // hex SHA-256, already computed and (for the GitHub path) verified.
-    function doOtaUpload(blob, filename, sha) {
+    // hex SHA-256, already computed and (for the GitHub path) verified; `pw` is
+    // the device password the user re-typed for this flash.
+    function doOtaUpload(blob, filename, sha, pw) {
         const st   = document.getElementById('ota-status');
         const fill = document.getElementById('ota-progress-fill');
         const pct  = document.getElementById('ota-progress-pct');
@@ -4920,7 +4918,7 @@
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
         xhr.setRequestHeader('X-AutoFOV-Token', csrfToken);
-        xhr.setRequestHeader('X-OTA-Password',  state.otaPassword);
+        xhr.setRequestHeader('X-OTA-Password',  b64pw(pw));
         xhr.setRequestHeader('X-OTA-SHA256',    sha);
 
         xhr.upload.onprogress = e => {
@@ -4967,7 +4965,7 @@
         xhr.onerror = () => {
             if (uploadComplete) {
                 // Device is rebooting — the overlay is already up via
-                // upload.onload, and otaShowRebootOverlay is polling /token
+                // upload.onload, and otaShowRebootOverlay is polling /ping
                 // and will reload as soon as the new firmware answers.
                 return;
             }
@@ -5112,11 +5110,9 @@
 
     async function githubUpdate() {
         if (ghPhase !== 'available' || !ghManifest) return;
-        if (!state.otaPassword) {
-            ghSetStatus('Device not ready — open this page from the device itself.',
-                        '#bf4a4a');
-            return;
-        }
+        const otaPw = window.prompt(
+            'Re-enter the device password to flash firmware from GitHub:');
+        if (otaPw === null) return;   // cancelled
         const manifest = ghManifest;
         const fail = msg => {
             const st = document.getElementById('ota-status');
@@ -5157,13 +5153,13 @@
         }
 
         // Verified — hand the bytes to the shared /ota upload path.
-        doOtaUpload(new Blob([bytes]), manifest.bin, sha);
+        doOtaUpload(new Blob([bytes]), manifest.bin, sha, otaPw);
     }
     // Reboot overlay + auto-reload.  After Update.end() the device runs
     // ESP.restart() ~500 ms later, then takes ~3–4 s to reconnect to WiFi.
-    // Polling /token is enough to know the new firmware is up — the endpoint
-    // returns immediately as soon as the server is listening, and the new boot
-    // generates a fresh CSRF token, so reloading is the cleanest re-sync.
+    // Polling the unauthenticated /ping is enough to know the new firmware is
+    // up — it returns as soon as the server is listening. Reloading then forces
+    // a fresh login against the new boot's session token (cleanest re-sync).
     let otaPollAbort = false;
     function otaHideRebootOverlay() {
         otaPollAbort = true;
@@ -5180,14 +5176,14 @@
         const start = Date.now();
         const manual = document.getElementById('ota-reboot-manual');
         // Give the chip ~2.5 s to actually reboot before we start probing — the
-        // first few /token hits would land on the OLD firmware otherwise and
+        // first few /ping hits would land on the OLD firmware otherwise and
         // tempt us to reload too early.
         setTimeout(otaPollDeviceBack, 2500);
         // Fallback: if it isn't back in 20 s, surface the manual reload button.
         setTimeout(() => { if (manual) manual.style.display = 'inline-block'; }, 20000);
         function otaPollDeviceBack() {
             if (otaPollAbort) return;
-            fetch((wifiBase || '') + '/token', { cache: 'no-store' })
+            fetch((wifiBase || '') + '/ping', { cache: 'no-store' })
                 .then(r => r.ok ? r.text() : Promise.reject(r.status))
                 .then(() => { if (!otaPollAbort) location.reload(); })
                 .catch(() => {
@@ -5274,16 +5270,30 @@
         status.innerText = 'WiFi: CONNECTING…'; status.style.color = '#FFA500';
         updateWifiZone(false);
         try {
-            // Fetch the CSRF token before anything that needs it. Cached across
-            // WS reconnects; only refetched on a full connectWifi() cycle.
-            const tr = await fetch(wifiBase + '/token', { signal: AbortSignal.timeout(3000) });
-            if (!tr.ok) throw new Error('token HTTP ' + tr.status);
-            csrfToken = (await tr.text()).trim();
-            if (!csrfToken) throw new Error('empty token');
-            const r = await fetch(wifiBase + '/state', {
+            // Log in to obtain the session token (cached across WS reconnects;
+            // only re-requested here on a full connectWifi() cycle or a 403).
+            if (!csrfToken && !(await doLogin())) {
+                status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
+                updateWifiZone(false);
+                return;
+            }
+            let r = await fetch(wifiBase + '/state', {
                 signal: AbortSignal.timeout(3000),
                 headers: { 'X-AutoFOV-Token': csrfToken }
             });
+            if (r.status === 401 || r.status === 403) {
+                // Token rejected (device rebooted / rotated it) — re-login once.
+                csrfToken = '';
+                if (!(await doLogin())) {
+                    status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
+                    updateWifiZone(false);
+                    return;
+                }
+                r = await fetch(wifiBase + '/state', {
+                    signal: AbortSignal.timeout(3000),
+                    headers: { 'X-AutoFOV-Token': csrfToken }
+                });
+            }
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
             applyFullState(data);
@@ -5294,6 +5304,46 @@
             status.innerText = 'WiFi: FAILED — ' + e.message; status.style.color = '#FF0000';
             updateWifiZone(false);
         }
+    }
+
+    // Base64-wrap a password so arbitrary characters survive an HTTP header
+    // value. (UTF-8 → base64; matches decodePwHeader() in the firmware.)
+    function b64pw(s) {
+        return btoa(String.fromCharCode.apply(null, new TextEncoder().encode(s)));
+    }
+
+    // Prompt for the device password and exchange it at POST /login for the
+    // per-boot session token (stored in csrfToken). Returns true on success.
+    // Re-prompts on a wrong password; bails on cancel or lockout.
+    async function doLogin() {
+        for (let i = 0; i < 4; i++) {
+            const pw = window.prompt(
+                (i ? 'Incorrect password — try again.\n\n' : '') +
+                'Enter the AutoFOV device password.\n\n' +
+                'If you didn\'t set your own, it\'s the "Login pw" shown on the ' +
+                'device\'s WiFi Info screen.');
+            if (pw === null) return false;            // cancelled
+            try {
+                const r = await fetch(wifiBase + '/login', {
+                    method: 'POST',
+                    headers: { 'X-Device-Password': b64pw(pw) },
+                    signal: AbortSignal.timeout(4000)
+                });
+                if (r.ok) {
+                    csrfToken = (await r.text()).trim();
+                    if (csrfToken) return true;
+                } else if (r.status === 429) {
+                    const secs = r.headers.get('Retry-After') || 'a while';
+                    alert('Too many failed attempts. Locked out for ' + secs + ' s.');
+                    return false;
+                }
+                // 401 → loop and re-prompt
+            } catch (e) {
+                alert('Login request failed: ' + e.message);
+                return false;
+            }
+        }
+        return false;
     }
 
     function openWebSocket(ip) {
@@ -5829,7 +5879,7 @@
             state.wifiSSID = data.wifiSSID;
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
         }
-        if (data.otaPassword !== undefined) state.otaPassword = data.otaPassword;
+        if (data.hasCustomPw !== undefined) state.hasCustomPw = data.hasCustomPw;
         if (data.ntfyTopic !== undefined) {
             state.ntfyTopic = data.ntfyTopic;
             if (state.screen === 'screen-autoremote') ntfyScreenInit();

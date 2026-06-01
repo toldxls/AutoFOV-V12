@@ -568,6 +568,7 @@ int         wifiGetRSSI();
 String      wifiGetIP();
 String      wifiGetSSID();
 const char* wifiGetOtaPassword();
+bool        wifiHasCustomPassword();
 void   drawWifiIndicator();   // defined below — forward-decl needed by wifi tab calls
 
 // V11 polish: corner radius for buttons and slider rails.
@@ -3168,10 +3169,18 @@ void refreshWifiInfoValues() {
     tft.setTextColor(themedText(COLOR_DARKGREY));
     String hint = "http://" + ip;
     tft.setCursor(10, 175); tft.print(hint);
-    // Show OTA password so user can flash firmware from the web UI
+    // Login password (also required to flash firmware). Show the auto-generated
+    // default so the user can read it off the device; once they've set their own
+    // custom password, don't display the secret — point them at the BOOT reset.
     tft.setTextColor(COLOR_ORANGE);
     tft.setCursor(10, 189);
-    tft.print("OTA pw: "); tft.print(wifiGetOtaPassword());
+    if (wifiHasCustomPassword()) {
+      tft.print("Login pw: custom");
+      tft.setTextColor(themedText(COLOR_DARKGREY));
+      tft.setCursor(10, 199); tft.print("(hold BOOT at power-on to reset)");
+    } else {
+      tft.print("Login pw: "); tft.print(wifiGetOtaPassword());
+    }
   } else if (wifiIsPortal()) {
     tft.setTextColor(COLOR_ORANGE);
     tft.setCursor(10, 175); tft.print("1. Join 'AutoFOV-Setup' with password");

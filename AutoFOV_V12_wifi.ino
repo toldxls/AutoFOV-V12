@@ -48,6 +48,7 @@
 #include <HTTPClient.h>
 #include <esp_ota_ops.h>      // esp_ota_get_running_partition() — running OTA slot
 #include <mbedtls/sha256.h>   // end-to-end OTA integrity check
+#include <mbedtls/base64.h>   // decode base64-wrapped device passwords from headers
 #include "data/web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,14 +64,20 @@ static const uint32_t  RECONNECT_INTERVAL_MS = 30000UL;  // retry every 30 s
 static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor push — matches VL53L4CX timing budget 1:1
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
-static char            otaPassword[13]     = {0};            // generated on first boot, stored in NVS "wifi"/"otapw"
-// Per-boot CSRF token. Required (via X-AutoFOV-Token header) on /cmd and
-// /forget-wifi, and (via ?tok= query string) on the WebSocket upgrade. The
-// dashboard fetches it once over HTTP from /token and reuses it on reconnects.
-// Cross-origin sites can request /token but the browser blocks the response
-// body without a matching Access-Control-Allow-Origin header — see the
-// startFullServer() CORS notes below.
+static char            otaPassword[13]     = {0};            // auto-generated on first boot, NVS "wifi"/"otapw" — the DEFAULT login password shown on the TFT
+// Optional user-set device password (NVS "wifi"/"devpw"). When non-empty it
+// overrides otaPassword as the login/OTA credential; empty means "use the
+// default". The effective password is never displayed or sent over the wire.
+static char            devPassword[64]     = {0};
+// Per-boot session token. Issued only by POST /login after the device password
+// is verified; required as X-AutoFOV-Token on /cmd, /state, /forget-wifi,
+// /vibsig and as ?tok= on the WebSocket upgrade. Because /login gates issuance,
+// a client without the password never obtains a token — this is the real auth
+// boundary, not just an anti-CSRF measure. See startFullServer().
 static char            csrfToken[17]       = {0};
+// Brute-force guard for /login: escalating lockout after repeated failures.
+static uint8_t         loginFailCount      = 0;
+static uint32_t        loginLockoutUntilMs = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -177,6 +184,12 @@ static const char PORTAL_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <label>Gateway <small style=color:#555>(optional — auto-derived if blank)</small></label>
   <input type=text name=gw placeholder="192.168.1.1"
          pattern="^$|^(\d{1,3}\.){3}\d{1,3}$">
+  <hr class=sep>
+  <label>Device password <small style=color:#555>(optional)</small></label>
+  <input type=password name=devpw placeholder="Set a login password"
+         autocomplete=new-password minlength=6 maxlength=63>
+  <p class=hint>Required to open the dashboard and flash firmware. Leave blank to
+     use the random code shown on the device screen. Minimum 6 characters.</p>
   <button type=submit>SAVE &amp; CONNECT</button>
 </form>
 </body></html>)html";
@@ -259,6 +272,37 @@ static void generateCsrfToken() {
     csrfToken[16] = '\0';
 }
 
+// The login/OTA credential: the user's custom password when set, else the
+// auto-generated default shown on the TFT.
+static const char* effectivePassword() {
+    return devPassword[0] ? devPassword : otaPassword;
+}
+
+// Decode a base64 header value into a String (≤63 chars in). The dashboard
+// base64-wraps the password so arbitrary characters (spaces, UTF-8) survive an
+// HTTP header value intact. Returns "" on empty/oversized/malformed input.
+static String decodePwHeader(const String& in) {
+    if (!in.length() || in.length() > 88) return String();   // 63 bytes → ≤88 b64 chars
+    uint8_t buf[65];
+    size_t outLen = 0;
+    if (mbedtls_base64_decode(buf, sizeof(buf) - 1, &outLen,
+            (const unsigned char*)in.c_str(), in.length()) != 0)
+        return String();
+    buf[outLen] = '\0';
+    return String((char*)buf);
+}
+
+// Length-independent, value constant-time string compare — avoids leaking the
+// password length or a per-character early-out via response timing.
+static bool secureEquals(const char* a, const char* b) {
+    size_t la = strlen(a), lb = strlen(b);
+    uint8_t diff = (uint8_t)(la ^ lb);
+    size_t n = la > lb ? la : lb;
+    for (size_t i = 0; i < n; i++)
+        diff |= (uint8_t)(a[i % (la ? la : 1)] ^ b[i % (lb ? lb : 1)]);
+    return diff == 0;
+}
+
 // Signature names from the web must match /vibsig/*.bin's filename whitelist so
 // nothing from the network can write outside /vibsig/. `allowDotBin` is true
 // when the caller passes a full "name.bin" (vibDelSig); false for the bare
@@ -315,8 +359,7 @@ static void startStaMode(const String& ssid, const String& pass,
                           const String& staticIP, const String& gateway);
 static void startFullServer();
 static void handleWifiCommand(const char* key, const char* val);
-static void buildFullStateJson(String& out, bool includeCalGraph = true,
-                                              bool includeOtaPassword = false);
+static void buildFullStateJson(String& out, bool includeCalGraph = true);
 static void buildFastTelemJson(String& out);
 static void pushVibSpectrumBinary();             // V12 — binary WS frame
 static void buildSlowTelemJson(String& out);
@@ -396,7 +439,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // atomic on Xtensa so this won't crash, but a rare connect-time snapshot
         // may be slightly inconsistent. Acceptable for a one-shot push.
         String out;
-        buildFullStateJson(out, /*includeCalGraph=*/true, /*includeOtaPassword=*/true);
+        buildFullStateJson(out, /*includeCalGraph=*/true);
         client->text(out);
         Serial.printf("[WS] full-state push: %u bytes\n", out.length());
         Serial.flush();
@@ -480,7 +523,12 @@ void wifiSetup() {
     String gateway  = wifiPrefs.getString("gw",    "");
     ntfyTopic       = wifiPrefs.getString("ntfy",  "");
     String savedOta = wifiPrefs.getString("otapw", "");
+    String savedDev = wifiPrefs.getString("devpw", "");
     wifiPrefs.end();
+
+    // Optional user-set login password (overrides the auto default). Bounded by
+    // sizeof(devPassword)-1; left empty when the user never set one.
+    savedDev.toCharArray(devPassword, sizeof(devPassword));
 
     // Generate a per-device OTA password on first boot; persist it for future boots.
     if (savedOta.length() == 12) {
@@ -834,6 +882,10 @@ static void startPortalMode() {
                           ? req->getParam("ip",   true)->value() : "";
             String gw   = req->hasParam("gw",   true)
                           ? req->getParam("gw",   true)->value() : "";
+            // Device login password: kept verbatim (no trim) so leading/trailing
+            // characters the user intended are preserved. Empty = use the default.
+            String devpw = req->hasParam("devpw", true)
+                          ? req->getParam("devpw", true)->value() : "";
 
             ssid.trim(); pass.trim(); ip.trim(); gw.trim();
             if (ssid.isEmpty()) { req->send(400, "text/plain", "SSID required"); return; }
@@ -844,6 +896,11 @@ static void startPortalMode() {
             if (ssid.length() > 32 || pass.length() > 63 ||
                 ip.length() > 15   || gw.length()   > 15) {
                 req->send(400, "text/plain", "Input too long");
+                return;
+            }
+            // Device password: blank (use default) or 6–63 chars.
+            if (devpw.length() && (devpw.length() < 6 || devpw.length() > 63)) {
+                req->send(400, "text/plain", "Device password must be 6–63 characters");
                 return;
             }
 
@@ -858,6 +915,10 @@ static void startPortalMode() {
             wifiPrefs.putString("pass", pass);
             wifiPrefs.putString("ip",   ip);
             wifiPrefs.putString("gw",   gw);
+            // Store or clear the custom login password (blank → fall back to the
+            // auto-generated default shown on the TFT).
+            if (devpw.length()) wifiPrefs.putString("devpw", devpw);
+            else                wifiPrefs.remove("devpw");
             // Drop any cached BSSID/channel from older firmware revisions.
             wifiPrefs.remove("bssid");
             wifiPrefs.remove("chan");
@@ -966,6 +1027,33 @@ static void startStaMode(const String& ssid, const String& pass,
                             8192, args, 1, NULL, 0);
 }
 
+// ── Request gates (STA mode) ─────────────────────────────────────────────────
+// DNS-rebinding defense: only honour requests whose Host header is one we
+// actually serve under (our STA IP, the mDNS name, or the AP IP). A rebinding
+// page reaches us by IP but carries the attacker's own hostname in Host, so it
+// fails here. Port suffix is stripped before comparison. The captive portal
+// deliberately does NOT use this — it must answer for any Host so the OS
+// portal-detector fires.
+static bool hostAllowed(AsyncWebServerRequest* req) {
+    String h = req->host();
+    int colon = h.indexOf(':');
+    if (colon >= 0) h = h.substring(0, colon);
+    h.toLowerCase();
+    return h == WiFi.localIP().toString()
+        || h == "autofov.local"
+        || h == "autofov"
+        || h == AP_IP.toString();
+}
+// Per-boot session token, issued only by POST /login.
+static bool tokenOk(AsyncWebServerRequest* req) {
+    return req->hasHeader("X-AutoFOV-Token") &&
+           req->header("X-AutoFOV-Token") == String(csrfToken);
+}
+// Standard gate for reading/state-changing endpoints: right Host + valid token.
+static bool apiAuthed(AsyncWebServerRequest* req) {
+    return hostAllowed(req) && tokenOk(req);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FULL HTTP + WEBSOCKET SERVER  (STA mode)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -975,42 +1063,82 @@ static void startFullServer() {
     // has already enabled the RF subsystem, so esp_random() is HW-backed here.
     generateCsrfToken();
 
-    // ── CORS policy ─────────────────────────────────────────────────────────
-    // We DO NOT add any Access-Control-Allow-Origin headers. The dashboard is
-    // served from the device itself (same-origin), so it doesn't need CORS.
-    // Withholding the header is what blocks cross-origin pages from reading
-    // the CSRF token via /token or smuggling state changes into /cmd:
-    //   * /token: cross-origin GET succeeds, response body is hidden from JS
-    //   * /cmd:   Content-Type: application/json triggers a preflight that
-    //             fails without Allow-Origin, so the POST is never sent
-    //   * /forget-wifi: requires X-AutoFOV-Token (custom header → preflight)
-    //   * /ota:   requires X-AutoFOV-Token AND X-OTA-Password (both gated)
-    //   * WS:     filter requires ?tok= matching csrfToken (see below)
-    // Earlier firmware advertised Access-Control-Allow-Origin: * which let any
-    // visited webpage drive the device while the user was on the same LAN.
+    // ── Auth / CORS policy ───────────────────────────────────────────────────
+    // The session token is no longer handed out for free: POST /login verifies
+    // the device password (custom, or the auto default shown on the TFT) before
+    // issuing it. A client without the password — browser or raw socket — never
+    // gets a token, so it can't reach /state, /cmd, the WebSocket, or /ota. That
+    // makes the password the real authentication boundary, not just anti-CSRF.
+    // Layered with it:
+    //   * No Access-Control-Allow-Origin header is ever added, so cross-origin
+    //     browser JS still can't read /login's response even on the same LAN.
+    //   * hostAllowed() rejects mismatched Host headers, defeating DNS rebinding.
+    //   * /ota additionally requires the device password re-typed (X-OTA-Password).
+    // Endpoint gates:
+    //   * /login:       hostAllowed + correct password → returns the token
+    //   * /state /cmd /forget-wifi /vibsig: apiAuthed (host + token)
+    //   * /ota:         apiAuthed + X-OTA-Password == device password
+    //   * WS:           hostAllowed + ?tok= matching csrfToken (below)
+    //   * /ping:        hostAllowed only — liveness, reveals nothing
 
-    // WS upgrade gate — reject every handshake that doesn't carry our token in
-    // the query string. Browser-based attackers can't read /token cross-origin,
-    // so they can't supply the value here. setFilter() runs before WS_EVT_CONNECT
+    // WS upgrade gate — reject any handshake without the right Host and the
+    // session token in the query string. setFilter() runs before WS_EVT_CONNECT
     // so unauthenticated clients never receive the full-state push.
     wsServer.setFilter([](AsyncWebServerRequest* req) {
-        if (!req->hasParam("tok")) return false;
+        if (!hostAllowed(req) || !req->hasParam("tok")) return false;
         return req->getParam("tok")->value() == String(csrfToken);
     });
     wsServer.onEvent(onWsEvent);
     httpServer.addHandler(&wsServer);
 
-    // GET /token — returns the per-boot CSRF token. Cross-origin sites can
-    // issue this request but their JS can't read the response body without an
-    // Access-Control-Allow-Origin header (which we never add).
-    httpServer.on("/token", HTTP_GET, [](AsyncWebServerRequest* req) {
+    // POST /login — verify the device password, then issue the per-boot session
+    // token. Rate-limited with an escalating lockout so a weak password can't be
+    // brute-forced over the LAN. The password arrives in X-Device-Password.
+    httpServer.on("/login", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        uint32_t now = millis();
+        if (loginLockoutUntilMs && (int32_t)(loginLockoutUntilMs - now) > 0) {
+            uint32_t secs = (loginLockoutUntilMs - now + 999) / 1000;
+            AsyncWebServerResponse* r = req->beginResponse(
+                429, "text/plain", "Too many attempts; wait " + String(secs) + "s");
+            r->addHeader("Retry-After", String(secs));
+            req->send(r);
+            return;
+        }
+        String pw = req->hasHeader("X-Device-Password")
+                    ? decodePwHeader(req->header("X-Device-Password")) : String("");
+        if (!secureEquals(pw.c_str(), effectivePassword())) {
+            if (loginFailCount < 255) loginFailCount++;
+            if (loginFailCount >= 5) {
+                // 5 fails → 15 s, doubling to a 4 min cap; persists until success.
+                uint8_t shift = loginFailCount - 5;
+                if (shift > 4) shift = 4;     // 15 s << 4 = 240 s; also bounds the shift
+                loginLockoutUntilMs = now + (15000UL << shift);
+            }
+            Serial.printf("[LOGIN] failed attempt #%u\n", loginFailCount);
+            req->send(401, "text/plain", "Unauthorized");
+            return;
+        }
+        loginFailCount = 0;
+        loginLockoutUntilMs = 0;
         AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", csrfToken);
+        resp->addHeader("Cache-Control", "no-store");
+        req->send(resp);
+    });
+
+    // GET /ping — unauthenticated liveness probe (host-gated). The dashboard
+    // polls it after an OTA reboot to know when the device is back. Returns
+    // nothing sensitive; never the token.
+    httpServer.on("/ping", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", "ok");
         resp->addHeader("Cache-Control", "no-store");
         req->send(resp);
     });
 
     // Serve HTML from firmware PROGMEM (gzip — regenerate web_ui.h via tools/embed_html.py)
     httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
         AsyncWebServerResponse* resp = req->beginResponse_P(
             200, "text/html", WEB_UI_HTML_GZ, WEB_UI_HTML_GZ_LEN);
         resp->addHeader("Content-Encoding", "gzip");
@@ -1024,8 +1152,7 @@ static void startFullServer() {
     // where a raw HTTP client could read calibration, SSID/RSSI, and live
     // sensor values without authenticating.
     httpServer.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
-        if (!req->hasHeader("X-AutoFOV-Token") ||
-            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+        if (!apiAuthed(req)) {
             req->send(403, "text/plain", "Forbidden");
             return;
         }
@@ -1047,9 +1174,8 @@ static void startFullServer() {
         [](AsyncWebServerRequest* req) { /* headers only — body handled below */ },
         nullptr,
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
-            // CSRF gate — see /token comment above.
-            if (!req->hasHeader("X-AutoFOV-Token") ||
-                req->header("X-AutoFOV-Token") != String(csrfToken)) {
+            // Auth gate — host + session token (see startFullServer notes).
+            if (!apiAuthed(req)) {
                 req->send(403, "text/plain", "Forbidden");
                 return;
             }
@@ -1088,8 +1214,7 @@ static void startFullServer() {
     // and ESP.restart() (core-agnostic). The delay() blocks the async task but
     // we're about to reboot, so request servicing is irrelevant.
     httpServer.on("/forget-wifi", HTTP_POST, [](AsyncWebServerRequest* req) {
-        if (!req->hasHeader("X-AutoFOV-Token") ||
-            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+        if (!apiAuthed(req)) {
             req->send(403, "text/plain", "Forbidden");
             return;
         }
@@ -1110,8 +1235,7 @@ static void startFullServer() {
         // Same CSRF gate as /cmd — the signature blobs aren't sensitive on
         // their own, but the auth model should be consistent across endpoints
         // so a future feature added here doesn't inherit an open door.
-        if (!req->hasHeader("X-AutoFOV-Token") ||
-            req->header("X-AutoFOV-Token") != String(csrfToken)) {
+        if (!apiAuthed(req)) {
             req->send(403, "text/plain", "Forbidden");
             return;
         }
@@ -1180,16 +1304,16 @@ static void startFullServer() {
             };
 
             if (!index) {
-                // Two gates: the per-boot CSRF token (defends against a same-LAN
-                // attacker who only has browser context — they can't read /token
-                // cross-origin) AND the persistent OTA password (defends against
-                // anyone who has the token but lacks the password the user typed
-                // / read off the WiFi Info screen). Both must match.
-                bool tokOk = req->hasHeader("X-AutoFOV-Token") &&
-                             req->header("X-AutoFOV-Token") == String(csrfToken);
-                bool pwOk  = req->hasHeader("X-OTA-Password") &&
-                             req->header("X-OTA-Password") == String(otaPassword);
-                if (!tokOk || !pwOk) {
+                // Three gates: right Host (DNS-rebinding defense) + the per-boot
+                // session token (already proves login) + the device password
+                // re-typed here. Re-typing the password on this irreversible,
+                // persistent action means a stolen mid-session token alone can't
+                // flash. The password matches effectivePassword() — the user's
+                // custom one if set, else the default shown on the WiFi Info screen.
+                bool pwOk = req->hasHeader("X-OTA-Password") &&
+                            secureEquals(decodePwHeader(req->header("X-OTA-Password")).c_str(),
+                                         effectivePassword());
+                if (!hostAllowed(req) || !tokenOk(req) || !pwOk) {
                     markAborted();
                     req->send(401, "text/plain", "Unauthorized");
                     return;
@@ -1787,7 +1911,7 @@ static void handleWifiCommand(const char* key, const char* val) {
 // Full state — sent on GET /state and when a new WebSocket client connects.
 // Pass includeCalGraph=false on reconnect / periodic sends; true only on new-client
 // connect, after calibration changes, and on explicit /state requests.
-static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOtaPassword) {
+static void buildFullStateJson(String& out, bool includeCalGraph) {
     // Read all atomics in one burst
     uint32_t st  = sensorState.load(std::memory_order_acquire);
     uint32_t hst = sensorHealth.load(std::memory_order_acquire);
@@ -1912,12 +2036,11 @@ static void buildFullStateJson(String& out, bool includeCalGraph, bool includeOt
     doc["wifiSSID"]   = WiFi.SSID();
     doc["wifiRSSI"]   = (int)WiFi.RSSI();
     doc["ntfyTopic"]  = ntfyTopic;
-    // OTA password ships only when an authenticated transport asks for it
-    // (true is passed only from the WS connect path, which is itself gated by
-    // wsServer.setFilter on the CSRF token). The unauthenticated GET /state
-    // route uses the default false and never sees it. Previously this rode the
-    // 5 s slow-telem broadcast and leaked to anyone who could open a socket.
-    if (includeOtaPassword) doc["otaPassword"] = otaPassword;
+    // The login/OTA password is NEVER serialized here. The dashboard no longer
+    // needs it (the user types it at login, and again to flash); the default is
+    // shown on the device's WiFi Info screen. Whether a custom one is set is the
+    // only thing exposed, so the UI can label its prompts.
+    doc["hasCustomPw"] = wifiHasCustomPassword() ? 1 : 0;
 
     // ── Vibration signatures ─────────────────────────────────────────────────
     // Include the saved signature filename list so the web client shows them
@@ -2119,7 +2242,8 @@ static void buildSlowTelemJson(String& out) {
 bool        wifiIsConnected()    { return wifiConnected; }
 bool        wifiIsPortal()       { return wifiServerMode == WMODE_PORTAL; }
 const char* wifiGetPortalCode()  { return portalCode; }
-const char* wifiGetOtaPassword() { return otaPassword; }
+const char* wifiGetOtaPassword() { return otaPassword; }   // the auto default (TFT display only)
+bool wifiHasCustomPassword()     { return devPassword[0] != 0; }
 int    wifiGetRSSI()     { return wifiConnected ? (int)WiFi.RSSI() : 0; }
 String wifiGetIP()       { if (wifiServerMode == WMODE_PORTAL) return AP_IP.toString();
                            return wifiConnected ? WiFi.localIP().toString() : ""; }
