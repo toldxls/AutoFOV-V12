@@ -1132,12 +1132,16 @@
 
                 <!-- Manual reconnect (override auto-reconnect timer immediately) -->
                 <div class="gfx-btn"
-                     style="left:10px; top:210px; width:105px; height:38px; background:#00968C; font-size:11px;"
+                     style="left:10px; top:210px; width:68px; height:38px; background:#00968C; font-size:10px;"
                      onclick="connectWifi()">RECONNECT</div>
                 <!-- Intentional disconnect (stops auto-reconnect) -->
                 <div class="gfx-btn"
-                     style="left:125px; top:210px; width:105px; height:38px; background:#780000; font-size:11px;"
+                     style="left:84px; top:210px; width:68px; height:38px; background:#780000; font-size:10px;"
                      onclick="disconnectWifi()">DISCONNECT</div>
+                <!-- Forget the remembered login token on this browser -->
+                <div class="gfx-btn"
+                     style="left:158px; top:210px; width:72px; height:38px; background:#3a2a1a; border:1px solid #7a5a2a; font-size:10px;"
+                     onclick="signOut()">SIGN OUT</div>
 
                 <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
                 <div class="gfx-btn"
@@ -1457,6 +1461,51 @@
         Flashing complete.<br>Waiting for device to come back online…
       </div>
       <div id="ota-reboot-manual" onclick="location.reload()">REFRESH NOW</div>
+    </div>
+
+    <!-- Login overlay — viewport-scoped (outside the bezel) like the OTA overlay.
+         Replaces the native prompt() so we can offer a "keep me signed in" toggle.
+         When checked, the per-boot session token is cached in localStorage and
+         reused on reopen until the device reboots (which rotates it) or SIGN OUT. -->
+    <style>
+      #login-overlay { display:none; position:fixed; inset:0; z-index:650;
+        background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
+        -webkit-backdrop-filter:blur(4px); flex-direction:column;
+        align-items:center; justify-content:center; padding:0 24px;
+        color:#cfe7df; font-family:monospace; text-align:center; }
+      #login-overlay.open { display:flex; }
+      #login-overlay .lgTitle { font-size:20px; font-weight:bold; color:#00c8b4;
+        letter-spacing:3px; margin-bottom:6px; }
+      #login-overlay .lgSub { font-size:11px; color:#7ab4a2; line-height:1.5;
+        margin-bottom:20px; max-width:300px; }
+      #login-form { display:flex; flex-direction:column; align-items:center;
+        width:100%; }
+      #login-pw { width:100%; max-width:280px; padding:11px; font-size:15px;
+        font-family:monospace; background:#0c2b2e; border:1px solid #2a5e58;
+        border-radius:4px; color:#e7f5ee; margin-bottom:14px; text-align:center; }
+      #login-pw:focus { outline:none; border-color:#00c8b4; }
+      #login-remember { display:flex; align-items:center; gap:8px; font-size:12px;
+        color:#9fe6cf; margin-bottom:18px; cursor:pointer; user-select:none; }
+      #login-remember input { width:16px; height:16px; accent-color:#00c8b4; }
+      #login-go { width:100%; max-width:280px; padding:12px; font-size:14px;
+        font-weight:bold; letter-spacing:1px; background:#1a4a3a;
+        border:1px solid #3ddb7a; border-radius:4px; color:#cfe7df; cursor:pointer; }
+      #login-go:active { filter:brightness(1.3); }
+      #login-go:disabled { opacity:0.5; cursor:default; }
+      #login-err { font-size:12px; min-height:16px; margin-top:14px; }
+    </style>
+    <div id="login-overlay">
+      <div class="lgTitle">AutoFOV</div>
+      <div class="lgSub">Enter the device password.<br>If you didn't set your own,
+        it's the "Login pw" shown on the device's WiFi Info screen.</div>
+      <form id="login-form" onsubmit="loginSubmit(); return false;">
+        <input id="login-pw" type="password" placeholder="Device password"
+               autocomplete="current-password">
+        <label id="login-remember"><input type="checkbox" id="login-remember-cb">
+          Keep me signed in on this device</label>
+        <button id="login-go" type="submit">SIGN IN</button>
+      </form>
+      <div id="login-err"></div>
     </div>
 
     <div id="vib-panel">
@@ -5270,6 +5319,10 @@
         status.innerText = 'WiFi: CONNECTING…'; status.style.color = '#FFA500';
         updateWifiZone(false);
         try {
+            // Reuse a remembered token (from a prior "keep me signed in") before
+            // prompting. If the device rebooted it'll be rejected below and we
+            // fall back to the login overlay.
+            if (!csrfToken) csrfToken = localStorage.getItem('afovToken') || '';
             // Log in to obtain the session token (cached across WS reconnects;
             // only re-requested here on a full connectWifi() cycle or a 403).
             if (!csrfToken && !(await doLogin())) {
@@ -5282,8 +5335,10 @@
                 headers: { 'X-AutoFOV-Token': csrfToken }
             });
             if (r.status === 401 || r.status === 403) {
-                // Token rejected (device rebooted / rotated it) — re-login once.
+                // Token rejected (device rebooted / rotated it, or signed out) —
+                // drop the stale cached token and re-login once.
                 csrfToken = '';
+                localStorage.removeItem('afovToken');
                 if (!(await doLogin())) {
                     status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
                     updateWifiZone(false);
@@ -5312,38 +5367,86 @@
         return btoa(String.fromCharCode.apply(null, new TextEncoder().encode(s)));
     }
 
-    // Prompt for the device password and exchange it at POST /login for the
-    // per-boot session token (stored in csrfToken). Returns true on success.
-    // Re-prompts on a wrong password; bails on cancel or lockout.
-    async function doLogin() {
-        for (let i = 0; i < 4; i++) {
-            const pw = window.prompt(
-                (i ? 'Incorrect password — try again.\n\n' : '') +
-                'Enter the AutoFOV device password.\n\n' +
-                'If you didn\'t set your own, it\'s the "Login pw" shown on the ' +
-                'device\'s WiFi Info screen.');
-            if (pw === null) return false;            // cancelled
-            try {
-                const r = await fetch(wifiBase + '/login', {
-                    method: 'POST',
-                    headers: { 'X-Device-Password': b64pw(pw) },
-                    signal: AbortSignal.timeout(4000)
-                });
-                if (r.ok) {
-                    csrfToken = (await r.text()).trim();
-                    if (csrfToken) return true;
-                } else if (r.status === 429) {
-                    const secs = r.headers.get('Retry-After') || 'a while';
-                    alert('Too many failed attempts. Locked out for ' + secs + ' s.');
-                    return false;
+    // ── Login (overlay-based, with "keep me signed in") ─────────────────────
+    // doLogin() shows the overlay and resolves true once the user authenticates
+    // (the dashboard is unusable without a token, so there is no cancel path).
+    // loginSubmit() does the /login round-trip; on success it caches the token
+    // in localStorage only when the checkbox is set — that token is reused on
+    // reopen until the device reboots (rotating it) or the user signs out.
+    let _loginPromise = null, _loginResolve = null;
+    function doLogin() {
+        if (_loginPromise) return _loginPromise;        // already showing
+        _loginPromise = new Promise(res => { _loginResolve = res; });
+        const ov  = document.getElementById('login-overlay');
+        const pw  = document.getElementById('login-pw');
+        const cb  = document.getElementById('login-remember-cb');
+        const err = document.getElementById('login-err');
+        pw.value = '';
+        err.textContent = '';
+        cb.checked = localStorage.getItem('afovRemember') === '1';
+        ov.classList.add('open');
+        setTimeout(() => pw.focus(), 50);
+        return _loginPromise;
+    }
+
+    async function loginSubmit() {
+        const pw  = document.getElementById('login-pw');
+        const cb  = document.getElementById('login-remember-cb');
+        const err = document.getElementById('login-err');
+        const go  = document.getElementById('login-go');
+        if (!pw.value) { err.style.color = '#ff6b6b'; err.textContent = 'Enter a password.'; return; }
+        go.disabled = true;
+        err.style.color = '#7ab4a2'; err.textContent = 'Signing in…';
+        try {
+            const r = await fetch(wifiBase + '/login', {
+                method: 'POST',
+                headers: { 'X-Device-Password': b64pw(pw.value) },
+                signal: AbortSignal.timeout(4000)
+            });
+            if (r.ok) {
+                const tok = (await r.text()).trim();
+                if (tok) {
+                    csrfToken = tok;
+                    if (cb.checked) {
+                        localStorage.setItem('afovToken', tok);
+                        localStorage.setItem('afovRemember', '1');
+                    } else {
+                        localStorage.removeItem('afovToken');
+                        localStorage.removeItem('afovRemember');
+                    }
+                    pw.value = '';
+                    document.getElementById('login-overlay').classList.remove('open');
+                    go.disabled = false;
+                    const resolve = _loginResolve;
+                    _loginResolve = null; _loginPromise = null;
+                    if (resolve) resolve(true);
+                    return;
                 }
-                // 401 → loop and re-prompt
-            } catch (e) {
-                alert('Login request failed: ' + e.message);
-                return false;
+                err.textContent = 'Device returned an empty token.';
+            } else if (r.status === 429) {
+                err.textContent = 'Too many attempts — locked out for ' +
+                    (r.headers.get('Retry-After') || '?') + ' s.';
+            } else if (r.status === 401) {
+                err.textContent = 'Incorrect password.';
+            } else {
+                err.textContent = 'Login failed (HTTP ' + r.status + ').';
             }
+        } catch (e) {
+            err.textContent = 'Login request failed: ' + e.message;
         }
-        return false;
+        err.style.color = '#ff6b6b';
+        go.disabled = false;
+        pw.select();
+    }
+
+    // Forget any remembered login on this browser, drop the live session, and
+    // re-show the login overlay. Reachable from the WiFi Info screen.
+    function signOut() {
+        localStorage.removeItem('afovToken');
+        localStorage.removeItem('afovRemember');
+        csrfToken = '';
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        connectWifi();
     }
 
     function openWebSocket(ip) {
