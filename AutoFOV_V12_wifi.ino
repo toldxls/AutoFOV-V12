@@ -48,7 +48,7 @@
 #include <HTTPClient.h>
 #include <esp_ota_ops.h>      // esp_ota_get_running_partition() — running OTA slot
 #include <mbedtls/sha256.h>   // end-to-end OTA integrity check
-#include <mbedtls/base64.h>   // decode base64-wrapped device passwords from headers
+#include <mbedtls/md.h>       // HMAC-SHA256 for challenge-response login / OTA auth
 #include "data/web_ui.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +78,10 @@ static char            csrfToken[17]       = {0};
 // Brute-force guard for /login: escalating lockout after repeated failures.
 static uint8_t         loginFailCount      = 0;
 static uint32_t        loginLockoutUntilMs = 0;
+// Challenge-response: a single outstanding, single-use, 30 s nonce. The client
+// returns HMAC-SHA256(password, nonce) so the password never crosses the wire.
+static char            loginNonce[33]      = {0};   // 32 hex chars + NUL
+static uint32_t        loginNonceMs        = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -278,18 +282,27 @@ static const char* effectivePassword() {
     return devPassword[0] ? devPassword : otaPassword;
 }
 
-// Decode a base64 header value into a String (≤63 chars in). The dashboard
-// base64-wraps the password so arbitrary characters (spaces, UTF-8) survive an
-// HTTP header value intact. Returns "" on empty/oversized/malformed input.
-static String decodePwHeader(const String& in) {
-    if (!in.length() || in.length() > 88) return String();   // 63 bytes → ≤88 b64 chars
-    uint8_t buf[65];
-    size_t outLen = 0;
-    if (mbedtls_base64_decode(buf, sizeof(buf) - 1, &outLen,
-            (const unsigned char*)in.c_str(), in.length()) != 0)
-        return String();
-    buf[outLen] = '\0';
-    return String((char*)buf);
+// Issue a fresh single-use challenge nonce (32 hex chars). Stamped for the 30 s
+// validity window checked in checkChallenge().
+static void generateLoginNonce() {
+    static const char kHex[] = "0123456789abcdef";   // (not HEX — that's an Arduino macro)
+    for (int i = 0; i < 32; i++) loginNonce[i] = kHex[uniformRandom(16)];
+    loginNonce[32] = '\0';
+    loginNonceMs = millis();
+}
+
+// HMAC-SHA256(effective device password, msg) → lowercase hex (64 chars + NUL).
+// The browser recomputes the same value, so the password itself never crosses
+// the wire — only this one-way digest of (password, nonce) does.
+static void computeAuthHmacHex(const String& msg, char out[65]) {
+    uint8_t mac[32];
+    const char* key = effectivePassword();
+    mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                    (const unsigned char*)key, strlen(key),
+                    (const unsigned char*)msg.c_str(), msg.length(), mac);
+    static const char kHex[] = "0123456789abcdef";   // (not HEX — Arduino macro)
+    for (int i = 0; i < 32; i++) { out[i*2] = kHex[mac[i] >> 4]; out[i*2+1] = kHex[mac[i] & 0xF]; }
+    out[64] = '\0';
 }
 
 // Constant-time-ish compare. `b` is the secret, `a` the attacker-supplied
@@ -304,6 +317,30 @@ static bool secureEquals(const char* a, const char* b) {
     for (size_t i = 0; i < n; i++)
         diff |= (uint8_t)(a[la ? (i % la) : 0] ^ b[i % (lb ? lb : 1)]);
     return diff == 0;
+}
+
+// Validate a challenge response (nonce + client HMAC). A valid, current nonce is
+// consumed (single-use) whether or not the HMAC matched. Returns:
+//   CR_NO_CHALLENGE — missing / expired / mismatched nonce. NOT a password guess,
+//                     so callers must NOT count it toward the brute-force lockout
+//                     (also closes drive-by lockout: a cross-origin page can't
+//                     read a nonce, so it can never produce a counted attempt).
+//   CR_BAD          — valid nonce, wrong HMAC: a genuine wrong-password guess.
+//   CR_OK           — valid nonce, correct HMAC.
+// (Plain ints + #define rather than an enum: a function returning a sketch-local
+// enum trips arduino-cli's auto-prototype generation, which lands the prototype
+// above the type definition.)
+#define CR_OK            0
+#define CR_NO_CHALLENGE  1
+#define CR_BAD           2
+static int checkChallenge(const String& nonce, const String& respHex) {
+    if (!loginNonce[0]) return CR_NO_CHALLENGE;
+    if ((uint32_t)(millis() - loginNonceMs) > 30000UL) { loginNonce[0] = '\0'; return CR_NO_CHALLENGE; }
+    if (nonce != loginNonce) return CR_NO_CHALLENGE;
+    loginNonce[0] = '\0';                       // consume — single use
+    char expected[65];
+    computeAuthHmacHex(nonce, expected);
+    return secureEquals(respHex.c_str(), expected) ? CR_OK : CR_BAD;
 }
 
 // Signature names from the web must match /vibsig/*.bin's filename whitelist so
@@ -1076,11 +1113,13 @@ static void startFullServer() {
     //   * No Access-Control-Allow-Origin header is ever added, so cross-origin
     //     browser JS still can't read /login's response even on the same LAN.
     //   * hostAllowed() rejects mismatched Host headers, defeating DNS rebinding.
-    //   * /ota additionally requires the device password re-typed (X-OTA-Password).
+    //   * Challenge-response: the password never crosses the wire — the client
+    //     proves it by returning HMAC-SHA256(password, nonce) for a one-time nonce.
     // Endpoint gates:
-    //   * /login:       hostAllowed + correct password → returns the token
+    //   * /login-challenge: hostAllowed → issues a single-use 30 s nonce
+    //   * /login:       hostAllowed + valid HMAC over the nonce → returns the token
     //   * /state /cmd /forget-wifi /vibsig: apiAuthed (host + token)
-    //   * /ota:         apiAuthed + X-OTA-Password == device password
+    //   * /ota:         apiAuthed + valid HMAC over a nonce (X-Login-Nonce/X-OTA-Response)
     //   * WS:           hostAllowed + ?tok= matching csrfToken (below)
     //   * /ping:        hostAllowed only — liveness, reveals nothing
 
@@ -1094,9 +1133,21 @@ static void startFullServer() {
     wsServer.onEvent(onWsEvent);
     httpServer.addHandler(&wsServer);
 
-    // POST /login — verify the device password, then issue the per-boot session
-    // token. Rate-limited with an escalating lockout so a weak password can't be
-    // brute-forced over the LAN. The password arrives in X-Device-Password.
+    // GET /login-challenge — issue a fresh single-use nonce (host-gated, no auth).
+    // The response body is hidden from cross-origin JS (no CORS), so a drive-by
+    // page can't read a nonce and therefore can't even attempt /login.
+    httpServer.on("/login-challenge", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        generateLoginNonce();
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", loginNonce);
+        resp->addHeader("Cache-Control", "no-store");
+        req->send(resp);
+    });
+
+    // POST /login — challenge-response. The client returns the issued nonce
+    // (X-Login-Nonce) and HMAC-SHA256(password, nonce) (X-Login-Response); the
+    // password never transmits. Escalating lockout guards online guessing; only
+    // a valid-nonce wrong-HMAC (a real guess) counts toward it.
     httpServer.on("/login", HTTP_POST, [](AsyncWebServerRequest* req) {
         if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
         uint32_t now = millis();
@@ -1108,17 +1159,23 @@ static void startFullServer() {
             req->send(r);
             return;
         }
-        // Require the credential header to be present at all. A browser can't
-        // attach a custom header on a cross-origin request without a preflight
-        // (which fails — we send no Access-Control-Allow-Origin), so a drive-by
-        // page can't drive the lockout with header-less POSTs. Only genuine
-        // guesses (header present, wrong value) count toward loginFailCount.
-        if (!req->hasHeader("X-Device-Password")) {
-            req->send(400, "text/plain", "Missing credentials");
+        // Both custom headers required. A browser can't attach them cross-origin
+        // without a (failing) preflight, so a drive-by page can't reach the
+        // lockout path; missing headers are a 400 that never counts.
+        if (!req->hasHeader("X-Login-Nonce") || !req->hasHeader("X-Login-Response")) {
+            req->send(400, "text/plain", "Missing challenge response");
             return;
         }
-        String pw = decodePwHeader(req->header("X-Device-Password"));
-        if (!secureEquals(pw.c_str(), effectivePassword())) {
+        switch (checkChallenge(req->header("X-Login-Nonce"), req->header("X-Login-Response"))) {
+        case CR_OK: {
+            loginFailCount = 0;
+            loginLockoutUntilMs = 0;
+            AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", csrfToken);
+            resp->addHeader("Cache-Control", "no-store");
+            req->send(resp);
+            return;
+        }
+        case CR_BAD: {
             if (loginFailCount < 255) loginFailCount++;
             if (loginFailCount >= 5) {
                 // 5 fails → 15 s, doubling to a 4 min cap; persists until success.
@@ -1130,11 +1187,10 @@ static void startFullServer() {
             req->send(401, "text/plain", "Unauthorized");
             return;
         }
-        loginFailCount = 0;
-        loginLockoutUntilMs = 0;
-        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", csrfToken);
-        resp->addHeader("Cache-Control", "no-store");
-        req->send(resp);
+        default:  // CR_NO_CHALLENGE — stale/missing/mismatched nonce; not a guess
+            req->send(400, "text/plain", "Challenge expired — retry");
+            return;
+        }
     });
 
     // GET /ping — unauthenticated liveness probe (host-gated). The dashboard
@@ -1317,13 +1373,13 @@ static void startFullServer() {
             if (!index) {
                 // Three gates: right Host (DNS-rebinding defense) + the per-boot
                 // session token (already proves login) + the device password
-                // re-typed here. Re-typing the password on this irreversible,
-                // persistent action means a stolen mid-session token alone can't
-                // flash. The password matches effectivePassword() — the user's
-                // custom one if set, else the default shown on the WiFi Info screen.
-                bool pwOk = req->hasHeader("X-OTA-Password") &&
-                            secureEquals(decodePwHeader(req->header("X-OTA-Password")).c_str(),
-                                         effectivePassword());
+                // re-typed here, proven by challenge-response (X-Login-Nonce +
+                // X-OTA-Response = HMAC(password, nonce)) so the password never
+                // crosses the wire even on this irreversible, persistent action.
+                // A stolen mid-session token alone can't flash.
+                bool pwOk = req->hasHeader("X-Login-Nonce") && req->hasHeader("X-OTA-Response") &&
+                            checkChallenge(req->header("X-Login-Nonce"),
+                                           req->header("X-OTA-Response")) == CR_OK;
                 if (!hostAllowed(req) || !tokenOk(req) || !pwOk) {
                     markAborted();
                     req->send(401, "text/plain", "Unauthorized");

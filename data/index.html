@@ -4946,13 +4946,23 @@
     // GitHub updater (githubUpdate).  `blob` is a File or Blob; `sha` is its
     // hex SHA-256, already computed and (for the GitHub path) verified; `pw` is
     // the device password the user re-typed for this flash.
-    function doOtaUpload(blob, filename, sha, pw) {
+    async function doOtaUpload(blob, filename, sha, pw) {
         const st   = document.getElementById('ota-status');
         const fill = document.getElementById('ota-progress-fill');
         const pct  = document.getElementById('ota-progress-pct');
         otaLockControls();
         fill.style.width = '0%'; fill.style.background = '#2a7abf';
         pct.textContent = '';
+        st.style.color = 'var(--text-disabled)'; st.textContent = 'Authorizing…';
+
+        // Prove the password without sending it — challenge-response, like login.
+        let cr;
+        try { cr = await challengeResponse(pw); }
+        catch (e) {
+            st.style.color = '#ff4444'; st.textContent = 'Auth failed: ' + e.message;
+            otaUnlockControls(); ghRestoreButton();
+            return;
+        }
         st.style.color = 'var(--text-disabled)'; st.textContent = 'Uploading…';
 
         const fd = new FormData();
@@ -4967,7 +4977,8 @@
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
         xhr.setRequestHeader('X-AutoFOV-Token', csrfToken);
-        xhr.setRequestHeader('X-OTA-Password',  b64pw(pw));
+        xhr.setRequestHeader('X-Login-Nonce',   cr.nonce);
+        xhr.setRequestHeader('X-OTA-Response',  cr.resp);
         xhr.setRequestHeader('X-OTA-SHA256',    sha);
 
         xhr.upload.onprogress = e => {
@@ -5363,8 +5374,37 @@
 
     // Base64-wrap a password so arbitrary characters survive an HTTP header
     // value. (UTF-8 → base64; matches decodePwHeader() in the firmware.)
-    function b64pw(s) {
-        return btoa(String.fromCharCode.apply(null, new TextEncoder().encode(s)));
+    // ── Challenge-response auth ─────────────────────────────────────────────
+    // The password never leaves the browser: fetch a one-time nonce and send
+    // HMAC-SHA256(password, nonce). crypto.subtle is unavailable over plain HTTP,
+    // so HMAC is built on the pure-JS sha256JS (also used by the OTA hash).
+    function hexToBytes(hex) {
+        const out = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i*2, 2), 16);
+        return out;
+    }
+    function concatBytes(a, b) {
+        const out = new Uint8Array(a.length + b.length);
+        out.set(a); out.set(b, a.length);
+        return out;
+    }
+    function hmacSha256Hex(keyBytes, msgBytes) {        // → lowercase hex
+        const B = 64;                                   // SHA-256 block size
+        let k = keyBytes;
+        if (k.length > B) k = hexToBytes(sha256JS(k));
+        const key = new Uint8Array(B); key.set(k);
+        const ipad = new Uint8Array(B), opad = new Uint8Array(B);
+        for (let i = 0; i < B; i++) { ipad[i] = key[i] ^ 0x36; opad[i] = key[i] ^ 0x5c; }
+        const inner = hexToBytes(sha256JS(concatBytes(ipad, msgBytes)));
+        return sha256JS(concatBytes(opad, inner));
+    }
+    // Fetch a one-time nonce, return { nonce, resp = HMAC(password, nonce) hex }.
+    async function challengeResponse(pw) {
+        const cr = await fetch(wifiBase + '/login-challenge', { signal: AbortSignal.timeout(4000) });
+        if (!cr.ok) throw new Error('challenge HTTP ' + cr.status);
+        const nonce = (await cr.text()).trim();
+        const enc = new TextEncoder();
+        return { nonce, resp: hmacSha256Hex(enc.encode(pw), enc.encode(nonce)) };
     }
 
     // ── Login (overlay-based, with "keep me signed in") ─────────────────────
@@ -5398,11 +5438,18 @@
         go.disabled = true;
         err.style.color = '#7ab4a2'; err.textContent = 'Signing in…';
         try {
-            const r = await fetch(wifiBase + '/login', {
-                method: 'POST',
-                headers: { 'X-Device-Password': b64pw(pw.value) },
-                signal: AbortSignal.timeout(4000)
-            });
+            // challenge → HMAC → verify. One auto-retry covers a nonce that
+            // expired between the two round-trips (server replies 400).
+            let r;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const { nonce, resp } = await challengeResponse(pw.value);
+                r = await fetch(wifiBase + '/login', {
+                    method: 'POST',
+                    headers: { 'X-Login-Nonce': nonce, 'X-Login-Response': resp },
+                    signal: AbortSignal.timeout(4000)
+                });
+                if (r.status !== 400) break;
+            }
             if (r.ok) {
                 const tok = (await r.text()).trim();
                 if (tok) {
