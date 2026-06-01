@@ -292,14 +292,17 @@ static String decodePwHeader(const String& in) {
     return String((char*)buf);
 }
 
-// Length-independent, value constant-time string compare — avoids leaking the
-// password length or a per-character early-out via response timing.
+// Constant-time-ish compare. `b` is the secret, `a` the attacker-supplied
+// value (both call sites pass them in that order). The loop count tracks only
+// the secret's length — which is fixed per device — never the caller's input,
+// so response timing can't be used to probe the attempt length, and there's no
+// per-character early-out. The la^lb term fails any length mismatch outright.
 static bool secureEquals(const char* a, const char* b) {
     size_t la = strlen(a), lb = strlen(b);
     uint8_t diff = (uint8_t)(la ^ lb);
-    size_t n = la > lb ? la : lb;
+    size_t n = lb ? lb : 1;
     for (size_t i = 0; i < n; i++)
-        diff |= (uint8_t)(a[i % (la ? la : 1)] ^ b[i % (lb ? lb : 1)]);
+        diff |= (uint8_t)(a[la ? (i % la) : 0] ^ b[i % (lb ? lb : 1)]);
     return diff == 0;
 }
 
@@ -1105,8 +1108,16 @@ static void startFullServer() {
             req->send(r);
             return;
         }
-        String pw = req->hasHeader("X-Device-Password")
-                    ? decodePwHeader(req->header("X-Device-Password")) : String("");
+        // Require the credential header to be present at all. A browser can't
+        // attach a custom header on a cross-origin request without a preflight
+        // (which fails — we send no Access-Control-Allow-Origin), so a drive-by
+        // page can't drive the lockout with header-less POSTs. Only genuine
+        // guesses (header present, wrong value) count toward loginFailCount.
+        if (!req->hasHeader("X-Device-Password")) {
+            req->send(400, "text/plain", "Missing credentials");
+            return;
+        }
+        String pw = decodePwHeader(req->header("X-Device-Password"));
         if (!secureEquals(pw.c_str(), effectivePassword())) {
             if (loginFailCount < 255) loginFailCount++;
             if (loginFailCount >= 5) {
@@ -1443,7 +1454,7 @@ static void startFullServer() {
     });
 
     httpServer.begin();
-    Serial.println("[WiFi] HTTP server listening on port 80 (CORS: *, queued /cmd)");
+    Serial.println("[WiFi] HTTP server listening on port 80 (login-gated, host-checked, queued /cmd)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
