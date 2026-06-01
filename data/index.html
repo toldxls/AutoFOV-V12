@@ -1402,6 +1402,28 @@
       .vibp-cap b { font-weight:normal; }
       .vibp-pane canvas { flex:1 1 auto; width:100%; min-height:0;
         background:#040d0b; border:1px solid #1f3a33; display:block; }
+
+      /* --- Portrait phone scaling: reflow the header and un-clip the labels.
+           Phones in landscape are ~850px+ wide, so a 600px cap leaves the wide
+           layout (which looks fine) untouched and only reshapes narrow portrait
+           views, where the single header row and nowrap blur block overflow. --- */
+      @media (max-width: 600px) {
+        #vibp-head { flex-wrap: wrap; gap: 6px 10px; padding: 7px 10px; }
+        #vibp-head-left  { flex: 1 1 55%; }
+        #vibp-head-right { flex: 1 1 100%; justify-content: space-between; }
+        #vibp-title   { font-size: 13px; }
+        #vibp-readout { white-space: normal; font-size: 11px; }
+        #vibp-state   { font-size: 13px; letter-spacing: 1px; padding: 7px 12px;
+          min-width: 0; align-self: flex-start; margin: 40px 0 0; }
+        /* Pin CLOSE to the panel's top-right corner so it stops overflowing the
+           blur row; CALM (above) drops a touch so it clears the button. */
+        #vibp-close   { position: absolute; top: 6px; right: 8px; z-index: 10;
+          padding: 5px 12px; font-size: 12px; }
+        #vibp-blur    { margin: 0; white-space: normal; line-height: 1.4; }
+        #vibp-units   { font-size: 15px; padding: 4px 10px; min-width: 0; top: 32px; }
+        #vibp-body    { gap: 5px; padding: 6px 6px 8px; }
+        .vibp-cap     { font-size: 9px; }
+      }
     </style>
 
     <!-- OTA reboot overlay — viewport-scoped so it veils the bezel, the device
