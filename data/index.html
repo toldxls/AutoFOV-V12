@@ -679,13 +679,20 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 70px;">ABOUT</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 70px; font-size: 20px; color: var(--accent-green);">AutoFOV V12</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 94px; font-size: 12px; color: var(--text-disabled);">Field-of-view calculator</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 48px; font-size: 20px; color: var(--accent-green);">AutoFOV V12</div>
+                <div class="gfx-text" style="width: 240px; text-align: center; top: 74px; font-size: 10px; color: var(--text-disabled);">Field-of-view calculator</div>
 
-                <div class="gfx-text" style="width:240px; text-align:center; top:114px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE</div>
-                <div id="about-version" class="gfx-text" style="width:240px; text-align:center; top:126px; font-size:18px; color:var(--accent-green); font-weight:bold;">—</div>
-                <div id="about-commit" class="gfx-text" style="width:240px; text-align:center; top:148px; font-size:10px; color:var(--text-disabled);">—</div>
-                <div id="about-built" class="gfx-text" style="width:240px; text-align:center; top:160px; font-size:10px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="width:240px; text-align:center; top:92px; font-size:10px; color:var(--text-disabled); letter-spacing:0.08em;">FIRMWARE</div>
+                <div id="about-version" class="gfx-text" style="width:240px; text-align:center; top:106px; font-size:18px; color:var(--accent-green); font-weight:bold;">—</div>
+                <!-- Commit · date · time on a single line. -->
+                <div id="about-commit" class="gfx-text" style="width:240px; text-align:center; top:130px; font-size:10px; color:var(--text-disabled);">—</div>
+                <!-- OTA update (moved here from the WIFI screen), centered below
+                     the commit/date/time line and above the HARDWARE section.
+                     Turns green when a newer GitHub release is available — see
+                     refreshAboutUpdateBtn(). -->
+                <div id="about-update-btn" class="gfx-btn"
+                     style="left:91px; top:148px; width:58px; height:20px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:9px;"
+                     onclick="switchScreen('screen-ota')">UPDATE</div>
 
                 <!-- Hardware identity — sensors/peripherals on this device.
                      None of these are reported elsewhere in the UI; the memory
@@ -1144,14 +1151,11 @@
                      onclick="signOut()">SIGN OUT</div>
 
                 <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
+                <!-- Single gateway to alerts/notifications. The beep test and the
+                     ntfy push now both live on the NOTIFY screen's TEST button;
+                     firmware update moved to the ABOUT screen. -->
                 <div class="gfx-btn"
-                     style="left:10px; top:266px; width:70px; height:30px; background:#1a3a1a; border:1px solid #3a6a3a; font-size:9px;"
-                     onclick="sendCommand('testAlert','1')">TEST ALERT</div>
-                <div class="gfx-btn"
-                     style="left:88px; top:266px; width:80px; height:30px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:9px;"
-                     onclick="switchScreen('screen-ota')">FIRMWARE</div>
-                <div class="gfx-btn"
-                     style="left:176px; top:266px; width:54px; height:30px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:9px;"
+                     style="left:65px; top:266px; width:110px; height:30px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
                      onclick="switchScreen('screen-autoremote')">NOTIFY</div>
             </div>
 
@@ -1206,7 +1210,7 @@
             <!-- ===================== OTA FIRMWARE UPDATE ===================== -->
             <div id="screen-ota" class="screen">
                 <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#1a4a6a;">FIRMWARE</div>
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-about')">X</div>
                 <div style="position:absolute; left:88px; top:2px; width:113px; height:33px;
                      display:flex; align-items:center; justify-content:center;
                      text-align:center; color:#ff9900; font-size:8px; line-height:1.25;">
@@ -4451,8 +4455,11 @@
     function updateAboutUI() {
         const g = (id) => document.getElementById(id);
         if (g('about-version'))  g('about-version').innerText = state.buildVersion ? 'v' + state.buildVersion : '—';
-        if (g('about-commit'))   g('about-commit').innerText  = state.buildCommit  ? state.buildCommit + '  ·  ' + (state.buildDate || '') : '—';
-        if (g('about-built'))    g('about-built').innerText   = state.buildTime    || '—';
+        // Commit · date · time on one line (build time folded in from the old
+        // separate "about-built" row).
+        if (g('about-commit'))   g('about-commit').innerText  = state.buildCommit
+            ? state.buildCommit + ' · ' + (state.buildDate || '') + ' · ' + (state.buildTime || '')
+            : '—';
         if (g('about-source')) {
             // Source lines + size on disk — both pushed from BUILD_SLOC /
             // BUILD_SKB by tools/embed_html.py so they refresh on every build.
@@ -4461,6 +4468,20 @@
                 ? sl.toLocaleString() + ' ln / ' + sk + ' KB'
                 : '—';
         }
+        // Colour the UPDATE button from the last GitHub check, then refresh it so
+        // an available update shows green without having to open the OTA screen.
+        refreshAboutUpdateBtn();
+        if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
+    }
+
+    // Tint the About-screen UPDATE button: green when a newer GitHub release is
+    // available, otherwise the neutral blue it ships as.
+    function refreshAboutUpdateBtn() {
+        const btn = document.getElementById('about-update-btn');
+        if (!btn) return;
+        const avail = (ghPhase === 'available');
+        btn.style.background  = avail ? '#0a5a2a' : '#1a2a3a';
+        btn.style.borderColor = avail ? '#2abf6a' : '#2a5a7a';
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -4788,12 +4809,16 @@
     }
     function ntfyTest() {
         const st = document.getElementById('ntfy-status');
+        // Combined alert test: always fire the local beep, and also push via
+        // ntfy when a topic is configured (the WIFI screen's standalone
+        // "TEST ALERT" button folded into here).
+        sendCommand('testAlert', '1');
         if (!state.ntfyTopic) {
-            if (st) { st.textContent = 'No topic saved — save first.'; st.style.color = '#bf4a4a'; }
+            if (st) { st.textContent = 'Beeped. Save a topic to also push.'; st.style.color = '#bf8a4a'; }
             return;
         }
         sendCommand('ntfyTest', '1');
-        if (st) { st.textContent = 'Sent — check your phone.'; st.style.color = '#6abf6a'; }
+        if (st) { st.textContent = 'Beeped + pushed — check your phone.'; st.style.color = '#6abf6a'; }
     }
 
     // ── OTA firmware update ───────────────────────────────────────────────────
@@ -5110,6 +5135,7 @@
             ghPhase = 'error';
             ghSetButton('RETRY CHECK', true);
         }
+        refreshAboutUpdateBtn();
     }
 
     function githubAction() {
@@ -5156,6 +5182,8 @@
             ghSetStatus('Update check failed — ' + e.message, '#bf4a4a');
             ghSetButton('RETRY CHECK', true);
         }
+        // Mirror the outcome onto the About-screen UPDATE button (green/blue).
+        refreshAboutUpdateBtn();
     }
 
     // Streamed download with a live progress bar — Pages sends Content-Length
