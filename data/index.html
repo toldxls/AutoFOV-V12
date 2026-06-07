@@ -246,10 +246,13 @@
                               border-radius: 2px; overflow: hidden; }
         /* Fixed red→orange→yellow→green gradient anchored to the bar's 40px inner
            width — the fill width reveals it, so the leading edge transitions
-           smoothly through the colours as signal intensity rises. */
+           smoothly through the colours as signal intensity rises.  Green lands at
+           60% (then holds solid to the right) to mirror the firmware's signal
+           thresholds (sensor-info bar: green ≥60%, yellow ≥30%), so the highest
+           intensity readings read clearly green rather than a yellow-green tip. */
         #signal-bar-fill { width: 60%; height: 100%;
                            background-image: linear-gradient(90deg,
-                               #FF4400 0%, #FFA500 33%, #FFD700 66%, #00FF00 100%);
+                               #FF4400 0%, #FFA500 20%, #FFD700 40%, #00FF00 60%);
                            background-size: 40px 100%; background-repeat: no-repeat; }
 
         #btn-fov-info {
