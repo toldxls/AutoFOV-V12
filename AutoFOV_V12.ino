@@ -977,6 +977,12 @@ unsigned long lastSensorInfoUpdate = 0;
 unsigned long lastVibSpecUpdate = 0;
 float lastAvgFov = -1;
 uint16_t lastDistance = 0xFFFF;
+// #1: cache for drawSignalHealthBar's MAIN (non-sprite) path. The 30 Hz refresh
+// calls it every frame, but the quantised bar (≤40 px, 5 colours) rarely moves —
+// skip the sprite rebuild + SPI blit when filled/colour are unchanged. Reset to
+// -1 in drawMainScreen() so the bar always paints once on screen entry.
+int      lastBarFilled = -1;
+uint16_t lastBarColor  = 0;
 
 // Forward declarations
 void drawMainScreen();
@@ -3785,7 +3791,11 @@ void vibTask(void *pvParameters) {
         vibFftImag[i] = 0.0f;
       }
       vibFFT.compute(FFTDirection::Forward);
-      vibFFT.complexToMagnitude();   // magnitudes land in vibFftReal[0..255]
+      // #2: the input is real, so the FFT is Hermitian-symmetric — bins
+      // 256..511 are conjugate mirrors of 1..255 and carry no new information.
+      // complexToMagnitude() would sqrt all 512 and we'd read only the lower
+      // half. Compute magnitude inline for the 256 usable bins instead (matches
+      // the horizontal channel's manual per-bin magnitude below).
 
       // Time-domain window RMS → band RMS in mg (VIB_MG_PER_LSB at ±2 g).
       float rmsMg = sqrtf((float)(sumSq / VIB_FFT_SIZE)) * VIB_MG_PER_LSB;
@@ -3797,10 +3807,11 @@ void vibTask(void *pvParameters) {
       const float binScale = VIB_MG_PER_LSB * 4.0f / VIB_FFT_SIZE * 10.0f;  // LSB-mag → deci-mg
       uint32_t domBin = 0; float domMag = 0.0f;
       for (int b = 0; b < VIB_FFT_BINS; b++) {
-        float m = vibFftReal[b] * binScale;
+        float mag = sqrtf(vibFftReal[b]*vibFftReal[b] + vibFftImag[b]*vibFftImag[b]);
+        float m = mag * binScale;
         if (m > 65535.0f) m = 65535.0f;
         dst[b] = (uint16_t)m;
-        if (b >= 4 && vibFftReal[b] > domMag) { domMag = vibFftReal[b]; domBin = b; }
+        if (b >= 4 && mag > domMag) { domMag = mag; domBin = b; }
       }
 
       // ── Combined-horizontal spectrum — one complex-packed FFT: hx into the
@@ -5016,10 +5027,16 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
     menuSprite.drawRect(x, y, barW, barH, COLOR_DARKGREY);
     menuSprite.fillRect(x + 1, y + 1, filled, barH - 2, color);
   } else {
-    barSprite.fillScreen(THEME_BG);
-    barSprite.drawRect(0, 0, barW, barH, COLOR_DARKGREY);
-    barSprite.fillRect(1, 1, filled, barH - 2, color);
-    tft.drawRGBBitmap(x, y, barSprite.getBuffer(), 44, 12);
+    // #1: the MAIN 30 Hz refresh hits us every frame; only rebuild + blit when
+    // the rendered bar actually changes. lastBarFilled is reset to -1 on MAIN
+    // entry (drawMainScreen) so the first frame always paints.
+    if (filled != lastBarFilled || color != lastBarColor) {
+      lastBarFilled = filled; lastBarColor = color;
+      barSprite.fillScreen(THEME_BG);
+      barSprite.drawRect(0, 0, barW, barH, COLOR_DARKGREY);
+      barSprite.fillRect(1, 1, filled, barH - 2, color);
+      tft.drawRGBBitmap(x, y, barSprite.getBuffer(), 44, 12);
+    }
   }
 }
 
@@ -5161,7 +5178,7 @@ void drawMainScreen() {
   readIndex = 0;
   totalDist = 0;
   
-  lastAvgFov = -1; lastDistance = 0xFFFF; lastDisplayUpdate = 0; 
+  lastAvgFov = -1; lastDistance = 0xFFFF; lastDisplayUpdate = 0; lastBarFilled = -1; 
 }
 
 void drawAppSettingsUI() {
