@@ -242,8 +242,15 @@
         }
         #tof-menu-zone { position: absolute; left: 33px; top: 0px; width: 60px; height: 42px; cursor: pointer; }
         #signal-bar-outline { position: absolute; left: 11px; top: 12px; width: 42px; height: 10px;
-                              border: 1px solid #787878; box-sizing: border-box; }
-        #signal-bar-fill { width: 60%; height: 100%; background-color: #00FF00; }
+                              border: 1px solid #787878; box-sizing: border-box;
+                              border-radius: 2px; overflow: hidden; }
+        /* Fixed red→orange→yellow→green gradient anchored to the bar's 40px inner
+           width — the fill width reveals it, so the leading edge transitions
+           smoothly through the colours as signal intensity rises. */
+        #signal-bar-fill { width: 60%; height: 100%;
+                           background-image: linear-gradient(90deg,
+                               #FF4400 0%, #FFA500 33%, #FFD700 66%, #00FF00 100%);
+                           background-size: 40px 100%; background-repeat: no-repeat; }
 
         #btn-fov-info {
             position: absolute; left: 152px; top: 2px; width: 44px; height: 40px; cursor: pointer;
@@ -381,7 +388,7 @@
 
             <!-- ===================== MAIN SCREEN ===================== -->
             <div id="screen-main" class="screen active">
-                <div id="wifi-badge" onclick="switchScreen('screen-wifiinfo')" title="WiFi Info" style="position:absolute;left:3px;top:11px;width:32px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;">
+                <div id="wifi-badge" onclick="switchScreen('screen-wifiinfo')" title="WiFi Info" style="position:absolute;left:3px;top:2px;height:40px;width:32px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;">
                     <svg width="22" height="22" viewBox="0 0 22 22">
                         <path id="wifi-badge-arc3" d="M2,11 Q11,2 20,11" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
                         <path id="wifi-badge-arc2" d="M5,14 Q11,7 17,14" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
@@ -393,7 +400,7 @@
 
                 <div id="tof-menu-zone" onclick="switchScreen('screen-sensorinfo')">
                     <div id="signal-bar-outline"><div id="signal-bar-fill"></div></div>
-                    <div class="gfx-text" style="left: 11px; top: 26px; color: var(--accent-yellow); font-size: 9px;">TOF int</div>
+                    <div class="gfx-text" style="left: 11px; top: 26px; width: 42px; text-align: center; color: var(--accent-yellow); font-size: 9px;">TOF</div>
                 </div>
 
                 <!-- Vibration analyzer shortcut — centered in the x=93..152
@@ -4773,11 +4780,14 @@
         }
         // WiFi badge (top-left, where BT rune used to live) — mirrors bar colour
         const badgeCol = connected ? barCol : '#555';
-        ['wifi-badge-arc1','wifi-badge-arc2','wifi-badge-arc3','wifi-badge-dot'].forEach(id => {
-            const el = document.getElementById(id); if (el) el.setAttribute(connected ? 'stroke' : 'fill', badgeCol);
-            if (el && id === 'wifi-badge-dot') el.setAttribute('fill', badgeCol);
-            if (el && id !== 'wifi-badge-dot') el.setAttribute('stroke', badgeCol);
+        // Arcs are open curves — only ever set their stroke and force fill:none,
+        // otherwise a disconnected fill paints grey blobs that never clear.
+        ['wifi-badge-arc1','wifi-badge-arc2','wifi-badge-arc3'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { el.setAttribute('stroke', badgeCol); el.setAttribute('fill', 'none'); }
         });
+        const dotEl = document.getElementById('wifi-badge-dot');
+        if (dotEl) dotEl.setAttribute('fill', badgeCol);
         const kbsEl = document.getElementById('wifi-badge-kbs');
         if (connected && pktRateDisplay > 0) {
             const kbs = (pktBytesDisplay / 1024).toFixed(1);
@@ -5886,7 +5896,6 @@
             const sigPct = Math.min(100, data.signal / 50 * 100);
             const sigFill = document.getElementById('signal-bar-fill');
             sigFill.style.width = sigPct + '%';
-            sigFill.style.backgroundColor = sigPct > 66 ? '#00FF00' : sigPct > 33 ? '#FFA500' : '#FF4400';
             state.sensorSignal = data.signal;
             if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI();
         }
@@ -5923,7 +5932,6 @@
             const sigPct2 = Math.min(100, data.sensorSignal / 50 * 100);
             const sigFill2 = document.getElementById('signal-bar-fill');
             sigFill2.style.width = sigPct2 + '%';
-            sigFill2.style.backgroundColor = sigPct2 > 66 ? '#00FF00' : sigPct2 > 33 ? '#FFA500' : '#FF4400';
             if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI();
         }
         if (data.sensorAmbient  !== undefined) { state.sensorAmbient  = data.sensorAmbient;    if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
