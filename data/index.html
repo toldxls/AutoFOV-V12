@@ -2410,19 +2410,24 @@
             vibWfRows = [];
             vibWfRefMax = 30;
         }
-        vibWfRows.unshift({ t: now, frame: Float32Array.from(vs) });
+        // Asymmetric EMA contrast reference: rise fast so a real transient gets
+        // headroom, decay slow so one bump doesn't crush later silent rows.
+        // Update it from THIS frame BEFORE storing the row, then freeze the
+        // reference onto the row so the bulk repaint colours each row by the
+        // reference active when it was captured. Without the freeze, re-
+        // normalising the whole history by the latest vibWfRefMax every frame
+        // pumps the entire image's brightness (the bright/dim flashing).
+        let frameMx = 30;
+        for (let b = 2; b < vs.length; b++) if (vs[b] > frameMx) frameMx = vs[b];
+        const a = frameMx > vibWfRefMax ? VIB_WF_REF_ATTACK : VIB_WF_REF_RELEASE;
+        vibWfRefMax += (frameMx - vibWfRefMax) * a;
+        vibWfRows.unshift({ t: now, frame: Float32Array.from(vs), ref: Math.max(30, vibWfRefMax) });
         // Rolling age-trim (also caps memory): drop rows older than the window,
         // then enforce a hard row cap as a backstop.
         const cutoff = now - VIB_WF_WINDOW_MS;
         while (vibWfRows.length > 1 && vibWfRows[vibWfRows.length - 1].t < cutoff)
             vibWfRows.pop();
         if (vibWfRows.length > VIB_WF_MAX_ROWS) vibWfRows.length = VIB_WF_MAX_ROWS;
-        // Asymmetric EMA contrast reference: rise fast so a real transient gets
-        // headroom, decay slow so one bump doesn't crush later silent rows.
-        let frameMx = 30;
-        for (let b = 2; b < vs.length; b++) if (vs[b] > frameMx) frameMx = vs[b];
-        const a = frameMx > vibWfRefMax ? VIB_WF_REF_ATTACK : VIB_WF_REF_RELEASE;
-        vibWfRefMax += (frameMx - vibWfRefMax) * a;
     }
     function vibDrawWaterfall() {
         const c = document.getElementById('vibp-wf');
@@ -2466,12 +2471,15 @@
             if (rows > 0) {
                 const img    = bg.createImageData(n, rows);
                 const buf    = img.data;
-                const denom  = Math.max(30, vibWfRefMax);
                 const gain   = vibWfSensitivity;
-                const invDen = 1 / denom;
                 for (let r = 0; r < rows; r++) {
-                    const fr = vibWfRows[r].frame;
+                    const row = vibWfRows[r];
+                    const fr  = row.frame;
                     if (!fr) continue;
+                    // Per-row frozen reference (captured with the row) keeps
+                    // already-drawn rows identical across rebuilds, so the image
+                    // no longer pumps brightness when vibWfRefMax moves.
+                    const invDen = 1 / (row.ref || Math.max(30, vibWfRefMax));
                     const rowOff = r * n * 4;
                     for (let b = 0; b < n; b++) {
                         let f = (fr[b] || 0) * invDen * gain;
@@ -2494,15 +2502,20 @@
         // imageSmoothingEnabled=false → crisp per-bin columns, no blending blur.
         g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
         g.imageSmoothingEnabled = false;
-        // -- Smooth sub-pixel vertical scroll (same idea as the RMS-trend fix) --
-        //   The heatmap backing is a 1-px-per-row bitmap that only scrolls when a
-        //   new WS frame arrives, so on its own it jumps a whole row at the (slow)
-        //   data rate. Stretch it crisply into a scratch buffer (n->pw, smoothing
-        //   OFF so the per-bin columns stay sharp), then blit that to the visible
-        //   canvas shifted down by the fraction of a row elapsed since the newest
-        //   row -- smoothing ON for just that blit so the <1px offset renders
-        //   sub-pixel. The rows now glide at the display refresh rate instead of
-        //   ticking once per data frame, like the trend's continuous time-based X.
+        // -- Crisp whole-pixel scroll --
+        //   The heatmap backing is a 1-px-per-row bitmap. Stretch it into a
+        //   scratch buffer (n->pw, smoothing OFF so the per-bin columns stay
+        //   sharp) and blit it 1:1, smoothing OFF, so every row maps onto exactly
+        //   one output row at full brightness.
+        //
+        //   An earlier version offset this blit by a sub-pixel fraction of a row
+        //   (smoothing ON) to glide the rows between data frames. But bilinearly
+        //   resampling a 1-px-tall row across two output rows halved the
+        //   brightness of thin/weak features whenever the offset was fractional,
+        //   then snapped back when the next row landed -- a per-row strobe, worst
+        //   on faint time points. 1-px rows + sub-pixel glide + full brightness
+        //   can't coexist, so we keep the rows (time-depth) and the brightness
+        //   and drop the glide: the waterfall advances one crisp row per frame.
         if (!vibWfScratch) vibWfScratch = document.createElement('canvas');
         if (vibWfScratch.width !== pw || vibWfScratch.height !== H) {
             vibWfScratch.width = pw; vibWfScratch.height = H;
@@ -2511,19 +2524,8 @@
         wfScrCtx.imageSmoothingEnabled = false;
         wfScrCtx.clearRect(0, 0, pw, H);
         wfScrCtx.drawImage(vibWfBack, 0, 0, n, H, 0, 0, pw, H);
-        let wfScrollFrac = 0;                         // 0..1 of a row since newest
-        if (vibWfRows.length >= 2) {
-            const wfKn = Math.min(8, vibWfRows.length - 1);
-            const wfMsPerRow = (vibWfRows[0].t - vibWfRows[wfKn].t) / wfKn;
-            if (wfMsPerRow > 0) {
-                wfScrollFrac = (performance.now() - vibWfRows[0].t) / wfMsPerRow;
-                if (wfScrollFrac < 0) wfScrollFrac = 0;
-                else if (wfScrollFrac > 1) wfScrollFrac = 1;
-            }
-        }
-        g.imageSmoothingEnabled = true;
-        g.drawImage(vibWfScratch, 0, 0, pw, H, mL, wfScrollFrac, pw, H);
-        g.imageSmoothingEnabled = true;
+        g.imageSmoothingEnabled = false;
+        g.drawImage(vibWfScratch, 0, 0, pw, H, mL, 0, pw, H);
         g.font = '13px monospace'; g.lineWidth = 1;
         g.fillStyle = '#5e8c7e'; g.textAlign = 'right'; g.textBaseline = 'middle';
         const now = performance.now();
