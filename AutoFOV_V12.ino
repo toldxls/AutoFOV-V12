@@ -4701,9 +4701,11 @@ void handleMainTouch(TS_Point p) {
   // Top-strip tappable zones (y=0..42):
   // WiFi badge:   x=0..32   → WIFI_INFO screen
   // Signal bar:   x=33..90  → SENSOR_INFO screen
+  // VIBE CHECK:   x=90..150 → VIB_HOME (vibration hub)
   if (p.y < 42) {
     if (p.x < 32)  { currentMode = WIFI_INFO;   drawWifiInfoUI();   return; }
     if (p.x < 90)  { currentMode = SENSOR_INFO; drawSensorInfoUI(); return; }
+    if (p.x < 150) { currentMode = VIB_HOME;    drawVibHomeUI();    return; }
   }
 
   if (p.y > Y_POS && p.y < (Y_POS + BOX_SIZE)) {
@@ -5135,8 +5137,32 @@ void drawMainScreen() {
 
   drawGearIcon(217, 22, themedText(COLOR_PUREGREEN), THEME_BG);
 
-  // patched3: WiFi indicator zone (x=93..151, y=0..42).
+  // patched3: WiFi indicator zone — far-left, x=0..32, y=0..42.
   drawWifiIndicator();
+
+  // VIBE CHECK shortcut — center-top gap (x≈90..150), mirrors the web UI's
+  // spring-green "VIBE / decaying-wave / CHECK" button. Taps open the
+  // vibration hub (VIB_HOME). Built-in 6x8 font, centered on the display
+  // midline (x=120), clear of "TOF int" (ends x≈86) and FOV Info (x=152).
+  {
+    const uint16_t vibCol  = (currentThemeIndex == THEME_DAYLIGHT_IDX)
+                               ? 0x03E0 : 0x3ECF;   // #3ddb7a, daylight-darkened
+    const uint16_t vibBase = 0x19C6;                // #1f3a33 faint baseline
+    tft.setFont(); tft.setTextSize(1);
+    tft.setTextColor(vibCol);
+    tft.setCursor(108, 3);  tft.print("VIBE");       // 24 px wide → centered on x=120
+    tft.setCursor(105, 31); tft.print("CHECK");      // 30 px wide → centered on x=120
+    // Decaying ring-down wave between the two labels (baseline y=20).
+    tft.drawFastHLine(105, 20, 31, vibBase);
+    int prevx = 105, prevy = 20;
+    for (int i = 1; i <= 30; i++) {
+      int x = 105 + i;
+      float amp = 7.0f * (1.0f - (i - 1) / 30.0f);   // 7 px → ~0, left-to-right decay
+      int y = 20 - (int)roundf(amp * sinf(i * 0.85f));
+      tft.drawLine(prevx, prevy, x, y, vibCol);
+      prevx = x; prevy = y;
+    }
+  }
 
 // V17b: FOV Info button — tightened text spacing.
   // V11: now bracketed by twin bullet dots on each side for visual symmetry.
