@@ -75,13 +75,33 @@ static char            devPassword[64]     = {0};
 // a client without the password never obtains a token — this is the real auth
 // boundary, not just an anti-CSRF measure. See startFullServer().
 static char            csrfToken[17]       = {0};
-// Brute-force guard for /login: escalating lockout after repeated failures.
-static uint8_t         loginFailCount      = 0;
-static uint32_t        loginLockoutUntilMs = 0;
-// Challenge-response: a single outstanding, single-use, 30 s nonce. The client
-// returns HMAC-SHA256(password, nonce) so the password never crosses the wire.
-static char            loginNonce[33]      = {0};   // 32 hex chars + NUL
-static uint32_t        loginNonceMs        = 0;
+// IPs that have actually completed a password login this boot. The session token
+// is honoured ONLY from one of these (see apiAuthed / the WS filter): on the
+// plaintext-HTTP LAN a sniffed token replayed from any other IP is rejected, so
+// token theft now needs active on-path spoofing rather than a passive capture.
+// Up to 4 so a phone and a laptop can both be signed in. Cleared on reboot,
+// which also rotates csrfToken — the two share a lifetime.
+static const int       AUTHED_IP_MAX       = 4;
+static uint32_t        authedIPs[AUTHED_IP_MAX] = {};
+static uint8_t         authedIPHead        = 0;
+// Brute-force guard for /login, tracked PER CLIENT IP so a hostile LAN host can
+// only lock out itself — not the owner. Bounded table; when full, evict the
+// entry whose lockout expires soonest (idle/zero-lockout entries go first, so an
+// active lockout is never dropped). The old GLOBAL lockout let any unauthenticated
+// LAN host wrong-guess the owner into a rolling 4-minute shut-out.
+struct LoginFailEntry { uint32_t ip; uint8_t fails; uint32_t lockoutUntilMs; };
+static const int       LOGIN_FAIL_MAX      = 6;
+static LoginFailEntry  loginFails[LOGIN_FAIL_MAX] = {};
+// Challenge-response nonces: a small RING of single-use, 30 s nonces (was one
+// global slot). The ring lets concurrent/competing challenges coexist — the
+// login overlay, the OTA re-auth, and a JS auto-retry no longer clobber each
+// other's nonce — and widens the window an attacker must spam to evict a
+// legitimate one. The client returns HMAC-SHA256(password, nonce) so the
+// password never crosses the wire.
+static const int       NONCE_RING          = 4;
+static char            loginNonce[NONCE_RING][33] = {};   // 32 hex chars + NUL each
+static uint32_t        loginNonceMs[NONCE_RING]   = {};
+static uint8_t         loginNonceHead      = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WIFI STATE
@@ -268,6 +288,27 @@ static void generateOtaPassword() {
     otaPassword[12] = '\0';
 }
 
+// First-boot generation of the default device password is DEFERRED until after
+// WiFi.mode() has enabled the RF subsystem, so esp_random() is the true hardware
+// RNG — exactly the property generatePortalCode()/generateCsrfToken() rely on.
+// Generating it inside wifiSetup() (before any WiFi.mode() call) would seed the
+// single most important default credential — the login/OTA password most users
+// keep — from the weak pre-RF PRNG. wifiSetup() only raises this flag; both
+// start paths call ensureOtaPassword() once RF is up.
+static bool otaPwNeedsGen = false;
+static void ensureOtaPassword() {
+    if (!otaPwNeedsGen) return;
+    generateOtaPassword();                       // esp_random() now HW-backed
+    wifiPrefs.begin("wifi", false);
+    wifiPrefs.putString("otapw", String(otaPassword));
+    wifiPrefs.end();
+    otaPwNeedsGen = false;
+    // Do NOT print the password itself — a friend may power the device from a
+    // computer, exposing this UART to any program on that host. It's shown on the
+    // TFT WiFi Info screen (physical access) instead.
+    Serial.println("[OTA] default device password generated (see TFT WiFi Info screen)");
+}
+
 static void generateCsrfToken() {
     static const char CHARS[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789abcdefghijkmnpqrstuvwxyz";
     const uint32_t N = sizeof(CHARS) - 1;
@@ -282,13 +323,18 @@ static const char* effectivePassword() {
     return devPassword[0] ? devPassword : otaPassword;
 }
 
-// Issue a fresh single-use challenge nonce (32 hex chars). Stamped for the 30 s
-// validity window checked in checkChallenge().
-static void generateLoginNonce() {
+// Issue a fresh single-use challenge nonce (32 hex chars) into the next ring
+// slot. Returns a pointer to THAT slot so the caller echoes the exact nonce it
+// minted (not whatever lands at head afterwards). Stamped for the 30 s validity
+// window checked in checkChallenge().
+static const char* generateLoginNonce() {
     static const char kHex[] = "0123456789abcdef";   // (not HEX — that's an Arduino macro)
-    for (int i = 0; i < 32; i++) loginNonce[i] = kHex[uniformRandom(16)];
-    loginNonce[32] = '\0';
-    loginNonceMs = millis();
+    char* slot = loginNonce[loginNonceHead];
+    for (int i = 0; i < 32; i++) slot[i] = kHex[uniformRandom(16)];
+    slot[32] = '\0';
+    loginNonceMs[loginNonceHead] = millis();
+    loginNonceHead = (loginNonceHead + 1) % NONCE_RING;
+    return slot;
 }
 
 // HMAC-SHA256(effective device password, msg) → lowercase hex (64 chars + NUL).
@@ -334,10 +380,15 @@ static bool secureEquals(const char* a, const char* b) {
 #define CR_NO_CHALLENGE  1
 #define CR_BAD           2
 static int checkChallenge(const String& nonce, const String& respHex) {
-    if (!loginNonce[0]) return CR_NO_CHALLENGE;
-    if ((uint32_t)(millis() - loginNonceMs) > 30000UL) { loginNonce[0] = '\0'; return CR_NO_CHALLENGE; }
-    if (nonce != loginNonce) return CR_NO_CHALLENGE;
-    loginNonce[0] = '\0';                       // consume — single use
+    uint32_t now = millis();
+    int found = -1;
+    for (int i = 0; i < NONCE_RING; i++) {
+        if (!loginNonce[i][0]) continue;
+        if ((uint32_t)(now - loginNonceMs[i]) > 30000UL) { loginNonce[i][0] = '\0'; continue; }
+        if (nonce == loginNonce[i]) { found = i; break; }
+    }
+    if (found < 0) return CR_NO_CHALLENGE;
+    loginNonce[found][0] = '\0';                // consume — single use
     char expected[65];
     computeAuthHmacHex(nonce, expected);
     return secureEquals(respHex.c_str(), expected) ? CR_OK : CR_BAD;
@@ -570,15 +621,14 @@ void wifiSetup() {
     // sizeof(devPassword)-1; left empty when the user never set one.
     savedDev.toCharArray(devPassword, sizeof(devPassword));
 
-    // Generate a per-device OTA password on first boot; persist it for future boots.
+    // Per-device OTA password: load the saved one, or defer first-boot
+    // generation until RF is up (see ensureOtaPassword()). Generating here —
+    // ahead of every WiFi.mode() call — would draw the default credential from
+    // the pre-RF PRNG instead of the hardware RNG.
     if (savedOta.length() == 12) {
         savedOta.toCharArray(otaPassword, sizeof(otaPassword));
     } else {
-        generateOtaPassword();
-        wifiPrefs.begin("wifi", false);
-        wifiPrefs.putString("otapw", String(otaPassword));
-        wifiPrefs.end();
-        Serial.printf("[OTA] new password generated: %s\n", otaPassword);
+        otaPwNeedsGen = true;
     }
 
     // Stamp this firmware's version against the OTA slot it booted from, and
@@ -868,6 +918,9 @@ static void startPortalMode() {
     generatePortalCode();
     Serial.printf("[WiFi] Portal code: %s\n", portalCode);
 
+    // RF is up now — safe to mint the default device password with the HW RNG.
+    ensureOtaPassword();
+
     bool cOk = WiFi.softAPConfig(AP_IP, AP_GW, AP_MASK);
     Serial.printf("[WiFi] softAPConfig = %d\n", cOk); Serial.flush();
 
@@ -1055,6 +1108,11 @@ static void startStaMode(const String& ssid, const String& pass,
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
 
+    // RF is up now — safe to mint the default device password with the HW RNG.
+    // Runs before staConnectTask/startFullServer, so effectivePassword() is
+    // correct by the time /login is reachable.
+    ensureOtaPassword();
+
     StaConnectArgs* args = new StaConnectArgs();
     args->ssid     = ssid;
     args->pass     = pass;
@@ -1065,6 +1123,38 @@ static void startStaMode(const String& ssid, const String& pass,
     // 8 KB: startFullServer() calls into AsyncTCP/lwIP which needs >4 KB.
     xTaskCreatePinnedToCore(staConnectTask, "WiFiConnect",
                             8192, args, 1, NULL, 0);
+}
+
+// ── Per-IP auth bookkeeping ──────────────────────────────────────────────────
+// Enrol an IP as password-authenticated (called on a successful /login).
+static void authIPAdd(uint32_t ip) {
+    if (ip == 0) return;
+    for (int i = 0; i < AUTHED_IP_MAX; i++) if (authedIPs[i] == ip) return;   // dedupe
+    authedIPs[authedIPHead] = ip;
+    authedIPHead = (authedIPHead + 1) % AUTHED_IP_MAX;
+}
+static bool authIPKnown(uint32_t ip) {
+    if (ip == 0) return false;
+    for (int i = 0; i < AUTHED_IP_MAX; i++) if (authedIPs[i] == ip) return true;
+    return false;
+}
+// Find (or allocate) this IP's brute-force entry, returned as an INDEX into
+// loginFails[] (not a pointer — a function returning the sketch-local struct
+// type would trip arduino-cli's auto-prototype, landing the prototype above the
+// struct definition; same reason checkChallenge() returns a plain int). Full
+// table → evict the entry whose lockout expires soonest, so an active lockout is
+// never dropped for an idle one (and an attacker can't reset their own lockout by
+// churning the table).
+static int loginFailSlot(uint32_t ip) {
+    for (int i = 0; i < LOGIN_FAIL_MAX; i++)
+        if (loginFails[i].ip == ip) return i;
+    for (int i = 0; i < LOGIN_FAIL_MAX; i++)
+        if (loginFails[i].ip == 0) { loginFails[i] = { ip, 0, 0 }; return i; }
+    int v = 0;
+    for (int i = 1; i < LOGIN_FAIL_MAX; i++)
+        if ((int32_t)(loginFails[i].lockoutUntilMs - loginFails[v].lockoutUntilMs) < 0) v = i;
+    loginFails[v] = { ip, 0, 0 };
+    return v;
 }
 
 // ── Request gates (STA mode) ─────────────────────────────────────────────────
@@ -1089,9 +1179,11 @@ static bool tokenOk(AsyncWebServerRequest* req) {
     return req->hasHeader("X-AutoFOV-Token") &&
            req->header("X-AutoFOV-Token") == String(csrfToken);
 }
-// Standard gate for reading/state-changing endpoints: right Host + valid token.
+// Standard gate for reading/state-changing endpoints: right Host + valid token +
+// the token presented from an IP that actually logged in (token-replay defense).
 static bool apiAuthed(AsyncWebServerRequest* req) {
-    return hostAllowed(req) && tokenOk(req);
+    return hostAllowed(req) && tokenOk(req) &&
+           authIPKnown((uint32_t)req->client()->remoteIP());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1128,7 +1220,10 @@ static void startFullServer() {
     // so unauthenticated clients never receive the full-state push.
     wsServer.setFilter([](AsyncWebServerRequest* req) {
         if (!hostAllowed(req) || !req->hasParam("tok")) return false;
-        return req->getParam("tok")->value() == String(csrfToken);
+        if (req->getParam("tok")->value() != String(csrfToken)) return false;
+        // Same token-replay defense as apiAuthed: the upgrade must come from an
+        // IP that completed /login this boot.
+        return authIPKnown((uint32_t)req->client()->remoteIP());
     });
     wsServer.onEvent(onWsEvent);
     httpServer.addHandler(&wsServer);
@@ -1138,8 +1233,8 @@ static void startFullServer() {
     // page can't read a nonce and therefore can't even attempt /login.
     httpServer.on("/login-challenge", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
-        generateLoginNonce();
-        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", loginNonce);
+        const char* nonce = generateLoginNonce();
+        AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", nonce);
         resp->addHeader("Cache-Control", "no-store");
         req->send(resp);
     });
@@ -1151,8 +1246,10 @@ static void startFullServer() {
     httpServer.on("/login", HTTP_POST, [](AsyncWebServerRequest* req) {
         if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
         uint32_t now = millis();
-        if (loginLockoutUntilMs && (int32_t)(loginLockoutUntilMs - now) > 0) {
-            uint32_t secs = (loginLockoutUntilMs - now + 999) / 1000;
+        uint32_t ip  = (uint32_t)req->client()->remoteIP();
+        LoginFailEntry& fe = loginFails[loginFailSlot(ip)];   // per-IP brute-force state
+        if (fe.lockoutUntilMs && (int32_t)(fe.lockoutUntilMs - now) > 0) {
+            uint32_t secs = (fe.lockoutUntilMs - now + 999) / 1000;
             AsyncWebServerResponse* r = req->beginResponse(
                 429, "text/plain", "Too many attempts; wait " + String(secs) + "s");
             r->addHeader("Retry-After", String(secs));
@@ -1168,22 +1265,24 @@ static void startFullServer() {
         }
         switch (checkChallenge(req->header("X-Login-Nonce"), req->header("X-Login-Response"))) {
         case CR_OK: {
-            loginFailCount = 0;
-            loginLockoutUntilMs = 0;
+            fe.fails = 0;
+            fe.lockoutUntilMs = 0;
+            authIPAdd(ip);                 // enrol this IP so its token is honoured
             AsyncWebServerResponse* resp = req->beginResponse(200, "text/plain", csrfToken);
             resp->addHeader("Cache-Control", "no-store");
             req->send(resp);
             return;
         }
         case CR_BAD: {
-            if (loginFailCount < 255) loginFailCount++;
-            if (loginFailCount >= 5) {
+            if (fe.fails < 255) fe.fails++;
+            if (fe.fails >= 5) {
                 // 5 fails → 15 s, doubling to a 4 min cap; persists until success.
-                uint8_t shift = loginFailCount - 5;
+                uint8_t shift = fe.fails - 5;
                 if (shift > 4) shift = 4;     // 15 s << 4 = 240 s; also bounds the shift
-                loginLockoutUntilMs = now + (15000UL << shift);
+                fe.lockoutUntilMs = now + (15000UL << shift);
             }
-            Serial.printf("[LOGIN] failed attempt #%u\n", loginFailCount);
+            Serial.printf("[LOGIN] failed attempt #%u from %s\n",
+                          fe.fails, req->client()->remoteIP().toString().c_str());
             req->send(401, "text/plain", "Unauthorized");
             return;
         }
