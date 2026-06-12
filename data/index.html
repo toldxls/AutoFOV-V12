@@ -868,86 +868,23 @@
             </div>
 
             <!-- ===================== VIBRATION MONITOR (V12) ===================== -->
+            <!-- The vibration UI is now a full-viewport web-native dashboard
+                 (#vibmenu), opened by vibEnter() when this screen becomes
+                 active. This bezel screen stays as a minimal placeholder so the
+                 nav/history/device-sync plumbing (switchScreen / goBack /
+                 screenIdForMode) keeps working unchanged — it's fully covered by
+                 the overlay, so its content is never seen. -->
             <div id="screen-vibration" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 110px; background-color: #00968C;">VIBRATION</div>
-                <div class="gfx-text" id="vib-state" style="left: 125px; top: 7px; font-size: 10px; font-weight: bold; letter-spacing: 1px; color: #3ddb7a;">CALM</div>
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
-
-                <!-- Live readouts.  Two fixed rows so the layout never shifts:
-                     row 1 = current dominant/V/H, row 2 = 10 s peak-hold (dim
-                     when no peak is active). -->
-                <div class="gfx-text" id="vib-readout"      style="left: 8px; top: 36px; width: 224px; font-size: 12px; line-height: 14px; color: var(--accent-green);">dominant -- Hz</div>
-                <div class="gfx-text" id="vib-readout-peak" style="left: 8px; top: 52px; width: 224px; font-size: 10px; line-height: 12px; color: #46665c;">10 s peak —</div>
-
-                <!-- Spectrum thumbnail (tap → full analyzer) -->
-                <canvas id="vib-canvas" width="452" height="184" title="Tap to open the full analyzer"
-                        onclick="vibOpenPanel()"
-                        style="position:absolute; left:6px; top:70px; width:228px; height:92px; background:#06120f; border:1px solid #1f3a33; border-radius:3px; cursor:pointer;"></canvas>
-
-                <!-- WAIT timing row — 'rec' / now-input / delta.  Widened input
-                     so 4-digit values aren't clipped, native spinner stripped
-                     via CSS above. -->
-                <div class="gfx-text" id="vib-readout2"
-                     style="left: 8px; top: 168px; width: 224px; font-size: 10px; line-height: 14px; color: var(--text-muted); display:flex; align-items:center; gap:4px; white-space:nowrap;">
-                    <span>rec</span>
-                    <span id="vib-rec" style="color:var(--accent-green); min-width:42px;">--</span>
-                    <span style="color:#2a5e58;">&middot;</span>
-                    <span>now</span>
-                    <input id="vib-curwait" type="number" min="0" max="20000" step="50"
-                           style="width:52px; height:16px; background:#0c2b2e; color:#e3f7c9; border:1px solid #1f3a33; font-size:10px; padding:0 4px; text-align:right; box-sizing:border-box;"
-                           onchange="vibSetWait()">
-                    <span>ms</span>
-                    <span style="color:#2a5e58;">&middot;</span>
-                    <span id="vib-delta" style="flex:1 1 auto; text-align:right;"></span>
-                </div>
-
-                <!-- Compact action rows so the signature list has room for
-                     ~3 entries visible at once instead of the single row the
-                     previous taller buttons squeezed it down to. -->
-                <div class="gfx-btn" style="left: 8px; top: 184px; width: 76px; height: 20px; background-color: #A800F8; font-size: 11px;"
-                     onclick="sendCommand('vibReLock',1)">RE-LOCK</div>
-                <!-- mg/µm toggle — sits in the action row so it never collides
-                     with the top-right X close button. Shares vibUnitsUm state
-                     with the analyzer panel so flipping here propagates. -->
-                <div id="vib-units-toggle" onclick="vibToggleUnits()" title="Toggle mg ↔ µm"
-                     style="position:absolute; left:90px; top:185px; width:36px; height:18px;
-                            display:flex; align-items:center; justify-content:center;
-                            background:#0c2b2e; color:#9fe6cf; border:1px solid #2a5e58;
-                            border-radius:3px; font-size:11px; font-weight:bold; cursor:pointer;">mg</div>
-                <div class="gfx-text" id="vib-lock" style="right: 8px; top: 187px; font-size: 11px; color: var(--text-muted);">lock -- Hz</div>
-
-                <input id="vib-capname" type="text" placeholder="signature name" maxlength="15"
-                       style="position:absolute; left:8px; top:208px; width:104px; height:20px; box-sizing:border-box;
-                              background:#0c2b2e; color:#e3f7c9; border:1px solid #1f3a33; font-size:11px; padding:0 6px;">
-                <div class="gfx-btn" style="left: 120px; top: 208px; width: 84px; height: 20px; background-color: #006400; font-size: 11px;"
-                     onclick="vibCapture()">CAPTURE</div>
-
-                <div class="gfx-btn" style="left: 6px; top: 232px; width: 228px; height: 18px; background-color: #1a3c3a; border:1px solid #2a5e58; font-size: 10px;"
-                     onclick="switchScreen('screen-vib-wait')">WAIT ANALYSIS &#9654;</div>
-
-                <div style="position:absolute; left:6px; top:254px; width:228px; font-size:9px; color:var(--text-disabled); letter-spacing:0.5px;">SIGNATURES &mdash; tap ▶ to overlay</div>
-                <div id="vib-siglist" style="position:absolute; left:6px; top:266px; width:228px; height:52px;
-                     overflow-y:auto; font-size:11px; color:var(--text-muted);"></div>
+                <div class="gfx-text" style="left: 8px; top: 150px; width: 224px; text-align:center; font-size: 11px; color: var(--text-disabled);">opening analyzer…</div>
             </div>
 
-            <!-- ===================== WAIT ANALYSIS ===================== -->
+            <!-- WAIT ANALYSIS — its real UI is the full-viewport #vibwait
+                 overlay, opened by vibWaitScreenEnter(). Minimal bezel
+                 placeholder kept for nav/sync plumbing, same as screen-vibration. -->
             <div id="screen-vib-wait" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 130px; background-color: #1a3c3a;">WAIT ANALYSIS</div>
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-vibration')">X</div>
-
-                <div class="gfx-text" id="vibw-rec" style="left: 12px; top: 36px; font-size: 13px; font-weight: bold; color: #ffcc44;">rec wait — ms</div>
-                <div class="gfx-text" id="vibw-dom" style="right: 12px; top: 38px; font-size: 10px; color: #00c8b4;">— Hz resonance</div>
-                <div class="gfx-text" id="vibw-cur" style="left: 12px; top: 54px; font-size: 10px; color: var(--text-muted);">configured — ms</div>
-                <div class="gfx-text" id="vibw-delta" style="right: 12px; top: 54px; font-size: 10px;"></div>
-                <div class="gfx-text" id="vibw-age" style="left: 12px; top: 70px; font-size: 9px; color: var(--text-disabled);">waiting for shutter pulse&hellip;</div>
-
-                <canvas id="vib-waitscreen-canvas" width="456" height="440"
-                        style="position:absolute; left:6px; top:82px; width:228px; height:220px;
-                               background:#040d0b; border:1px solid #1f3a33;"></canvas>
-
-                <div class="gfx-text" style="left: 12px; top: 308px; font-size: 9px; color: var(--text-disabled);">
-                    resonance frequency → settle wait &mdash; fires on each shutter pulse
-                </div>
+                <div class="gfx-text" style="left: 8px; top: 150px; width: 224px; text-align:center; font-size: 11px; color: var(--text-disabled);">opening settle plot…</div>
             </div>
 
             <!-- ===================== SCREEN TIMEOUT + THEMES ===================== -->
@@ -1565,6 +1502,188 @@
       <div id="otapw-cancel" onclick="otaPwCancel()">CANCEL</div>
     </div>
 
+    <!-- ===================== VIBRATION DASHBOARD (#vibmenu) =====================
+         Full-viewport web-native rework of the old cramped device-emulated
+         vibration screen. Opened by vibEnter() while screen-vibration is the
+         active bezel screen, so the live-refresh gating (which keys on
+         state.screen === 'screen-vibration') keeps driving it. Reuses the
+         original element IDs (vib-state, vib-canvas, vib-rec, vib-curwait,
+         vib-delta, vib-lock, vib-units-toggle, vib-capname, vib-siglist) so the
+         existing JS keeps working; the dominant/peak readouts moved to clearly
+         labelled cards (new vib-dom-*/vib-peak-* spans). -->
+    <style>
+      #vibmenu { display:none; position:fixed; inset:0; z-index:380;
+        background:#06120f; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #vibmenu.open { display:flex; }
+      /* Neutralise the global absolutely-positioned .gfx-btn so buttons flow in
+         the dashboard's flex rows (same trick #mjkzz-buttons uses). */
+      #vibmenu .gfx-btn, #vibwait .gfx-btn { position:relative; left:auto; top:auto;
+        width:auto; height:auto; padding:6px 14px; font-size:12px; border-radius:4px; }
+      #vibmenu-head { flex:0 0 auto; display:flex; align-items:center; gap:14px;
+        padding:10px 18px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #vibmenu .vm-title { color:#00c8b4; font-weight:bold; letter-spacing:3px; font-size:17px; }
+      #vibmenu .vm-state { font-weight:bold; font-size:13px; letter-spacing:2px;
+        padding:5px 18px; border-radius:6px; border:2px solid currentColor; color:#3ddb7a;
+        text-align:center; min-width:120px;
+        box-shadow:0 0 10px rgba(0,0,0,0.5), inset 0 0 14px rgba(255,255,255,0.06); }
+      #vibmenu .vm-head-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+      #vibmenu #vib-units-toggle { cursor:pointer; background:#1a3c3a; border:1px solid #2a5e58;
+        padding:6px 16px; border-radius:4px; color:#9fe6cf; font-weight:bold; font-size:14px;
+        min-width:50px; text-align:center; }
+      #vibmenu .vm-analyze { cursor:pointer; background:#13403a; border:1px solid #00c8b4;
+        padding:7px 18px; border-radius:4px; color:#7fffe6; font-weight:bold; letter-spacing:1px; }
+      #vibmenu .vm-analyze:active { filter:brightness(1.3); }
+      #vibmenu .vm-close { cursor:pointer; background:#5a1414; border:1px solid #ff6600;
+        color:#ffd0c0; padding:6px 14px; border-radius:4px; font-size:15px; font-weight:bold; line-height:1; }
+      #vibmenu-body { flex:1 1 auto; display:flex; gap:14px; padding:14px 16px; min-height:0; }
+      #vibmenu .vm-rail { flex:0 0 250px; display:flex; flex-direction:column; gap:12px; min-height:0; }
+      #vibmenu .vm-row2 { display:contents; }   /* cards stack in the rail; the media query flips them side-by-side when narrow */
+      #vibmenu .vm-main { flex:1 1 auto; display:flex; flex-direction:column; gap:12px; min-width:0; min-height:0; }
+      #vibmenu .vm-card { background:#0a201c; border:1px solid #1f3a33; border-radius:8px; padding:11px 14px; }
+      #vibmenu .vm-card-lbl { color:#6f9a8c; font-size:10px; letter-spacing:1.5px; }
+      #vibmenu .vm-card-val { color:#e3f7c9; font-size:30px; font-weight:bold; line-height:1.05; margin-top:3px; }
+      #vibmenu .vm-card-val .vm-u { font-size:14px; color:#7ab4a2; font-weight:normal; }
+      #vibmenu .vm-card-sub { color:#9fe6cf; font-size:14px; margin-top:5px; letter-spacing:0.5px; }
+      #vibmenu .vm-card-sub .vm-k { color:#6f9a8c; }
+      #vibmenu #vib-peak-card.idle { opacity:0.5; }
+      #vibmenu .vm-sigs { flex:1 1 auto; display:flex; flex-direction:column; min-height:0;
+        background:#0a201c; border:1px solid #1f3a33; border-radius:8px; padding:11px 14px; }
+      #vibmenu .vm-sec { color:#6f9a8c; font-size:10px; letter-spacing:1.5px; margin-bottom:7px; }
+      #vibmenu .vm-sig-cap { display:flex; gap:8px; margin-bottom:9px; }
+      #vibmenu #vib-capname { flex:1 1 auto; min-width:0; background:#0c2b2e; color:#e3f7c9;
+        border:1px solid #1f3a33; font-size:13px; padding:5px 9px; font-family:monospace; border-radius:3px; }
+      #vibmenu #vib-siglist { flex:1 1 auto; overflow-y:auto; font-size:13px; color:#9fe6cf; min-height:40px; }
+      #vibmenu #vib-canvas { flex:1 1 auto; width:100%; min-height:0; background:#040d0b;
+        border:1px solid #1f3a33; border-radius:8px; cursor:pointer; display:block; }
+      #vibmenu .vm-wait { flex:0 0 auto; background:#0a201c; border:1px solid #1f3a33;
+        border-radius:8px; padding:11px 14px; }
+      #vibmenu .vm-wait-grid { display:flex; align-items:center; flex-wrap:wrap; gap:8px 22px; margin-top:7px; }
+      #vibmenu .vm-wait-item { display:flex; flex-direction:column; gap:2px; }
+      #vibmenu .vm-wait-item .vm-k { color:#6f9a8c; font-size:10px; letter-spacing:1px; }
+      #vibmenu .vm-wait-item b { color:#ffcc44; font-size:18px; font-weight:bold; }
+      #vibmenu #vib-curwait { width:74px; background:#0c2b2e; color:#e3f7c9; border:1px solid #1f3a33;
+        font-size:15px; padding:3px 6px; text-align:right; font-family:monospace; border-radius:3px; }
+      #vibmenu #vib-delta { font-size:13px; }
+      #vibmenu .vm-wait-actions { margin-left:auto; display:flex; align-items:center; gap:9px; }
+      #vibmenu #vib-lock { color:#9fe6cf; font-size:12px; }
+      /* Narrow viewports (phones / the bezel-sized window): stack the rail under
+         the main pane so nothing is cramped. */
+      @media (max-width: 760px) {
+        #vibmenu-head { flex-wrap:wrap; gap:8px 10px; padding:8px 12px; }
+        #vibmenu .vm-title { font-size:15px; letter-spacing:2px; }
+        #vibmenu .vm-head-right { gap:8px; }
+        #vibmenu-body { flex-direction:column; overflow-y:auto; }
+        #vibmenu .vm-rail { flex:0 0 auto; }          /* cards stay stacked (vm-row2 = display:contents) */
+        #vibmenu .vm-sigs { min-height:120px; }
+        #vibmenu #vib-canvas { min-height:240px; }
+        #vibmenu .vm-wait-grid { gap:8px 16px; }
+        #vibmenu .vm-wait-actions { margin-left:0; flex-wrap:wrap; }
+      }
+
+      /* ---------------- WAIT ANALYSIS detail overlay (#vibwait) ------------- */
+      #vibwait { display:none; position:fixed; inset:0; z-index:390;
+        background:#06120f; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #vibwait.open { display:flex; }
+      #vibwait-head { flex:0 0 auto; display:flex; align-items:center; gap:14px;
+        padding:10px 18px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #vibwait .vw-title { color:#00c8b4; font-weight:bold; letter-spacing:3px; font-size:16px; }
+      #vibwait .vw-close { margin-left:auto; cursor:pointer; background:#5a1414; border:1px solid #ff6600;
+        color:#ffd0c0; padding:6px 14px; border-radius:4px; font-size:15px; font-weight:bold; line-height:1; }
+      #vibwait-stats { flex:0 0 auto; display:flex; flex-wrap:wrap; gap:6px 28px;
+        padding:12px 20px; align-items:baseline; border-bottom:1px solid #14302a; }
+      #vibwait #vibw-rec   { font-size:18px; font-weight:bold; color:#ffcc44; }
+      #vibwait #vibw-dom   { font-size:13px; color:#00c8b4; }
+      #vibwait #vibw-cur   { font-size:13px; color:#9fe6cf; }
+      #vibwait #vibw-delta { font-size:13px; }
+      #vibwait #vibw-age   { font-size:12px; color:var(--text-disabled); width:100%; }
+      #vibwait-body { flex:1 1 auto; display:flex; flex-direction:column; align-items:center;
+        justify-content:center; padding:16px; min-height:0; gap:10px; }
+      #vibwait #vib-waitscreen-canvas { display:block;
+        background:#040d0b; border:1px solid #1f3a33; border-radius:8px; }
+      #vibwait .vw-hint { flex:0 0 auto; font-size:11px; color:var(--text-disabled); letter-spacing:0.5px; }
+    </style>
+    <div id="vibmenu">
+      <div id="vibmenu-head">
+        <span class="vm-title">VIBRATION</span>
+        <span id="vib-state" class="vm-state" title="Overall vibration level right now">CALM</span>
+        <span class="vm-head-right">
+          <span id="vib-units-toggle" onclick="vibToggleUnits()"
+                title="Toggle units: acceleration (mg) ↔ displacement (µm)">mg</span>
+          <span class="vm-analyze" onclick="vibOpenPanel()"
+                title="Open the full multi-pane analyzer (spectrum + waterfall + RMS trend)">ANALYZE&nbsp;&#9654;</span>
+          <span class="vm-close" onclick="goBack('screen-settings')" title="Close">&#10005;</span>
+        </span>
+      </div>
+      <div id="vibmenu-body">
+        <div class="vm-rail">
+          <div class="vm-row2">
+          <div class="vm-card" title="The single loudest vibration frequency at this moment, with its amplitude along (V = vertical, the optical axis) and across (H = horizontal) the focus plane.">
+            <div class="vm-card-lbl">DOMINANT FREQUENCY</div>
+            <div class="vm-card-val"><span id="vib-dom-hz">--</span> <span class="vm-u">Hz</span></div>
+            <div class="vm-card-sub"><span class="vm-k">V</span> <span id="vib-dom-v">--</span>
+              &nbsp; <span class="vm-k">H</span> <span id="vib-dom-h">--</span> <span id="vib-unit-a">mg</span></div>
+          </div>
+          <div class="vm-card" id="vib-peak-card" title="Worst values seen over the last 10 seconds (peak-hold) — useful for catching brief bumps.">
+            <div class="vm-card-lbl">10&nbsp;s PEAK</div>
+            <div class="vm-card-val"><span id="vib-peak-hz">--</span> <span class="vm-u">Hz</span></div>
+            <div class="vm-card-sub"><span class="vm-k">V</span> <span id="vib-peak-v">--</span>
+              &nbsp; <span class="vm-k">H</span> <span id="vib-peak-h">--</span> <span id="vib-unit-b">mg</span></div>
+          </div>
+          </div>
+          <div class="vm-sigs">
+            <div class="vm-sec">SIGNATURES</div>
+            <div class="vm-sig-cap">
+              <input id="vib-capname" type="text" placeholder="name this vibration" maxlength="15">
+              <div class="gfx-btn" style="background-color:#006400;" onclick="vibCapture()">CAPTURE</div>
+            </div>
+            <div id="vib-siglist"></div>
+          </div>
+        </div>
+        <div class="vm-main">
+          <canvas id="vib-canvas" onclick="vibOpenPanel()" title="Tap to open the full analyzer"></canvas>
+          <div class="vm-wait">
+            <div class="vm-sec">WAIT ANALYSIS &mdash; settle time before the shutter fires</div>
+            <div class="vm-wait-grid">
+              <div class="vm-wait-item" title="Recommended settle time, computed from the measured resonance ring-down.">
+                <span class="vm-k">RECOMMENDED SETTLE</span><b id="vib-rec">--</b>
+              </div>
+              <div class="vm-wait-item" title="The wait time currently configured on the controller. Edit to change it.">
+                <span class="vm-k">YOUR WAIT (ms)</span>
+                <span><input id="vib-curwait" type="number" min="0" max="20000" step="50" onchange="vibSetWait()">
+                  <span id="vib-delta"></span></span>
+              </div>
+              <div class="vm-wait-actions">
+                <span id="vib-lock" title="Locked resonance frequency used for the settle estimate">lock -- Hz</span>
+                <div class="gfx-btn" style="background-color:#A800F8;" onclick="sendCommand('vibReLock',1)"
+                     title="Re-measure and lock the table's resonance frequency">RE-LOCK</div>
+                <div class="gfx-btn" style="background-color:#1a3c3a; border:1px solid #2a5e58;"
+                     onclick="switchScreen('screen-vib-wait')"
+                     title="Open the settle-time history plot">SETTLE PLOT&nbsp;&#9654;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vibwait">
+      <div id="vibwait-head">
+        <span class="vw-title">WAIT ANALYSIS</span>
+        <span class="vw-close" onclick="goBack('screen-vibration')" title="Back to vibration dashboard">&#10005;</span>
+      </div>
+      <div id="vibwait-stats">
+        <span id="vibw-rec">rec wait — ms</span>
+        <span id="vibw-dom">— Hz resonance</span>
+        <span id="vibw-cur">configured — ms</span>
+        <span id="vibw-delta"></span>
+        <span id="vibw-age">waiting for shutter pulse&hellip;</span>
+      </div>
+      <div id="vibwait-body">
+        <canvas id="vib-waitscreen-canvas"></canvas>
+        <div class="vw-hint">resonance frequency → settle wait — the curve updates on each shutter pulse</div>
+      </div>
+    </div>
+
     <div id="vib-panel">
       <div id="vibp-head">
         <span id="vibp-head-left">
@@ -1739,6 +1858,7 @@
         if (id === 'screen-vibration')   vibEnter();
         else if (prevScreen === 'screen-vibration') vibLeave();
         if (id === 'screen-vib-wait')    vibWaitScreenEnter();
+        else if (prevScreen === 'screen-vib-wait') vibWaitScreenLeave();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1748,14 +1868,32 @@
     let vibSigs = [];       // saved-signature filenames
 
     function vibEnter() {
+        const m = document.getElementById('vibmenu');
+        if (m) m.classList.add('open');
         sendCommand('vibPanel', 1);   // device starts streaming the spectrum
+        vibMenuResize();              // size the spectrum canvas to its flex box, then paint
         vibUpdateReadout();
-        drawVibSpectrum();
     }
     function vibLeave() {
+        const m = document.getElementById('vibmenu');
+        if (m) m.classList.remove('open');
         sendCommand('vibPanel', 0);   // stop the stream when the panel closes
-        vibClosePanel();              // the expanded panel can't outlive the screen
+        vibClosePanel();              // the expanded analyzer can't outlive the screen
     }
+    // Size the dashboard spectrum canvas buffer to its on-screen box ×
+    // devicePixelRatio so the trace + axis text stay crisp at any window size,
+    // then repaint. Called on enter and on window resize.
+    function vibMenuResize() {
+        const m = document.getElementById('vibmenu');
+        if (!m || !m.classList.contains('open')) return;
+        const c = document.getElementById('vib-canvas');
+        if (!c) return;
+        const dpr = window.devicePixelRatio || 1;
+        c.width  = Math.max(1, Math.round(c.clientWidth  * dpr));
+        c.height = Math.max(1, Math.round(c.clientHeight * dpr));
+        drawVibSpectrum();
+    }
+    window.addEventListener('resize', vibMenuResize);
 
     // ── Expanded vibration analyser (web-native, high-resolution) ───────────
     const VIB_BIN_HZ = 416 / 512;          // 0.8125 Hz per bin (matches firmware)
@@ -3096,9 +3234,38 @@
         while (vibWaitHistory.length && vibWaitHistory[0].t < cut) vibWaitHistory.shift();
     }
     function vibWaitScreenEnter() {
+        const w = document.getElementById('vibwait');
+        if (w) w.classList.add('open');
+        vibWaitResize();          // size the settle-plot canvas to its box, then paint
         vibUpdateWaitReadout();
+    }
+    function vibWaitScreenLeave() {
+        const w = document.getElementById('vibwait');
+        if (w) w.classList.remove('open');
+    }
+    // Fit the settle-plot canvas inside its flex box while preserving the
+    // 228/220 logical aspect — clamped to BOTH the available width and height so
+    // it never overflows over the header. Buffer is DPR-sized for crisp text.
+    function vibWaitResize() {
+        const w = document.getElementById('vibwait');
+        if (!w || !w.classList.contains('open')) return;
+        const c = document.getElementById('vib-waitscreen-canvas');
+        if (!c) return;
+        const box = c.parentElement;                 // #vibwait-body
+        const AR = 228 / 220;
+        const availW = Math.max(80, box.clientWidth - 32);
+        const availH = Math.max(80, box.clientHeight - 44);   // leave room for the hint line
+        let cw = Math.min(availW, 820);
+        let ch = cw / AR;
+        if (ch > availH) { ch = availH; cw = ch * AR; }
+        c.style.width  = Math.floor(cw) + 'px';
+        c.style.height = Math.floor(ch) + 'px';
+        const dpr = window.devicePixelRatio || 1;
+        c.width  = Math.max(1, Math.round(cw * dpr));
+        c.height = Math.max(1, Math.round(ch * dpr));
         vibDrawWaitScreen();
     }
+    window.addEventListener('resize', vibWaitResize);
     function vibUpdateWaitReadout() {
         const rec = state.vibWait || 0;
         const cur = state.vibCur !== undefined ? state.vibCur : null;
@@ -3134,8 +3301,10 @@
         if (!c) return;
         const g = c.getContext('2d');
         g.fillStyle = '#040d0b'; g.fillRect(0, 0, c.width, c.height);
-        g.save(); g.scale(2, 2);
+        // Scale the 228×220 logical design up to the full (DPR-sized) buffer.
+        // The canvas CSS aspect-ratio is locked to 228/220 so this stays uniform.
         const lW = 228, lH = 220;
+        g.save(); g.scale(c.width / lW, c.height / lH);
 
         // ── Live RMS bars (top strip — always animating from telemetry) ──
         const stripH = 30;
@@ -3316,17 +3485,19 @@
         const c = document.getElementById('vib-canvas');
         if (!c) return;
         const g = c.getContext('2d');
-        const W = c.width, H = c.height;          // 452 × 184 — render at native
-        g.fillStyle = '#06120f'; g.fillRect(0, 0, W, H);
-        // Draw directly in buffer space — no nested g.scale(), no double-scale
-        // text blur.  The device frame's CSS scale(2.0) still doubles us on
-        // screen, but each buffer pixel maps 1:1 to a screen pixel.
+        // The canvas buffer is sized to its on-screen box × devicePixelRatio
+        // (vibMenuResize). Draw in CSS pixels via a DPR transform so the trace
+        // and axis text stay crisp and correctly proportioned at any size.
+        const dpr = window.devicePixelRatio || 1;
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const W = c.width / dpr, H = c.height / dpr;
+        g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
 
-        // Margins (buffer pixels).  Wider left gutter than before so y-tick
-        // numerics fit ("12.5" etc); top margin gives the unit label air; bottom
-        // margin sized for the 12 px Hz ticks.
-        const mL = 50, mB = 24, mT = 14, mR = 10;
+        // Margins (CSS pixels). Left gutter fits the y-tick numerics; bottom fits
+        // the Hz ticks; top gives the unit label air.
+        const mL = 54, mB = 28, mT = 16, mR = 14;
         const pw = W - mL - mR, ph = H - mT - mB;
+        if (pw < 20 || ph < 20) return;
 
         // ── Convert a deci-mg spectrum to displacement (µm per bin) using
         //    the same K/f² per-bin integration as the analyzer panel.  Bins
@@ -3389,11 +3560,11 @@
         g.stroke();
 
         // ── Y-axis unit label + tick numerics ───────────────────────────
-        g.font = 'bold 11px monospace'; g.fillStyle = '#6f9a8c';
+        g.font = 'bold 12px monospace'; g.fillStyle = '#6f9a8c';
         g.textAlign = 'right'; g.textBaseline = 'top';
-        g.fillText(vibUnitsUm ? 'µm' : 'mg', mL - 4, mT - 12);
+        g.fillText(vibUnitsUm ? 'µm' : 'mg', mL - 4, 2);
 
-        g.font = '11px monospace'; g.fillStyle = '#5e8c7e';
+        g.font = '12px monospace'; g.fillStyle = '#5e8c7e';
         g.textAlign = 'right';
         // Ticks at the top (mx), 3 inner quarters, and 0 — anchored to the
         // gridline y-positions so labels line up with the visible grid.
@@ -3412,21 +3583,20 @@
         for (const hz of xTicks) {
             const x = mL + hz / 208 * pw;
             g.textAlign = hz === 0 ? 'left' : (hz === 200 ? 'right' : 'center');
-            g.fillText(String(hz), x, mT + ph + 5);
+            g.fillText(String(hz), x, mT + ph + 6);
         }
         // 'Hz' axis label — bottom-right corner, below the chart so it doesn't
         // collide with the '200' tick label.
-        g.font = 'italic 10px monospace'; g.fillStyle = '#3a5e52';
+        g.font = 'italic 11px monospace'; g.fillStyle = '#3a5e52';
         g.textAlign = 'right'; g.textBaseline = 'bottom';
-        g.fillText('Hz', mL + pw, H - 1);
+        g.fillText('Hz', mL + pw, H - 2);
 
-        // ── "▶ ANALYZE" affordance — top-right of plot, semi-transparent ─
-        g.font = 'bold 11px monospace';
-        g.fillStyle = haveData ? 'rgba(0,200,180,0.60)' : 'rgba(0,200,180,0.45)';
-        g.textAlign = 'right'; g.textBaseline = 'top';
-        g.fillText('▶ ANALYZE', mL + pw - 4, mT + 2);
-
-        if (!haveData) return;
+        if (!haveData) {
+            g.fillStyle = '#3a5e52'; g.font = '13px monospace';
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText('waiting for spectrum…', mL + pw / 2, mT + ph / 2);
+            return;
+        }
 
         // ── Primary trace = peak-hold envelope, heat-coloured by amplitude ─
         for (let x = 0; x < pw; x++) {
@@ -3451,7 +3621,6 @@
         const stIdx = state.vibState || 0;
         const st = ['CALM', 'MODERATE', 'STRONG'][stIdx] || 'CALM';
         const stColor = ['#3ddb7a', '#ffcc00', '#ff4444'][stIdx] || '#3ddb7a';
-        const r1 = document.getElementById('vib-readout');
         const rs = document.getElementById('vib-state');
         if (rs) { rs.textContent = st; rs.style.color = stColor; }
         const rw = document.getElementById('vib-tile-wave');
@@ -3463,38 +3632,30 @@
         const dH = vibDispStats(vibSpecH, vibBaseH);
         const liveV = vibUnitsUm ? dV.rmsUm : vMg;
         const liveH = vibUnitsUm ? dH.rmsUm : hMg;
-        // Horizontal turns orange when it exceeds vertical — same cue as the
-        // device VIB_SPECTRUM readout, but compared in whichever unit is on.
-        const hCol = liveH > liveV ? '#f90' : 'var(--text-muted)';
         const unit = vibUnitsUm ? 'µm' : 'mg';
         const prec = vibUnitsUm ? 2    : 1;
-        // Mirror the unit on the dedicated toggle button below the spectrum —
-        // this is the only clickable affordance now, so the readout line just
-        // shows the unit as plain text (no chip in the X-button column).
         const tBtn = document.getElementById('vib-units-toggle');
         if (tBtn) tBtn.textContent = unit;
         const pV   = vibUnitsUm ? vibScalarHold.vUm : vibScalarHold.v;
         const pH   = vibUnitsUm ? vibScalarHold.hUm : vibScalarHold.h;
         const pDom = vibScalarHold.dom || state.vibDom || 0;
-        if (r1) r1.innerHTML =
-            `dominant <span style="display:inline-block;min-width:5ch;text-align:right">${(state.vibDom||0).toFixed(1)}</span> Hz` +
-            ` &nbsp; V ${liveV.toFixed(prec)} ` +
-            `<span style="color:${hCol}">H ${liveH.toFixed(prec)}</span> ${unit}`;
-        // Peak-hold readout — true 10 s sliding-window max from vibScalarHold.
-        // Rendered in the same style every frame so the layout doesn't flash;
-        // falls back to '—' only when the entire 10 s window has been idle.
-        const rp = document.getElementById('vib-readout-peak');
-        if (rp) {
-            const idle = vibUnitsUm
-                ? (pV < 0.05 && pH < 0.05)
-                : (pV < 0.05 && pH < 0.05);
-            rp.style.color = '#7ab4a2';
-            rp.innerHTML = idle
-                ? `<span style="color:#46665c">10 s peak  —</span>`
-                : `10 s peak  ${pDom.toFixed(1)} Hz` +
-                  ` &nbsp; V ${pV.toFixed(prec)} ` +
-                  ` H ${pH.toFixed(prec)} ${unit}`;
-        }
+        const setTxt = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+        // DOMINANT card — H goes orange when it exceeds V (same cue as the device).
+        setTxt('vib-dom-hz', (state.vibDom || 0).toFixed(1));
+        setTxt('vib-dom-v',  liveV.toFixed(prec));
+        setTxt('vib-dom-h',  liveH.toFixed(prec));
+        setTxt('vib-unit-a', unit);
+        const hEl = document.getElementById('vib-dom-h');
+        if (hEl) hEl.style.color = liveH > liveV ? '#f90' : '';
+        // 10 s PEAK card — true 10 s sliding-window max from vibScalarHold;
+        // the whole card dims when the window has been idle.
+        const idle = (pV < 0.05 && pH < 0.05);
+        const pkCard = document.getElementById('vib-peak-card');
+        if (pkCard) pkCard.classList.toggle('idle', idle);
+        setTxt('vib-peak-hz', idle ? '—' : pDom.toFixed(1));
+        setTxt('vib-peak-v',  idle ? '—' : pV.toFixed(prec));
+        setTxt('vib-peak-h',  idle ? '—' : pH.toFixed(prec));
+        setTxt('vib-unit-b',  unit);
         const rec = state.vibWait || 0;            // recommended WAIT, ms
         const recEl = document.getElementById('vib-rec');
         if (recEl) recEl.innerText = rec > 0 ? rec + ' ms' : '--';
