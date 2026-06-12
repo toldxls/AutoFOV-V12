@@ -1522,6 +1522,49 @@
       <div id="login-err"></div>
     </div>
 
+    <!-- Firmware-flash password overlay — styled like the login + reboot
+         overlays (viewport-scoped, monospace, green flash accent) so re-authing
+         for an OTA flash matches the device-veil UI instead of the bare native
+         prompt().  Promise-based: otaPasswordPrompt() resolves the typed
+         password, or null on cancel — a drop-in for the window.prompt() it
+         replaces. -->
+    <style>
+      #otapw-overlay { display:none; position:fixed; inset:0; z-index:660;
+        background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
+        -webkit-backdrop-filter:blur(4px); flex-direction:column;
+        align-items:center; justify-content:center; padding:0 24px;
+        color:#cfe7df; font-family:monospace; text-align:center; }
+      #otapw-overlay.open { display:flex; }
+      #otapw-overlay .opTitle { font-size:20px; font-weight:bold; color:#3ddb7a;
+        letter-spacing:3px; margin-bottom:6px; }
+      #otapw-overlay .opSub { font-size:11px; color:#7ab4a2; line-height:1.5;
+        margin-bottom:20px; max-width:300px; }
+      #otapw-form { display:flex; flex-direction:column; align-items:center;
+        width:100%; }
+      #otapw-pw { width:100%; max-width:280px; padding:11px; font-size:15px;
+        font-family:monospace; background:#0c2b2e; border:1px solid #2a5e58;
+        border-radius:4px; color:#e7f5ee; margin-bottom:14px; text-align:center; }
+      #otapw-pw:focus { outline:none; border-color:#3ddb7a; }
+      #otapw-go { width:100%; max-width:280px; padding:12px; font-size:14px;
+        font-weight:bold; letter-spacing:1px; background:#1a4a3a;
+        border:1px solid #3ddb7a; border-radius:4px; color:#cfe7df; cursor:pointer; }
+      #otapw-go:active { filter:brightness(1.3); }
+      #otapw-cancel { margin-top:16px; font-size:12px; color:#7ab4a2;
+        cursor:pointer; letter-spacing:1px; }
+      #otapw-cancel:hover { color:#cfe7df; }
+    </style>
+    <div id="otapw-overlay">
+      <div class="opTitle">FLASH FIRMWARE</div>
+      <div id="otapw-sub" class="opSub"></div>
+      <form id="otapw-form" onsubmit="otaPwSubmit(); return false;">
+        <input id="otapw-pw" type="password" placeholder="Device password"
+               autocomplete="current-password"
+               onkeydown="if (event.key === 'Escape') otaPwCancel();">
+        <button id="otapw-go" type="submit">CONTINUE</button>
+      </form>
+      <div id="otapw-cancel" onclick="otaPwCancel()">CANCEL</div>
+    </div>
+
     <div id="vib-panel">
       <div id="vibp-head">
         <span id="vibp-head-left">
@@ -4977,7 +5020,7 @@
     async function otaFlash() {
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
-        const otaPw = window.prompt('Re-enter the device password to flash firmware:');
+        const otaPw = await otaPasswordPrompt('Re-enter the device password to flash the selected firmware file.');
         if (otaPw === null) return;   // cancelled
         const file = input.files[0];
         const st   = document.getElementById('ota-status');
@@ -5230,8 +5273,8 @@
 
     async function githubUpdate() {
         if (ghPhase !== 'available' || !ghManifest) return;
-        const otaPw = window.prompt(
-            'Re-enter the device password to flash firmware from GitHub:');
+        const otaPw = await otaPasswordPrompt(
+            'Re-enter the device password to flash firmware v' + ghManifest.version + ' from GitHub.');
         if (otaPw === null) return;   // cancelled
         const manifest = ghManifest;
         const fail = msg => {
@@ -5470,6 +5513,35 @@
     // ── Login (overlay-based, with "keep me signed in") ─────────────────────
     // doLogin() shows the overlay and resolves true once the user authenticates
     // (the dashboard is unusable without a token, so there is no cancel path).
+    // Firmware-flash password overlay — async drop-in for the window.prompt()
+    // the OTA flows used to re-auth before flashing. Resolves the typed
+    // password, or null if the user cancels (matching prompt()'s null-on-cancel
+    // contract). Styled like the login + reboot overlays.
+    let _otaPwResolve = null;
+    function otaPasswordPrompt(message) {
+        if (_otaPwResolve) return Promise.resolve(null);   // one at a time
+        const ov = document.getElementById('otapw-overlay');
+        const pw = document.getElementById('otapw-pw');
+        document.getElementById('otapw-sub').textContent = message || '';
+        pw.value = '';
+        ov.classList.add('open');
+        setTimeout(() => pw.focus(), 50);
+        return new Promise(res => { _otaPwResolve = res; });
+    }
+    function _otaPwClose(value) {
+        document.getElementById('otapw-overlay').classList.remove('open');
+        document.getElementById('otapw-pw').value = '';
+        const resolve = _otaPwResolve;
+        _otaPwResolve = null;
+        if (resolve) resolve(value);
+    }
+    function otaPwSubmit() {
+        const pw = document.getElementById('otapw-pw');
+        if (!pw.value) { pw.focus(); return; }   // require a value before flashing
+        _otaPwClose(pw.value);
+    }
+    function otaPwCancel() { _otaPwClose(null); }
+
     // loginSubmit() does the /login round-trip; on success it caches the token
     // in localStorage only when the checkbox is set — that token is reused on
     // reopen until the device reboots (rotating it) or the user signs out.
