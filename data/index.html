@@ -5510,6 +5510,7 @@
     const GITHUB_PAGES_BASE = 'https://toldxls.github.io/AutoFOV-V12';
     let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
     let ghManifest = null;     // {version, sha256, bin} from the last good check
+    let ghAutoChecked = false;  // one-shot: auto-check GitHub once buildVersion is known
 
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
@@ -6538,7 +6539,16 @@
 
         // ── About / build info ──
         let otaDirty   = false;   // rollback availability lives in /state too
-        if (data.buildVersion !== undefined) { state.buildVersion = data.buildVersion; aboutDirty = true; }
+        if (data.buildVersion !== undefined) {
+            state.buildVersion = data.buildVersion; aboutDirty = true;
+            // First time we learn the REAL running version (not the '—' default),
+            // auto-check GitHub so the main-screen About-button glow can surface
+            // an available update without the user opening the About/OTA screen.
+            if (!ghAutoChecked && state.buildVersion && state.buildVersion !== '—') {
+                ghAutoChecked = true;
+                if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
+            }
+        }
         if (data.buildCommit  !== undefined) { state.buildCommit  = data.buildCommit;  aboutDirty = true; }
         if (data.buildDate    !== undefined) { state.buildDate    = data.buildDate;    aboutDirty = true; }
         if (data.buildTime    !== undefined) { state.buildTime    = data.buildTime;    aboutDirty = true; }
