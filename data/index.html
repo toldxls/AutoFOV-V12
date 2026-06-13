@@ -5530,12 +5530,20 @@
         setTimeout(() => { if (manual) manual.style.display = 'inline-block'; }, 20000);
         function otaPollDeviceBack() {
             if (otaPollAbort) return;
-            fetch((wifiBase || '') + '/ping', { cache: 'no-store' })
+            // Bounded per-attempt timeout: a fetch to the mid-reboot (dead) IP
+            // can otherwise hang on TCP retries for 60 s+, eating the whole
+            // poll budget in a single attempt — the overlay then never
+            // auto-reloaded even though the device was long since back.
+            fetch((wifiBase || '') + '/ping',
+                  { cache: 'no-store', signal: AbortSignal.timeout(1500) })
                 .then(r => r.ok ? r.text() : Promise.reject(r.status))
                 .then(() => { if (!otaPollAbort) location.reload(); })
                 .catch(() => {
                     if (otaPollAbort) return;
-                    if (Date.now() - start > 60000) return;  // give up after 60 s
+                    // 120 s budget: a device whose first WiFi connect attempt
+                    // fails retries every 30 s, so 60 s could give up just
+                    // before it came back. Manual button is up from 20 s.
+                    if (Date.now() - start > 120000) return;
                     setTimeout(otaPollDeviceBack, 800);
                 });
         }
@@ -5848,6 +5856,13 @@
             state.latency = null; rttSamples = [];   // stale once the link drops
             updateWifiZone(false);
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
+            // OTA / rollback reboot in flight: the reboot overlay's /ping poll
+            // reloads the page as soon as the device returns. Don't run the
+            // reconnect loop in parallel — its stale-token probe would hit the
+            // new boot's 403, re-login, and pop the login overlay on top of
+            // the reboot veil while racing the reload.
+            const otaOv = document.getElementById('ota-reboot-overlay');
+            if (otaOv && otaOv.classList.contains('open')) return;
             const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
             reconnectAttempts++;
             const status = document.getElementById('connection-status');
