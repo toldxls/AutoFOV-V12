@@ -5573,6 +5573,7 @@
     let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
     let ghManifest = null;     // {version, sha256, bin} from the last good check
     let ghAutoChecked = false;  // one-shot: auto-check GitHub once buildVersion is known
+    const GH_AUTOCHECK_MS = 15 * 60 * 1000;  // then re-check this often so the glow stays live
 
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
@@ -5668,6 +5669,15 @@
         }
         // Mirror the outcome onto the About-screen UPDATE button (green/blue).
         refreshAboutUpdateBtn();
+    }
+
+    // Periodic GitHub re-check so a release published while the dashboard is left
+    // open lights the About-button glow without a manual reload. Skips when the
+    // running version isn't known yet or a check/flash is already in flight.
+    function maybeAutoCheckGithub() {
+        if (!state.buildVersion || state.buildVersion === '—') return;
+        if (ghPhase === 'busy' || ghPhase === 'checking') return;
+        checkGithubUpdate();
     }
 
     // Streamed download with a live progress bar — Pages sends Content-Length
@@ -6605,10 +6615,13 @@
             state.buildVersion = data.buildVersion; aboutDirty = true;
             // First time we learn the REAL running version (not the '—' default),
             // auto-check GitHub so the main-screen About-button glow can surface
-            // an available update without the user opening the About/OTA screen.
+            // an available update without opening the About/OTA screen — then keep
+            // re-checking on a timer so a release published while the dashboard is
+            // left open lights the glow without a manual reload.
             if (!ghAutoChecked && state.buildVersion && state.buildVersion !== '—') {
                 ghAutoChecked = true;
-                if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
+                maybeAutoCheckGithub();
+                setInterval(maybeAutoCheckGithub, GH_AUTOCHECK_MS);
             }
         }
         if (data.buildCommit  !== undefined) { state.buildCommit  = data.buildCommit;  aboutDirty = true; }
