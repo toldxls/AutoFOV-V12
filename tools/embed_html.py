@@ -8,12 +8,15 @@ import gzip, os, subprocess
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
-VERSION_MINOR = 1   # bump manually for milestone releases
+VERSION_MINOR = 2   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
 # commit count at the bump commit so patch = HEAD_count - base.  Without this,
-# the 12.1 series would start at .101 instead of .0.  JS semver compare still
-# orders 12.1.x > 12.0.y because minor wins, so the OTA update gate is unaffected.
-VERSION_PATCH_BASE = 101
+# each new series would inherit the old running count instead of starting at
+# .0.  JS semver compare orders by minor first, so the OTA update gate sees
+# 12.2.x > 12.1.y regardless of patch.
+# 12.2: the bug-sweep series — calibration sync, vib inStack latch, OTA reboot
+# overlay, auth reconnect, TOF signal smoothing.
+VERSION_PATCH_BASE = 168
 # ─────────────────────────────────────────────────────────────────────────────
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
