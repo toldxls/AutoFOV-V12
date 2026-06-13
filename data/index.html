@@ -734,6 +734,12 @@
                 <div id="about-update-btn" class="gfx-btn"
                      style="left:91px; top:148px; width:58px; height:20px; background:#1a2a3a; border:1px solid #2a5a7a; font-size:9px;"
                      onclick="switchScreen('screen-ota')">UPDATE</div>
+                <!-- USB recovery flash help — opens the shared #recovery-help overlay -->
+                <div class="gfx-btn" title="USB recovery flash"
+                     style="left:153px; top:148px; width:20px; height:20px; border-radius:50%;
+                            background:#0a3344; border:1px solid #2a7a9a; color:#5ad6ff;
+                            font-size:11px; font-family:Georgia,serif;"
+                     onclick="document.getElementById('recovery-help').style.display='flex'">i</div>
 
                 <!-- Hardware identity — sensors/peripherals on this device.
                      None of these are reported elsewhere in the UI; the memory
@@ -1393,14 +1399,70 @@
 
                     <div class="tip-item">
                         <div class="tip-head">Can&rsquo;t update?</div>
-                        If OTA flashing fails or the device won&rsquo;t boot, recover
-                        over USB: open
-                        <span style="color:#6abf6a; word-break:break-all;">toldxls.github.io/AutoFOV-V12</span>
-                        in Chrome or Edge, connect AutoFOV with a USB cable, and
-                        follow the on-screen flasher. USB is fine for this one-time
-                        recovery. It rewrites the firmware but keeps your
-                        calibration and WiFi settings.
+                        If an OTA update fails or leaves AutoFOV misbehaving, you can
+                        reflash over USB from a browser &mdash; no terminal needed, and
+                        it keeps your calibration and WiFi settings. (Bookmark the link
+                        now &mdash; you can&rsquo;t reach it from a dead device.)<br>
+                        <span onclick="document.getElementById('recovery-help').style.display='flex'"
+                              style="color:#5ad6ff; text-decoration:underline; cursor:pointer;
+                                     white-space:nowrap;">&#128268; Recovery flash steps &rarr;</span>
                     </div>
+                </div>
+            </div>
+
+            <!-- ===== RECOVERY FLASH help overlay =====
+                 Bezel-scoped, opened by the (i) button beside ABOUT's UPDATE
+                 button and by the WiFi SECURITY TIPS "Can't update?" link. Sits
+                 above #wifi-tips (z 200) so it can open from within it. Single
+                 source of truth for the recovery steps. -->
+            <div id="recovery-help" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.97); z-index:210;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
+                     text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
+                     letter-spacing:0.6px; border-bottom:1px solid #1c3a4a;">
+                    &#128268; RECOVERY FLASH
+                    <div class="gfx-btn"
+                         onclick="document.getElementById('recovery-help').style.display='none'"
+                         style="top:3px; left:205px; width:30px; height:26px;
+                                background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:10px 12px 14px;
+                     font-size:10px; line-height:1.5; color:var(--text-muted);">
+
+                    If an OTA update or settings change leaves AutoFOV misbehaving,
+                    you can reflash it over USB from your browser &mdash; <b>no terminal
+                    needed</b> &mdash; keeping your calibration and WiFi settings.
+
+                    <div style="margin-top:10px; padding:7px 9px; border:1px solid #6a5a2a;
+                         border-radius:4px; background:rgba(120,90,20,0.18); color:#e0c070;">
+                        &#9888; The flasher runs on your computer, so it can even recover
+                        a device that won&rsquo;t boot &mdash; but you can&rsquo;t open
+                        <i>this</i> page if the device is dead. <b>Bookmark the link
+                        below now</b>, while you still can.
+                    </div>
+
+                    <div style="color:#5ad6ff; font-weight:bold; margin:12px 0 3px;">You need</div>
+                    &bull; A computer running <b>Chrome</b> or <b>Edge</b> (Safari and
+                    Firefox can&rsquo;t flash over USB).<br>
+                    &bull; A <b>data-capable</b> USB-C cable &mdash; charge-only cables
+                    won&rsquo;t enumerate the device.
+
+                    <div style="color:#5ad6ff; font-weight:bold; margin:12px 0 3px;">Steps</div>
+                    1. Open
+                    <a href="https://toldxls.github.io/AutoFOV-V12/" target="_blank" rel="noopener"
+                       style="color:#6abf6a; word-break:break-all; text-decoration:underline;">toldxls.github.io/AutoFOV-V12</a>
+                    in Chrome or Edge.<br>
+                    2. Plug AutoFOV into the computer.<br>
+                    3. Click the green <b>Recovery Flash</b> button on that page.<br>
+                    4. In the popup, pick the device&rsquo;s serial port &rarr; <b>Connect</b>.<br>
+                    5. Click <b>Install</b> and wait &mdash; don&rsquo;t unplug.<br>
+                    6. The device reboots into working firmware on its own.
+
+                    <div style="color:#d9a441; font-weight:bold; margin:12px 0 3px;">No port shown?</div>
+                    The ESP32-S3 usually enters flash mode by itself. If no port
+                    appears: hold <b>BOOT</b>, briefly tap <b>RESET</b>, release
+                    <b>BOOT</b>, then click Recovery Flash again.
                 </div>
             </div>
 
