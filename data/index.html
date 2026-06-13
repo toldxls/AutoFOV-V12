@@ -342,12 +342,43 @@
         #tint-center { position: absolute; left: 50%; top: -3px; width: 1px; height: 18px; background: white; }
 
         /* --- CALIB BLOCK (MAIN) --- */
+        /* Shares .gfx-btn (added in markup) for the sheen + bevel + press
+           feedback; this ID rule keeps the two-line column layout and supplies
+           the dark-gray base fill the .gfx-btn gradient is composited over. */
         #calib-block {
             position: absolute; left: 2px; top: 280px; width: 94px; height: 35px;
-            border: 1px solid #282928; border-radius: 3px; box-sizing: border-box;
+            border: 1px solid #3a3a3a; border-radius: 3px; box-sizing: border-box;
+            background-color: #303030;
             cursor: pointer; padding: 3px 4px;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             text-align: center;
+        }
+        /* When a firmware update is available, the About button takes on a
+           ghostly translucent light-green wash over its dark-gray fill and
+           breathes a slow neon-green glow to draw the eye. Toggled by the
+           .update-avail class in refreshAboutUpdateBtn(). */
+        #calib-block.update-avail {
+            border-color: rgba(80,220,90,0.55);
+            /* Ghostly green wash (top layer) over the shared .gfx-btn sheen
+               (repeated below so adding background-image doesn't drop it). */
+            background-image:
+                linear-gradient(rgba(120,255,150,0.09), rgba(120,255,150,0.09)),
+                linear-gradient(180deg,
+                    rgba(255,255,255,0.22) 0%,  rgba(255,255,255,0.05) 46%,
+                    rgba(0,0,0,0.16) 54%,       rgba(0,0,0,0.32) 100%);
+            animation: calibPulse 4s ease-in-out infinite;
+        }
+        @keyframes calibPulse {
+            0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.28),
+                                   inset 0 -2px 3px rgba(0,0,0,0.30),
+                                   0 0 2px rgba(57,255,20,0.08); }
+            50%      { box-shadow: inset 0 1px 0 rgba(255,255,255,0.28),
+                                   inset 0 -2px 3px rgba(0,0,0,0.30),
+                                   0 0 7px rgba(57,255,20,0.40); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #calib-block.update-avail { animation: none;
+                box-shadow: 0 0 5px rgba(57,255,20,0.35); }
         }
         /* --- BT INFO EXTRA ROWS --- */
         .bt-row { position: absolute; width: 240px; height: 30px; }
@@ -447,7 +478,7 @@
                 <div id="btn-obj-2" class="gfx-btn btn-obj" style="left: 88px;" onclick="setObjective(2)">10x</div>
                 <div id="btn-obj-3" class="gfx-btn btn-obj" style="left: 174px;" onclick="setObjective(3)">20x</div>
 
-                <div id="calib-block" onclick="switchScreen('screen-about')">
+                <div id="calib-block" class="gfx-btn" onclick="switchScreen('screen-about')">
                     <div id="calib-status" style="color: #FFA500; font-size: 10px; font-weight: bold;">CALIB: FACTORY</div>
                     <div style="color: var(--text-disabled); font-size: 9px; margin-top: 1px;">AutoFOV V12</div>
                 </div>
@@ -1059,6 +1090,12 @@
             <!-- ===================== WIFI INFO ===================== -->
             <div id="screen-wifiinfo" class="screen">
                 <div class="title-stripe" style="left:5px; top:5px; width:60px; background:#00968C;">WIFI</div>
+                <!-- Security tips — opens the bezel-scoped #wifi-tips overlay -->
+                <div class="gfx-btn" title="Security tips"
+                     style="left:72px; top:8px; width:22px; height:22px; border-radius:50%;
+                            background:#0a3d3a; border:1px solid #00b8a8; color:#00e0cc;
+                            font-size:13px; font-family:Georgia,serif;"
+                     onclick="document.getElementById('wifi-tips').style.display='flex'">i</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
                 <div class="gfx-text" style="left:20px; top:46px; color: var(--text-disabled); font-size:11px;">Status:</div>
@@ -1287,6 +1324,83 @@
                          style="position:relative; width:95px; height:44px; background:#303030; border:1px solid #787878; font-size:12px;">PLZ NO</div>
                     <div id="confirm-yes" class="gfx-btn"
                          style="position:relative; width:95px; height:44px; background:#780000; border:1px solid #FF6600; font-size:12px;">YES, DO IT</div>
+                </div>
+            </div>
+
+            <!-- ===== WIFI SECURITY TIPS overlay =====
+                 Bezel-scoped (240x320, same as #confirm-modal), opened by the
+                 (i) button on the WiFi Info title bar. Scrollable tip list. -->
+            <style>
+              #wifi-tips .tip-item { margin-bottom: 13px; }
+              #wifi-tips .tip-item:last-child { margin-bottom: 0; }
+              #wifi-tips .tip-head { color:#00c8b4; font-weight:bold;
+                                     margin-bottom:2px; }
+            </style>
+            <div id="wifi-tips" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.96); z-index:200;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
+                     text-align:center; color:#00e0cc; font-size:12px; font-weight:bold;
+                     letter-spacing:0.6px; border-bottom:1px solid #1c3a37;">
+                    &#128274; SECURITY TIPS
+                    <div class="gfx-btn"
+                         onclick="document.getElementById('wifi-tips').style.display='none'"
+                         style="top:3px; left:205px; width:30px; height:26px;
+                                background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:10px 12px 14px;
+                     font-size:10px; line-height:1.5; color:var(--text-muted);">
+
+                    <div class="tip-item">
+                        <div class="tip-head" style="color:#d9a441;">&#9888; Power from a wall charger</div>
+                        Power AutoFOV from a USB wall charger &mdash; not a computer.
+                        A USB data link to a PC can expose the device console and
+                        allow reflashing.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Use a strong login password</div>
+                        Set a unique device password in WiFi Setup. It guards the
+                        dashboard <i>and</i> firmware flashing. Blank falls back to
+                        the random code shown on the device screen.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Keep AutoFOV on your LAN</div>
+                        Traffic is plain HTTP (no TLS, by design). Never
+                        port-forward AutoFOV to the internet or join it to an
+                        untrusted public network.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Prefer the IP over autofov.local</div>
+                        On a shared network the device&rsquo;s numeric IP address
+                        skips the mDNS name lookup, which other devices can spoof.
+                        Otherwise the two are equally secure.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Sign out on shared computers</div>
+                        Your login is remembered per-browser. Tap SIGN OUT when
+                        you&rsquo;re on a machine that isn&rsquo;t yours.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Locked out? Hold BOOT</div>
+                        Hold the BOOT button while powering on to relaunch WiFi
+                        Setup and set new credentials &mdash; no calibration is lost.
+                    </div>
+
+                    <div class="tip-item">
+                        <div class="tip-head">Can&rsquo;t update?</div>
+                        If OTA flashing fails or the device won&rsquo;t boot, recover
+                        over USB: open
+                        <span style="color:#6abf6a; word-break:break-all;">toldxls.github.io/AutoFOV-V12</span>
+                        in Chrome or Edge, connect AutoFOV with a USB cable, and
+                        follow the on-screen flasher. USB is fine for this one-time
+                        recovery. It rewrites the firmware but keeps your
+                        calibration and WiFi settings.
+                    </div>
                 </div>
             </div>
 
@@ -4738,9 +4852,22 @@
     // Tint the About-screen UPDATE button: green when a newer GitHub release is
     // available, otherwise the neutral blue it ships as.
     function refreshAboutUpdateBtn() {
+        const avail = (ghPhase === 'available');
+        // Pulse the main-screen About button (calib-block) only on a CONFIRMED
+        // update. ghPhase can read 'available' optimistically before telemetry
+        // sets buildVersion (checkGithubUpdate's `running ? … : 1` fallback), so
+        // the ambient glow uses a stricter test: a REAL running version AND a
+        // manifest that is strictly newer. The startup default buildVersion is
+        // the placeholder '—', which is truthy but semverCmp-parses to 0 (making
+        // every manifest look newer) — exclude it so there's no false glow in
+        // the gap before the first telemetry frame arrives.
+        const running = state.buildVersion;
+        const realUpdate = !!(ghManifest && running && running !== '—' &&
+                              semverCmp(ghManifest.version, running) > 0);
+        const calib = document.getElementById('calib-block');
+        if (calib) calib.classList.toggle('update-avail', realUpdate);
         const btn = document.getElementById('about-update-btn');
         if (!btn) return;
-        const avail = (ghPhase === 'available');
         btn.style.background  = avail ? '#0a5a2a' : '#1a2a3a';
         btn.style.borderColor = avail ? '#2abf6a' : '#2a5a7a';
     }

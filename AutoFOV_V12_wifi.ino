@@ -196,6 +196,8 @@ static const char PORTAL_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   input:focus{outline:none;border-color:#008894}
   .sep{width:100%;max-width:320px;border:none;border-top:1px solid #2a2a2a;margin:8px 0 20px}
   .hint{font-size:11px;color:#555;margin:-12px 0 14px}
+  .tip{max-width:320px;margin:20px 0 0;font-size:11px;line-height:1.5;
+       color:#d9a441;text-align:center}
   button{background:#008894;color:#fff;border:none;padding:13px;font-size:15px;
          font-weight:bold;border-radius:4px;cursor:pointer;width:100%;max-width:320px}
   button:active{filter:brightness(1.3)}
@@ -224,6 +226,9 @@ static const char PORTAL_HTML[] PROGMEM = R"html(<!DOCTYPE html>
      use the random code shown on the device screen. Minimum 6 characters.</p>
   <button type=submit>SAVE &amp; CONNECT</button>
 </form>
+<p class=tip>&#9888; For best security, power AutoFOV from a USB wall charger &mdash;
+   not a computer. A USB data link to a PC can expose the device console and
+   allow reflashing.</p>
 </body></html>)html";
 
 static const char PORTAL_SAVED_HTML[] PROGMEM = R"html(<!DOCTYPE html>
