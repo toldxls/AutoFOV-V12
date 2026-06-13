@@ -169,6 +169,14 @@ struct WifiCmd {
 };
 static QueueHandle_t wifiCmdQueue = nullptr;
 
+// Payload for ntfyTask. The topic is COPIED here at send time (Core 1) — the
+// task used to read the global ntfyTopic String directly, which the ntfyTopic
+// command can reassign (freeing the old buffer) while the task is mid-request.
+struct NtfyMsg {
+    String topic;
+    String body;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTIVE PORTAL HTML  (served in AP mode, embedded in flash via PROGMEM)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1612,6 +1620,18 @@ static void startFullServer() {
     Serial.println("[WiFi] HTTP server listening on port 80 (login-gated, host-checked, queued /cmd)");
 }
 
+// A web-side delete/rename changed /vibsig contents — resync the TFT screen's
+// cached list. Selection is dropped rather than remapped: the selected index
+// may now point at a different file. Runs on Core 1 (wifiLoop), so touching
+// the UI state and LittleFS here is safe; vibSigUiDirty makes the open
+// VIB_SIGNATURES screen redraw its rows on the next refresh tick.
+static void vibSigWebChanged() {
+    vibSigSel = -1;
+    vibSigLoadedValid = false;
+    vibSigScan();
+    vibSigUiDirty = true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMAND DISPATCHER
 // Called from wifiLoop() on Core 1 — safe to call TFT, analogWrite, i2cMutex.
@@ -1620,7 +1640,7 @@ static void startFullServer() {
 //   obj, stepIndex, imgs, brightness, ledEnabled, ledDuty,
 //   sensorSleep, highRefl, dimMs, sleepMs, theme, tint,
 //   calWidth, demarcDist, calPoints, calStart, calCapture, calUndoPoint,
-//   resetAll, testAlert, ir, nav
+//   calTruncate, resetAll, testAlert, ir, nav
 // ─────────────────────────────────────────────────────────────────────────────
 static void handleWifiCommand(const char* key, const char* val) {
     float fVal = atof(val);
@@ -1809,7 +1829,11 @@ static void handleWifiCommand(const char* key, const char* val) {
         float    dist  = (float)(st & 0x7FFFFFFF);          // mm integer from EMA
         float    fov   = (demarcationDist / (float)iVal) * sensorWidthPixels;
 
-        if (!valid || pointsCaptured >= 20) return;   // no valid range or buffer full
+        // pointsCaptured >= nPoints also rejects a stray calCapture sent
+        // without calStart: a factory boot pre-seeds pointsCaptured to
+        // FACTORY_N == nPoints, and one junk append used to immediately
+        // finalize (and persist) a bogus calibration.
+        if (!valid || pointsCaptured >= nPoints || pointsCaptured >= 20) return;
 
         int slot = pointsCaptured;
         distPoints[slot] = dist;
@@ -1838,12 +1862,29 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     // ── Calibration: undo last captured point ────────────────────────────────
     } else if (strcmp(key, "calUndoPoint") == 0) {
+        if (isLocalCalActive()) return;        // TFT mid-capture owns the arrays
         if (pointsCaptured > 0) pointsCaptured--;
+
+    // ── Calibration: truncate to the first N points ──────────────────────────
+    //    Sent by the web RETAKE flow, which discards the selected point and
+    //    everything after it; the next calCapture then lands in slot N. Only
+    //    ever shrinks — growing would expose stale array slots. Without this,
+    //    a web retake left the device's pointsCaptured untouched, so the next
+    //    capture APPENDED and the "discarded" points still entered the fit.
+    } else if (strcmp(key, "calTruncate") == 0) {
+        if (isLocalCalActive()) return;
+        if (iVal >= 0 && iVal < pointsCaptured) pointsCaptured = iVal;
 
     // ── Reset to factory calibration ─────────────────────────────────────────
     //    NOTE: we manually restore defaults rather than calling finalizeCalibration()
     //    to avoid setting isCustom=1 and showing the TFT success screen.
     } else if (strcmp(key, "resetAll") == 0) {
+        // Mirror resetToFactory(): the calibration INPUTS reset too, not just
+        // the fit. (pointsCaptured stays at FACTORY_N so the web graph keeps
+        // its 13 factory rows — the device-side reset leaves the plot empty
+        // until the FOV-info GRAPH tap reseeds it.)
+        sensorWidthPixels = Config::DEFAULT_SENSOR_WIDTH_PX;
+        demarcationDist   = Config::DEFAULT_DEMARCATION_MM;
         nPoints        = FACTORY_N;
         pointsCaptured = FACTORY_N;
         for (int i = 0; i < FACTORY_N; i++) {
@@ -1867,6 +1908,7 @@ static void handleWifiCommand(const char* key, const char* val) {
         preferences.begin("calib", false);
         preferences.putBytes("settings", &settings, sizeof(CalibData));
         preferences.end();
+        if (currentMode == CAL_SETTINGS) refreshCalSettingsValues(true);
         // Push updated calibration state to all HTML clients
         String out; buildFullStateJson(out);
         wsServer.textAll(out);
@@ -1990,6 +2032,7 @@ static void handleWifiCommand(const char* key, const char* val) {
             char path[48];
             snprintf(path, sizeof(path), "/vibsig/%s", val);
             LittleFS.remove(path);
+            vibSigWebChanged();
             wifiPushVibSigList();
         } else {
             Serial.printf("[vib] vibDelSig rejected: bad name\n");
@@ -2008,32 +2051,41 @@ static void handleWifiCommand(const char* key, const char* val) {
             const char* newName = bar + 1;
             if (!vibNameSafe(oldbase, true) || !vibNameSafe(newName, false)) {
                 Serial.printf("[vib] vibRename rejected: bad name\n");
-            } else if (vibSigLoad(oldbase)) {
-                strncpy(vibSigLoaded.name, newName, sizeof(vibSigLoaded.name) - 1);
-                vibSigLoaded.name[sizeof(vibSigLoaded.name) - 1] = '\0';
+            } else {
+                // Read into a LOCAL struct — routing through vibSigLoad()
+                // clobbered vibSigLoaded, silently swapping whatever signature
+                // the TFT comparison plot had selected for the renamed one.
+                VibSignature sig;
                 char oldp[48], newp[48], tmpp[52];
                 snprintf(oldp, sizeof(oldp), "/vibsig/%s", oldbase);
-                snprintf(newp, sizeof(newp), "/vibsig/%s.bin", newName);
-                snprintf(tmpp, sizeof(tmpp), "%s.tmp", newp);
-                // Atomic write: .tmp sibling, then rename. Only after the
-                // new file is durably in place do we remove the old name —
-                // any failure leaves the original signature recoverable.
-                bool ok = false;
-                File f = LittleFS.open(tmpp, "w");
-                if (f) {
-                    size_t wrote = f.write((const uint8_t*)&vibSigLoaded,
-                                           sizeof(VibSignature));
-                    f.close();
-                    ok = (wrote == sizeof(VibSignature));
+                File rf = LittleFS.open(oldp, "r");
+                bool loaded = rf && rf.read((uint8_t*)&sig, sizeof(sig)) == (int)sizeof(sig);
+                if (rf) rf.close();
+                if (loaded) {
+                    strncpy(sig.name, newName, sizeof(sig.name) - 1);
+                    sig.name[sizeof(sig.name) - 1] = '\0';
+                    snprintf(newp, sizeof(newp), "/vibsig/%s.bin", newName);
+                    snprintf(tmpp, sizeof(tmpp), "%s.tmp", newp);
+                    // Atomic write: .tmp sibling, then rename. Only after the
+                    // new file is durably in place do we remove the old name —
+                    // any failure leaves the original signature recoverable.
+                    bool ok = false;
+                    File f = LittleFS.open(tmpp, "w");
+                    if (f) {
+                        size_t wrote = f.write((const uint8_t*)&sig, sizeof(VibSignature));
+                        f.close();
+                        ok = (wrote == sizeof(VibSignature));
+                    }
+                    if (ok) ok = LittleFS.rename(tmpp, newp);
+                    if (!ok) {
+                        LittleFS.remove(tmpp);
+                        Serial.printf("[vib] vibRename write failed: %s\n", newp);
+                    } else if (strcmp(oldp, newp) != 0) {
+                        LittleFS.remove(oldp);
+                    }
+                    vibSigWebChanged();
+                    wifiPushVibSigList();
                 }
-                if (ok) ok = LittleFS.rename(tmpp, newp);
-                if (!ok) {
-                    LittleFS.remove(tmpp);
-                    Serial.printf("[vib] vibRename write failed: %s\n", newp);
-                } else if (strcmp(oldp, newp) != 0) {
-                    LittleFS.remove(oldp);
-                }
-                wifiPushVibSigList();
             }
         }
 
@@ -2077,8 +2129,8 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     } else if (strcmp(key, "ntfyTest") == 0) {
         if (ntfyTopic.length() > 0) {
-            String* body = new String("AutoFOV test");
-            xTaskCreate(ntfyTask, "ntfy", 4096, body, 1, nullptr);
+            NtfyMsg* msg = new NtfyMsg{ ntfyTopic, "AutoFOV test" };
+            xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr);
             Serial.println("[NTFY] test fired");
         } else {
             Serial.println("[NTFY] test skipped — no topic set");
@@ -2125,6 +2177,9 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["obj"]           = currentobj;
     doc["stepIndex"]     = stackStepIndex;
     doc["imgs"]          = stackTotalImgs;
+    // secStep was only in buildSettingsJson, so the web's Sec/Step sat at its
+    // 3.3 default until some other device-side change pushed a settings frame.
+    doc["secStep"]       = stackTimePerStep;
     doc["brightness"]    = currentBrightness;
     doc["ledEnabled"]    = ledEnabled ? 1 : 0;
     doc["ledDuty"]       = currentLedDuty;
@@ -2437,17 +2492,17 @@ String wifiGetSSID()     { if (wifiServerMode == WMODE_PORTAL) return String(AP_
 // event so connected dashboards fire a browser Notification + the JS-side
 // 3-beep AudioContext cue, and optionally fires an ntfy.sh push.
 static void ntfyTask(void* param) {
-    String* body = static_cast<String*>(param);
+    NtfyMsg* msg = static_cast<NtfyMsg*>(param);
     WiFiClient client;
     HTTPClient http;
-    http.begin(client, "http://ntfy.sh/" + ntfyTopic);
+    http.begin(client, "http://ntfy.sh/" + msg->topic);
     http.setTimeout(4000);
     http.addHeader("X-Priority", "high");
     http.addHeader("X-Title", "AutoFOV");
-    int code = http.POST(*body);
+    int code = http.POST(msg->body);
     Serial.printf("[NTFY] -> %d\n", code);
     http.end();
-    delete body;
+    delete msg;
     vTaskDelete(nullptr);
 }
 
@@ -2489,8 +2544,8 @@ void wifiNotifyStackComplete() {
         int errCentimm = (int)sensorErrInt.load(std::memory_order_acquire);
         char buf[64];
         snprintf(buf, sizeof(buf), "Stack finished \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
-        String* body = new String(buf);
-        xTaskCreate(ntfyTask, "ntfy", 4096, body, 1, nullptr);
+        NtfyMsg* msg = new NtfyMsg{ ntfyTopic, String(buf) };
+        xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr);
     }
 }
 

@@ -3958,7 +3958,10 @@
             state.demarcDist = Math.max(0.01, Math.min(5.0, +(state.demarcDist + dir * step).toFixed(2)));
         } else {
             const step = bigDelta ? 5 : 1;
-            state.calPoints = Math.max(3, Math.min(50, state.calPoints + dir * step));
+            // Cap matches firmware MAX_CALIB_POINTS (20) — the old 50 let the
+            // web run past the device, which finalized at 20 while the web
+            // kept waiting for more captures.
+            state.calPoints = Math.max(3, Math.min(20, state.calPoints + dir * step));
         }
         updateCalSettingsUI();
         sendCommand(state.calSel === 0 ? 'calWidth' : state.calSel === 1 ? 'demarcDist' : 'calPoints',
@@ -4098,6 +4101,11 @@
         // Remove this point and all after it so the run resumes from here
         state.capturedPoints.splice(calRevSel);
         state.calPointsCaptured = calRevSel;
+        // Drop the same points on the firmware side. Without this the device
+        // kept its old pointsCaptured, so the next capture APPENDED instead of
+        // re-taking — the "discarded" points still went into the final fit and
+        // the device finalized early while the web showed points remaining.
+        sendCommand('calTruncate', calRevSel);
         state.calRunPx = 1920;
         updateCalRunUI(calRevSel + 1);
         drawCalMiniGraph();
@@ -5291,7 +5299,7 @@
                 return;
             }
             // Real network failure mid-upload.  Device's stall watchdog frees
-            // its OTA state after 10 s so a retry will work.
+            // its OTA state after 30 s so a retry will work.
             st.textContent = 'Connection lost — check device and retry';
             st.style.color = '#ff9900';
             otaUnlockControls(); ghRestoreButton();
@@ -5830,8 +5838,28 @@
             const status = document.getElementById('connection-status');
             status.innerText = `WiFi: RECONNECTING in ${Math.round(delay / 1000)}s…`;
             status.style.color = '#FFA500';
-            reconnectTimer = setTimeout(() => {
+            reconnectTimer = setTimeout(async () => {
                 reconnectTimer = null;
+                // Probe /state with the cached token before re-opening the
+                // socket. After a device reboot the session token is rotated
+                // and the authed-IP table is cleared, so every WS upgrade
+                // would be rejected — the old retry loop spun on
+                // "RECONNECTING…" forever. A 401/403 here routes through a
+                // full re-login instead; a network error means the device is
+                // still down, so fall through and keep the backoff loop going.
+                try {
+                    const r = await fetch(wifiBase + '/state', {
+                        signal: AbortSignal.timeout(3000),
+                        headers: { 'X-AutoFOV-Token': csrfToken }
+                    });
+                    if (r.status === 401 || r.status === 403) {
+                        csrfToken = '';
+                        localStorage.removeItem('afovToken');
+                        connectWifi();      // re-login + fresh state + socket
+                        return;
+                    }
+                    if (r.ok) applyFullState(await r.json());
+                } catch {}
                 openWebSocket(ip);
             }, delay);
         };

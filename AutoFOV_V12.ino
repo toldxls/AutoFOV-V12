@@ -304,7 +304,7 @@ public:
 
   // Required virtual (per-pixel write)
   void drawPixel(int16_t x, int16_t y, uint16_t color) override {
-    if ((unsigned)x >= (unsigned)_width || (unsigned)y >= (unsigned)_height) return;
+    if (!_buf || (unsigned)x >= (unsigned)_width || (unsigned)y >= (unsigned)_height) return;
     _buf[(int32_t)y * _width + x] = color;
   }
 
@@ -885,6 +885,12 @@ std::atomic<uint32_t> vibSpecSeq{0};       // bumped each time a new FFT spectru
 std::atomic<uint32_t> vibPulseSeq{0};      // bumped by loop() / RUN TEST on each shutter pulse
 std::atomic<uint32_t> vibStackStartSeq{0}; // bumped by loop() when a focus stack begins
 std::atomic<uint32_t> vibStackDoneSeq{0};  // bumped by loop() at stack-complete
+// Bumped when a pulse sequence ends WITHOUT reaching MIN_ACTIVE_DURATION — a
+// single shot or an aborted run. vibTask clears inStack without computing the
+// suggested-wait aggregate. Without this signal, one lone shutter pulse left
+// inStack stuck true, freezing the vibBaseV/H noise-floor EMAs (stale ambient
+// subtraction for signature captures and blur stats) until the next real stack.
+std::atomic<uint32_t> vibStackAbortSeq{0};
 // Per-stack blur stats — shutter-weighted broadband displacement, with the
 // per-bin noise floor subtracted. Mirrors what vibDispStats() computes on the
 // web side, so the PNG card's V/H pixel-blur numbers match the analyzer's
@@ -3607,6 +3613,7 @@ void vibTask(void *pvParameters) {
   uint32_t lastPulseSeen = vibPulseSeq.load();
   uint32_t lastStartSeen = vibStackStartSeq.load();
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
+  uint32_t lastAbortSeen = vibStackAbortSeq.load();
   // Per-stack V/H blur accumulators (stage-µm, shutter-weighted). Reset on
   // stack start, published to vibStackBlur{V,H}{Avg,Min,Max} after every FFT
   // hop so wifiNotifyStackComplete() can read current values without a race.
@@ -3993,6 +4000,13 @@ void vibTask(void *pvParameters) {
       vibComputeAggregate();
       // Blur atomics are already current from the last hop publish;
       // no extra store needed here.
+    }
+    uint32_t as = vibStackAbortSeq.load();
+    if (as != lastAbortSeen) {
+      lastAbortSeen = as;
+      // Short/aborted sequence: resume the noise-floor EMA but skip the
+      // aggregate — a single shot's settle log isn't a stack's.
+      inStack = false;
     }
 
     if (millis() - lastPrint >= 2000) {
@@ -4463,6 +4477,10 @@ void loop() {
       // V12: ask vibTask to compute the aggregate suggested wait, then persist.
       vibStackDoneSeq.fetch_add(1, std::memory_order_relaxed);
       vibPrefsDirty = true; lastVibEditMs = millis();
+    } else {
+      // Too short to be a stack (single shot / aborted run) — tell vibTask to
+      // leave in-stack mode without folding this into the suggested wait.
+      vibStackAbortSeq.fetch_add(1, std::memory_order_relaxed);
     }
     isSequenceActive = false;
   }
