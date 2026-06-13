@@ -1113,7 +1113,7 @@
 
                 <div style="position:absolute; left:10px; top:40px; right:10px;
                      color:var(--text-disabled); font-size:10px; line-height:1.6;">
-                    Push notification via <span style="color:var(--accent-green);">ntfy.sh</span> (free, no account needed).<br>
+                    Push notification via <span style="color:#6abf6a;">ntfy.sh</span> (free app).<br>
                     Install the ntfy app, subscribe to your topic.
                 </div>
 
@@ -1129,7 +1129,7 @@
                 <div style="position:absolute; left:10px; top:144px; right:10px;
                      color:var(--text-disabled); font-size:9px; line-height:1.6;">
                     Pick any unique name. Device POSTs to<br>
-                    <span style="color:#6abf6a; font-family:monospace;">http://ntfy.sh/YOUR-TOPIC</span><br>
+                    <span style="font-family:monospace;"><span style="color:#6abf6a;">http://ntfy.sh/</span><span style="color:#3a6a3a;">YOUR-TOPIC</span></span><br>
                     when a stack completes. Leave blank to disable.
                 </div>
 
@@ -1152,6 +1152,15 @@
                      style="position:absolute; left:10px; top:254px; right:10px;
                             font-size:10px; color:var(--text-disabled); text-align:center;">
                 </div>
+
+                <div style="position:absolute; left:10px; top:272px; right:10px;
+                     color:var(--text-disabled); font-size:9px; letter-spacing:0.06em;">RECENT PUSHES</div>
+                <div id="ntfy-log-0" style="position:absolute; left:10px; top:285px; right:10px;
+                     font-size:9px; line-height:1; font-family:monospace; color:#6abf6a;"></div>
+                <div id="ntfy-log-1" style="position:absolute; left:10px; top:296px; right:10px;
+                     font-size:9px; line-height:1; font-family:monospace; color:#6abf6a;"></div>
+                <div id="ntfy-log-2" style="position:absolute; left:10px; top:307px; right:10px;
+                     font-size:9px; line-height:1; font-family:monospace; color:#6abf6a;"></div>
             </div>
 
             <!-- ===================== OTA FIRMWARE UPDATE ===================== -->
@@ -5035,6 +5044,35 @@
         if (inp) inp.value = state.ntfyTopic || '';
         const st = document.getElementById('ntfy-status');
         if (st) st.textContent = '';
+        ntfyRenderLog();
+    }
+    // Last-3 push log. The device has no real-time clock (millis() only), so we
+    // timestamp with the browser's wall clock when a push actually goes out:
+    // the TEST button, and stackDone events received while a topic is set.
+    // Stored in localStorage so it survives reloads; only sends seen by an open
+    // dashboard are captured.
+    function ntfyLogPush(kind) {
+        let log = [];
+        try { log = JSON.parse(localStorage.getItem('ntfyLog') || '[]'); } catch {}
+        log.unshift({ t: Date.now(), k: kind });
+        log = log.slice(0, 3);
+        try { localStorage.setItem('ntfyLog', JSON.stringify(log)); } catch {}
+        ntfyRenderLog();
+    }
+    function ntfyRenderLog() {
+        let log = [];
+        try { log = JSON.parse(localStorage.getItem('ntfyLog') || '[]'); } catch {}
+        const pad = n => String(n).padStart(2, '0');
+        for (let i = 0; i < 3; i++) {
+            const el = document.getElementById('ntfy-log-' + i);
+            if (!el) continue;
+            const e = log[i];
+            if (!e) { el.textContent = i === 0 ? '— none yet —' : ''; continue; }
+            const d = new Date(e.t);
+            el.textContent = pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' +
+                pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+                '  ' + (e.k === 'test' ? 'test' : 'stack done');
+        }
     }
     function ntfySave() {
         const inp = document.getElementById('ntfy-topic-input');
@@ -5060,6 +5098,7 @@
             return;
         }
         sendCommand('ntfyTest', '1');
+        ntfyLogPush('test');
         if (st) { st.textContent = 'Beeped + pushed — check your phone.'; st.style.color = '#6abf6a'; }
     }
 
@@ -6246,6 +6285,9 @@
                 try { new Notification('AutoFOV', { body: 'Stack finished', tag: 'stack-done' }); } catch {}
             }
             playAlertBeeps();
+            // Device pushes an ntfy on stack-complete only when a topic is set —
+            // mirror that here so the NOTIFY log timestamps real pushes.
+            if (state.ntfyTopic) ntfyLogPush('stack');
             _stackDoneData = data;
             showStackToast(data);
             // MJKZZ controller has no status feedback channel, but the firmware's
