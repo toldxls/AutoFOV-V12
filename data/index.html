@@ -4519,6 +4519,21 @@
         }
     }
 
+    // Throttled refresh for the LIVE numbers on the sensor-info screen.
+    // Fast telemetry delivers signal/ambient/status at 30 Hz; repainting the
+    // text that often churned the digits too fast to read. State is still
+    // updated on every frame — only the DOM repaint is capped at ~3 Hz (the
+    // same cadence the main-screen FOV/distance buffer uses). The discrete
+    // toggles (sleep / high-refl) keep their immediate refresh.
+    let _lastSensorInfoRender = 0;
+    function scheduleSensorInfoRefresh() {
+        if (state.screen !== 'screen-sensorinfo') return;
+        const now = Date.now();
+        if (now - _lastSensorInfoRender < 333) return;
+        _lastSensorInfoRender = now;
+        refreshSensorInfoUI();
+    }
+
     function toggleSensor() {
         // patched3: send command FIRST so a UI-refresh exception can't block
         // the firmware update path.  Wrap the refresh in try/catch for the
@@ -6163,7 +6178,7 @@
             const sigFill = document.getElementById('signal-bar-fill');
             sigFill.style.width = sigPct + '%';
             state.sensorSignal = data.signal;
-            if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI();
+            scheduleSensorInfoRefresh();
         }
         if (data.obj !== undefined) applyObjective(data.obj);
 
@@ -6198,10 +6213,10 @@
             const sigPct2 = Math.min(100, data.sensorSignal / 50 * 100);
             const sigFill2 = document.getElementById('signal-bar-fill');
             sigFill2.style.width = sigPct2 + '%';
-            if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI();
+            scheduleSensorInfoRefresh();
         }
-        if (data.sensorAmbient  !== undefined) { state.sensorAmbient  = data.sensorAmbient;    if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
-        if (data.sensorStatus   !== undefined) { state.sensorStatusCode = data.sensorStatus;   if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
+        if (data.sensorAmbient  !== undefined) { state.sensorAmbient  = data.sensorAmbient;    scheduleSensorInfoRefresh(); }
+        if (data.sensorStatus   !== undefined) { state.sensorStatusCode = data.sensorStatus;   scheduleSensorInfoRefresh(); }
 
         // ── patched3: shutter trigger (fast telemetry @ 10 Hz) ──
         if (data.trigger !== undefined) {

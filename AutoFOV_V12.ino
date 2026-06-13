@@ -3325,7 +3325,12 @@ void sensorTask(void *pvParameters) {
   float emaDistance = -1.0;
   float emaSignal = -1.0;
   const float EMA_ALPHA = 0.3; 
-  const float SIGNAL_EMA_ALPHA = 0.2; 
+  // 0.05 (was 0.2): at close range the VL53L4CX splits the return into 1-vs-2
+  // "objects" frame to frame, so the summed Mcps flickers bimodally (observed
+  // 17↔40 Mcps at 27 mm). At the 33 ms timing budget α=0.05 gives τ≈0.7 s —
+  // the readout settles to the average return instead of strobing between the
+  // two modes. High-refl mode updates ~4× faster → τ≈0.2 s, still calm.
+  const float SIGNAL_EMA_ALPHA = 0.05;
 
   for (;;) {
     // V17b: reset EMA state after a sleep/wake cycle
