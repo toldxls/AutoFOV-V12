@@ -2465,6 +2465,10 @@ static void buildSlowTelemJson(String& out) {
     doc["obj"]           = currentobj;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
     doc["highReflMode"]  = highReflMode   ? 1 : 0;
+    // Die temp was only in the one-shot full-state frame, so the memory
+    // screen showed a value frozen at connect time. Riding the 5 s slow
+    // frame keeps it live; the JS dieC handler already accepts any frame.
+    doc["dieC"]          = temperatureRead();
 
     serializeJson(doc, out);
 }
