@@ -5410,8 +5410,11 @@
             'border:1px solid #2a7a4a;font-size:11px;">DONE</div>';
     }
     function calioSuccessDone() {
-        sendCommand('nav', 'screen-fovinfo');   // dismiss the device CAL_SUCCESS, show CALIB INFO
+        // Dismiss the device CAL_SUCCESS and land BOTH sides on CALIB INFO.
+        // switchScreen() shows it on the web and sends the nav, so they stay in
+        // sync (a bare nav would leave the dashboard behind on the CALIBRATOR).
         calioClose();
+        switchScreen('screen-fovinfo');
     }
     async function calioSaveLibrary() {
         const raw = prompt('Name this calibration (e.g. objective-20x):');
