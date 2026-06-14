@@ -510,6 +510,11 @@ static const ScreenMapEntry kScreenMap[] = {
     { ABOUT,               "screen-about"      },
     { WIFI_INFO,           "screen-wifiinfo"   },
     { IR_CONTROL,          "screen-ir"         },
+    // V12.3: info overlays. ids match the web overlay element IDs (not .screen
+    // elements) — the web opens/closes them as overlays; the nav handler below
+    // routes these through openInfoScreen() since they need the text canvas.
+    { WIFI_TIPS,           "wifi-tips"         },
+    { RECOVERY_HELP,       "recovery-help"     },
 };
 static const size_t kScreenMapLen = sizeof(kScreenMap) / sizeof(kScreenMap[0]);
 
@@ -2103,6 +2108,27 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    a later wakeScreen() restores the synced screen too.
     } else if (strcmp(key, "nav") == 0) {
         if (inCalibFlow()) return;                   // don't interrupt a calibration
+        // V12.3: info overlays open via openInfoScreen() (builds the text canvas);
+        // the generic mode-switch below would blit an empty canvas. The parent
+        // mode is set first so the overlay's "return" target is correct.
+        if (strcmp(val, "wifi-tips") == 0 || strcmp(val, "recovery-help") == 0) {
+            bool wasOff = isScreenSleep || isScreenDim;
+            if (wasOff) {
+                isScreenSleep = false; isScreenDim = false;
+                analogWrite(LITE_PIN, currentBrightness);
+            }
+            lastActivityTime = millis();
+            bool tips    = (strcmp(val, "wifi-tips") == 0);
+            DisplayMode overlay = tips ? WIFI_TIPS : RECOVERY_HELP;
+            if (currentMode != overlay || wasOff) {
+                currentMode  = tips ? WIFI_INFO : ABOUT;   // openInfoScreen() captures this as the return mode
+                openInfoScreen(overlay);                   // builds lines + canvas, sets currentMode = overlay
+                preSleepMode = overlay;
+                lastModeChangeMs = millis();
+            }
+            lastSyncedMode = currentMode;                  // suppress the echo broadcast
+            return;
+        }
         for (size_t i = 0; i < kScreenMapLen; i++) {
             if (strcmp(val, kScreenMap[i].id) != 0) continue;
             DisplayMode m = kScreenMap[i].mode;

@@ -743,7 +743,7 @@
                      style="left:153px; top:148px; width:20px; height:20px; border-radius:50%;
                             background:#0a3344; border:1px solid #2a7a9a; color:#5ad6ff;
                             font-size:11px; font-family:Georgia,serif;"
-                     onclick="document.getElementById('recovery-help').style.display='flex'">i</div>
+                     onclick="openInfoOverlay('recovery-help')">i</div>
 
                 <!-- Hardware identity — sensors/peripherals on this device.
                      None of these are reported elsewhere in the UI; the memory
@@ -1109,7 +1109,7 @@
                      style="left:72px; top:8px; width:22px; height:22px; border-radius:50%;
                             background:#0a3d3a; border:1px solid #00b8a8; color:#00e0cc;
                             font-size:13px; font-family:Georgia,serif;"
-                     onclick="document.getElementById('wifi-tips').style.display='flex'">i</div>
+                     onclick="openInfoOverlay('wifi-tips')">i</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
                 <div class="gfx-text" style="left:20px; top:46px; color: var(--text-disabled); font-size:11px;">Status:</div>
@@ -1358,7 +1358,7 @@
                      letter-spacing:0.6px; border-bottom:1px solid #1c3a37;">
                     &#128274; SECURITY TIPS
                     <div class="gfx-btn"
-                         onclick="document.getElementById('wifi-tips').style.display='none'"
+                         onclick="closeInfoOverlay()"
                          style="top:3px; left:205px; width:30px; height:26px;
                                 background:#404040; color:#FF0000; font-size:15px;">X</div>
                 </div>
@@ -1411,7 +1411,7 @@
                         reflash over USB from a browser &mdash; no terminal needed, and
                         it keeps your calibration and WiFi settings. (Bookmark the link
                         now &mdash; you can&rsquo;t reach it from a dead device.)<br>
-                        <span onclick="document.getElementById('recovery-help').style.display='flex'"
+                        <span onclick="openInfoOverlay('recovery-help')"
                               style="color:#5ad6ff; text-decoration:underline; cursor:pointer;
                                      white-space:nowrap;">&#128268; Recovery flash steps &rarr;</span>
                     </div>
@@ -1431,7 +1431,7 @@
                      letter-spacing:0.6px; border-bottom:1px solid #1c3a4a;">
                     &#128268; RECOVERY FLASH
                     <div class="gfx-btn"
-                         onclick="document.getElementById('recovery-help').style.display='none'"
+                         onclick="closeInfoOverlay()"
                          style="top:3px; left:205px; width:30px; height:26px;
                                 background:#404040; color:#FF0000; font-size:15px;">X</div>
                 </div>
@@ -2114,6 +2114,43 @@
         else if (prevScreen === 'screen-vibration') vibLeave();
         if (id === 'screen-vib-wait')    vibWaitScreenEnter();
         else if (prevScreen === 'screen-vib-wait') vibWaitScreenLeave();
+    }
+
+    // V12.3: info overlays (#wifi-tips / #recovery-help) sync with the device the
+    // way screens do. Opening/closing mirrors via a 'nav' command; a device-side
+    // open arrives as a {"screen":"wifi-tips"} broadcast (see applyRemoteScreen).
+    // _overlayReturn remembers the base screen to restore on close.
+    let _overlayReturn = null;
+    function openInfoOverlay(id) {
+        document.getElementById('wifi-tips').style.display = 'none';
+        document.getElementById('recovery-help').style.display = 'none';
+        if (_overlayReturn === null) _overlayReturn = state.screen;
+        document.getElementById(id).style.display = 'flex';
+        state.screen = id;          // echo guard compares the device broadcast to this
+        sendCommand('nav', id);     // mirror onto the device TFT
+    }
+    function closeInfoOverlay() {
+        document.getElementById('wifi-tips').style.display = 'none';
+        document.getElementById('recovery-help').style.display = 'none';
+        const back = _overlayReturn || 'screen-main';
+        _overlayReturn = null;
+        _showScreen(back);
+        sendCommand('nav', back);   // tell the device to leave the overlay too
+    }
+    // Apply a device screen broadcast, including the info overlays (which aren't
+    // .screen elements). Never echoes a nav back — the device is the source.
+    function applyRemoteScreen(id) {
+        if (id === 'wifi-tips' || id === 'recovery-help') {
+            if (_overlayReturn === null) _overlayReturn = state.screen;
+            document.getElementById('wifi-tips').style.display     = (id === 'wifi-tips')     ? 'flex' : 'none';
+            document.getElementById('recovery-help').style.display = (id === 'recovery-help') ? 'flex' : 'none';
+            state.screen = id;
+        } else {
+            document.getElementById('wifi-tips').style.display = 'none';
+            document.getElementById('recovery-help').style.display = 'none';
+            _overlayReturn = null;
+            _showScreen(id);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -6611,7 +6648,7 @@
         // 'nav' command straight back to the device. The id-equality check is a
         // second echo guard for a web-initiated change that round-tripped.
         if (data.screen !== undefined && data.screen !== state.screen) {
-            _showScreen(data.screen);
+            applyRemoteScreen(data.screen);
         }
 
         // ── Main screen live values (FOV + distance) ──
