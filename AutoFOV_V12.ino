@@ -741,12 +741,12 @@ Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 Button btnWifiInfoForget(20, 275, 200, 36, "FORGET WiFi",  COLOR_MAROON, TFT_WHITE, 1, true);
 Button btnWifiInfoBack  (205,  2,  33, 33, "X",            0x4208,       COLOR_RED, 2, true);
 // V12.3: (i) on the WiFi title bar → scrollable SECURITY TIPS (mirrors the web).
-Button btnWifiInfoTips  ( 80,  4,  32, 30, "i",            0x0A28,       COLOR_TEAL, 2, true);
+Button btnWifiInfoTips  (123,  4,  32, 30, "i",            0x0A28,       COLOR_TEAL, 2, true);
 
 // --- ABOUT screen (V11) — opened from the CALIB / version label on main screen ---
 Button btnAboutClose(205, 2, 33, 33,    "X",             0x4208,       COLOR_RED, 2, true);
 // V12.3: (i) on the ABOUT title bar → scrollable RECOVERY FLASH help (mirrors the web).
-Button btnAboutInfo ( 80, 5, 32, 28,    "i",             0x0A28,       COLOR_TEAL, 2, true);
+Button btnAboutInfo (123, 5, 32, 28,    "i",             0x0A28,       COLOR_TEAL, 2, true);
 
 // V12.3: shared drag-scrolled info overlay (SECURITY TIPS / RECOVERY FLASH).
 // Just an X close in the title bar — the body is dragged with a finger.
