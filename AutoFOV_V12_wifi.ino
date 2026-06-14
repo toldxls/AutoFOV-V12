@@ -181,6 +181,7 @@ struct PendingCalib {
     int   n;
     float dist[20];
     float fov[20];
+    char  name[32];     // V12.3: optional profile name, shown on the CAL_SUCCESS screen
 };
 static PendingCalib pendingCalib;
 static std::atomic<bool> pendingCalibReady{false};
@@ -1488,6 +1489,8 @@ static void startFullServer() {
             pendingCalib.width  = width;
             pendingCalib.demarc = demarc;
             pendingCalib.n      = 0;
+            strncpy(pendingCalib.name, doc["name"] | "", sizeof(pendingCalib.name) - 1);
+            pendingCalib.name[sizeof(pendingCalib.name) - 1] = '\0';
             for (JsonObject p : pts) {
                 float d = p["dist"] | NAN;
                 float f = p["fov"]  | NAN;
@@ -1979,6 +1982,7 @@ static void handleWifiCommand(const char* key, const char* val) {
 
         // When all target points are captured, run the least-squares fit
         if (pointsCaptured >= nPoints) {
+            lastCalibName[0] = '\0';   // web point-cal → generic success (no profile name)
             finalizeCalibration();   // computes CTRLX/CTRLY, saves NVS, sets isCustomCalib
             // finalizeCalibration() calls drawSuccessScreen() — the physical display
             // will show the CAL_SUCCESS screen briefly (same as touch-triggered flow)
@@ -2022,8 +2026,10 @@ static void handleWifiCommand(const char* key, const char* val) {
         }
         pointsCaptured = n;
         nPoints        = n;
+        strncpy(lastCalibName, pendingCalib.name, sizeof(lastCalibName) - 1);
+        lastCalibName[sizeof(lastCalibName) - 1] = '\0';
         pendingCalibReady.store(false, std::memory_order_relaxed);
-        finalizeCalibration();                 // re-fit + NVS save + CAL_SUCCESS screen
+        finalizeCalibration();                 // re-fit + NVS save + CAL_SUCCESS screen (shows the name)
         String out; buildFullStateJson(out);
         wsServer.textAll(out);
 
@@ -2107,7 +2113,10 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    A nav wakes the display like a physical touch; preSleepMode is set so
     //    a later wakeScreen() restores the synced screen too.
     } else if (strcmp(key, "nav") == 0) {
-        if (inCalibFlow()) return;                   // don't interrupt a calibration
+        // Don't interrupt an active calibration — but DO allow nav to dismiss the
+        // CAL_SUCCESS screen (it's a finished-confirmation, not a capture), so a
+        // web-triggered import doesn't leave the device stuck there. V12.3.
+        if (inCalibFlow() && currentMode != CAL_SUCCESS) return;
         // V12.3: info overlays open via openInfoScreen() (builds the text canvas);
         // the generic mode-switch below would blit an empty canvas. The parent
         // mode is set first so the overlay's "return" target is correct.

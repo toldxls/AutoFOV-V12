@@ -5340,7 +5340,7 @@
             const cal = JSON.parse(await f.text());
             if (cal.fmt !== 'autofov-calib') throw new Error('not an AutoFOV calibration file');
             await calioApply(cal);
-            calioStatus('Imported ✓  device re-fit + saved.', '#3ddb7a');
+            await calioShowSuccess(cal.name || f.name.replace(/\.json$/i, ''));
         } catch (e) { calioStatus('Import failed: ' + e.message, '#ff6a6a'); }
     }
     async function calioLoadGithub() {
@@ -5382,8 +5382,36 @@
         if (!confirm('Load "' + name + '" and overwrite the current calibration?')) {
             calioStatus('Cancelled.'); return;
         }
-        try { await calioApply(cal); calioStatus('Loaded "' + name + '" ✓', '#3ddb7a'); }
+        cal.name = name;   // so the device CAL_SUCCESS screen shows the profile name
+        try { await calioApply(cal); await calioShowSuccess(name); }
         catch (e) { calioStatus('Apply failed: ' + e.message, '#ff6a6a'); }
+    }
+    // After a successful import, read the device's re-fit back and show it so the
+    // numbers can be validated. DONE dismisses the device's CAL_SUCCESS screen
+    // (nav is allowed out of it) and shows CALIB INFO on both sides.
+    async function calioShowSuccess(name) {
+        const el = document.getElementById('calio-status');
+        document.getElementById('calio-gh-list').style.display = 'none';
+        let cal = null;
+        try { cal = await calioGetCalib(); } catch (e) { /* fall back to no readback */ }
+        const f = (cal && cal.fit) || {};
+        const fmt = (v, d) => (typeof v === 'number') ? v.toFixed(d) : '—';
+        const pts = cal ? (cal.points ? cal.points.length : cal.calPoints) : '—';
+        el.style.color = '#3ddb7a';
+        el.innerHTML =
+            'Loaded <b>' + (name || (cal && cal.name) || 'calibration') + '</b> &#10003;<br>' +
+            (cal ? ('Width ' + cal.calWidth + ' px &middot; Demarc ' + cal.demarcDist +
+                    ' mm &middot; ' + pts + ' pts<br>' +
+                    'Slope ' + fmt(f.slope, 5) + ' &middot; Int ' + fmt(f.intercept, 3) + '<br>' +
+                    'R&sup2; ' + fmt(f.r2, 3) + ' &middot; Err ' + fmt(f.err, 4))
+                 : 'Applied — device re-fit + saved.') +
+            '<div class="gfx-btn" onclick="calioSuccessDone()" style="position:relative;' +
+            'left:0;top:0;width:100%;height:30px;margin-top:9px;background:#0a3a1a;' +
+            'border:1px solid #2a7a4a;font-size:11px;">DONE</div>';
+    }
+    function calioSuccessDone() {
+        sendCommand('nav', 'screen-fovinfo');   // dismiss the device CAL_SUCCESS, show CALIB INFO
+        calioClose();
     }
     async function calioSaveLibrary() {
         const raw = prompt('Name this calibration (e.g. objective-20x):');

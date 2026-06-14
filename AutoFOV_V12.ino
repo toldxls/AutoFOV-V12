@@ -970,6 +970,11 @@ const float MEASURED_DRIFT_SEC = 30.0f;  // projected-total drift that auto-appl
 // reflects reality regardless of where start/stop was issued.
 bool mjkzzStackActive = false;
 
+// V12.3: name of the calibration shown on the CAL_SUCCESS screen. Set by a
+// named import (POST /calib → calApply); cleared right before a device/web
+// point-calibration finalizes so those show a generic "CALIB SUCCESS".
+char lastCalibName[32] = "";
+
 // patched3: deferred WiFi-forget timer. When the user taps FORGET WiFi we want
 // to show a "CLEARING..." flash for ~600 ms before rebooting, but blocking the
 // loop with delay() also blocks touch and any other loop-driven refresh.  We
@@ -4742,12 +4747,13 @@ void loop() {
             drawPointEntryUI();
           } else {
             currentMode = CAL_RUN;
+            lastCalibName[0] = '\0';   // device cal → generic success (no profile name)
             finalizeCalibration();
           }
         }
       } else {
         tft.fillRect(0, 305, 240, 15, THEME_BG);
-        setSmoothFont(1); tft.setCursor(5, 318); 
+        setSmoothFont(1); tft.setCursor(5, 318);
         tft.setTextColor(COLOR_RED); tft.print("SAMPLE FAILED");
         delay(1000);
         currentMode = CAL_RUN;
@@ -6554,8 +6560,15 @@ void drawAdjButtons(int y) {
 void drawSuccessScreen() {
   currentMode = CAL_SUCCESS; tft.fillScreen(THEME_BG);
   tft.setTextColor(themedText(COLOR_GREENYELLOW)); centerStaticText("CALIB SUCCESS!", 40, 2);
-  setSmoothFont(1); tft.setTextColor(themedText(TFT_WHITE));
-  
+  setSmoothFont(1);
+  // V12.3: show the loaded profile name for a named import (blank = device cal).
+  if (lastCalibName[0]) {
+    char nameBuf[40];
+    snprintf(nameBuf, sizeof(nameBuf), "Loaded: %s", lastCalibName);
+    tft.setTextColor(themedText(COLOR_TEAL)); centerStaticText(nameBuf, 66, 1);
+  }
+  tft.setTextColor(themedText(TFT_WHITE));
+
   char floatBuf[32];
   
   snprintf(floatBuf, sizeof(floatBuf), "Slope: %.5f", CTRLX);
