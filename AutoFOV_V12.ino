@@ -963,6 +963,13 @@ uint32_t measuredTotalSec = 0;           // last measured total stack duration, 
 uint32_t measuredPulses = 0;             // shots counted in the last measured stack
 const float MEASURED_DRIFT_SEC = 30.0f;  // projected-total drift that auto-applies
 
+// V12.3: single source of truth for "is an MJKZZ stack running". Set true on any
+// START (web IR cmd, device IR screen, or the bezel STACK toggle) and false on
+// STOP or when the camera-trigger watcher sees the pulse sequence end. Broadcast
+// in telemetry so every web control (bezel STACK button + IR-screen buttons)
+// reflects reality regardless of where start/stop was issued.
+bool mjkzzStackActive = false;
+
 // patched3: deferred WiFi-forget timer. When the user taps FORGET WiFi we want
 // to show a "CLEARING..." flash for ~600 ms before rebooting, but blocking the
 // loop with delay() also blocks touch and any other loop-driven refresh.  We
@@ -2196,6 +2203,8 @@ void handleBrightnessSettingsTouch(TS_Point p, int adj) {
 static void irFlashSend(int idx) {
   irButtons[idx]->draw(tft, nullptr, COLOR_GREENYELLOW, TFT_BLACK);
   irLed.sendNEC(irCodes[idx]);
+  if      (idx == 0) mjkzzStackActive = true;    // START → web buttons sync via telemetry
+  else if (idx == 1) mjkzzStackActive = false;   // STOP
   delay(120);
   irButtons[idx]->draw(tft);
 }
@@ -4771,6 +4780,7 @@ void loop() {
   }
 
   if (isSequenceActive && ((unsigned long)(millis() - lastPulseTime) >= SILENCE_DURATION)) {
+    mjkzzStackActive = false;   // V12.3: pulses stopped → stack ended; sync web buttons
     unsigned long totalActiveTime = (unsigned long)(lastPulseTime - firstPulseTime);
     if (totalActiveTime >= MIN_ACTIVE_DURATION) {
       wifiNotifyStackComplete();

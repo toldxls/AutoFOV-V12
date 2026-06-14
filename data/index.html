@@ -633,7 +633,9 @@
                 <div id="val-totaltime" class="gfx-text" style="width: 240px; text-align: center; top: 244px; color: #FFA500; font-size: 16px;">4m 16s</div>
 
                 <!-- V12.3: measured sec/step from the last completed stack. Auto-applies
+                     to Sec/Step on >=30 s drift; this line shows the source. -->
                 <div id="time-measured" class="gfx-text" style="width: 240px; text-align: center; top: 282px; color: var(--text-disabled); font-size: 11px;">Measured: run a stack to set</div>
+
             </div>
 
             <!-- ===================== FOV INFO ===================== -->
@@ -4139,12 +4141,15 @@
         const s = total % 60;
         document.getElementById('val-totaltime').innerText =
             h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+
         const measEl = document.getElementById('time-measured');
         if (state.measStep > 0) {
             measEl.innerText = `Measured: ${state.measStep.toFixed(1)} s/step (${state.measSh} sh)`;
             measEl.style.color = 'var(--accent-cyan)';
+        } else {
             measEl.innerText = 'Measured: run a stack to set';
             measEl.style.color = 'var(--text-disabled)';
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -6466,6 +6471,17 @@
         if (data.measStep  !== undefined) state.measStep = data.measStep;
         if (data.measSh    !== undefined) state.measSh   = data.measSh;
         if (data.measStep !== undefined || data.measSh !== undefined) updateStackTimeUI();
+
+        // ── MJKZZ stack-running state (device is the source of truth) ──
+        // Keeps the bezel STACK toggle in sync no matter where start/stop was
+        // issued — bezel button, the IR REMOTE screen, or the device's IR panel.
+        if (data.stackActive !== undefined) {
+            const active = !!data.stackActive;
+            if (active !== stackStartActive) {
+                stackStartActive = active;
+                applyStackStartState();
+            }
+        }
 
         // ── Brightness / LED ──
         // Skip brightness update while the user is dragging the slider — a

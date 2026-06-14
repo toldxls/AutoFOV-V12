@@ -879,6 +879,7 @@ void wifiLoop() {
     static int      lastImgs         = -1;
     static float    lastSecStep      = -1.0f;
     static float    lastMeasStep     = -1.0f;   // V12.3: measured sec/step
+    static int      lastStackActive  = -1;      // V12.3: MJKZZ stack running flag
     static int      lastTheme        = -1;
     static int      lastTint         = -1;
     static uint32_t lastDimMs        = 0xFFFFFFFFUL;
@@ -895,6 +896,7 @@ void wifiLoop() {
         stackTotalImgs  != lastImgs         ||
         fabsf(stackTimePerStep - lastSecStep) > 0.01f ||
         fabsf(measuredPerStep - lastMeasStep) > 0.01f ||
+        (mjkzzStackActive ? 1 : 0) != lastStackActive ||
         currentThemeIndex != lastTheme      ||
         themeIntensity  != lastTint         ||
         (uint32_t)dimTimeoutMs   != lastDimMs   ||
@@ -910,6 +912,7 @@ void wifiLoop() {
         lastImgs        = stackTotalImgs;
         lastSecStep     = stackTimePerStep;
         lastMeasStep    = measuredPerStep;
+        lastStackActive = mjkzzStackActive ? 1 : 0;
         lastTheme       = currentThemeIndex;
         lastTint        = themeIntensity;
         lastDimMs       = (uint32_t)dimTimeoutMs;
@@ -2087,8 +2090,8 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    val = button name; fires the matching NEC code over the IR LED.
     //    Runs on Core 1 via wifiLoop(), so the blocking sendNEC() is safe here.
     } else if (strcmp(key, "ir") == 0) {
-        if      (strcmp(val, "start")   == 0) irLed.sendNEC(IR_MJKZZ_START);
-        else if (strcmp(val, "stop")    == 0) irLed.sendNEC(IR_MJKZZ_STOP);
+        if      (strcmp(val, "start")   == 0) { irLed.sendNEC(IR_MJKZZ_START); mjkzzStackActive = true; }
+        else if (strcmp(val, "stop")    == 0) { irLed.sendNEC(IR_MJKZZ_STOP);  mjkzzStackActive = false; }
         else if (strcmp(val, "up")      == 0) irLed.sendNEC(IR_MJKZZ_UP);
         else if (strcmp(val, "down")    == 0) irLed.sendNEC(IR_MJKZZ_DOWN);
         else if (strcmp(val, "capture") == 0) irLed.sendNEC(IR_MJKZZ_CAPTURE);
@@ -2327,6 +2330,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // V12.3: measured stack time (0 sec/step until a stack has been measured).
     doc["measStep"]      = roundf(measuredPerStep * 10.0f) / 10.0f;
     doc["measSh"]        = (int)measuredPulses;
+    doc["stackActive"]   = mjkzzStackActive ? 1 : 0;   // V12.3: MJKZZ stack running?
     doc["brightness"]    = currentBrightness;
     doc["ledEnabled"]    = ledEnabled ? 1 : 0;
     doc["ledDuty"]       = currentLedDuty;
@@ -2591,6 +2595,7 @@ static void buildSettingsJson(String& out) {
     // does NOT auto-apply), so the dashboard's Measured line tracks the device.
     doc["measStep"]      = roundf(measuredPerStep * 10.0f) / 10.0f;
     doc["measSh"]        = (int)measuredPulses;
+    doc["stackActive"]   = mjkzzStackActive ? 1 : 0;   // V12.3: MJKZZ stack running?
     doc["brightness"]    = currentBrightness;
     doc["ledEnabled"]    = ledEnabled ? 1 : 0;
     doc["ledDuty"]       = currentLedDuty;
