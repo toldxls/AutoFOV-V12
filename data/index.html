@@ -632,6 +632,8 @@
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 224px; color: var(--accent-magenta);">Calculated Stack Time</div>
                 <div id="val-totaltime" class="gfx-text" style="width: 240px; text-align: center; top: 244px; color: #FFA500; font-size: 16px;">4m 16s</div>
 
+                <!-- V12.3: measured sec/step from the last completed stack. Auto-applies
+                <div id="time-measured" class="gfx-text" style="width: 240px; text-align: center; top: 282px; color: var(--text-disabled); font-size: 11px;">Measured: run a stack to set</div>
             </div>
 
             <!-- ===================== FOV INFO ===================== -->
@@ -1947,6 +1949,8 @@
         stepIndex: 2,
         imgs: 128,
         secStep: 3.3,
+        measStep: 0,          // measured sec/step (0 = none yet)
+        measSh: 0,            // shots in the last measured stack
         brightness: 128,      // 1-255
         ledEnabled: false,
         ledDuty: 32,          // 0-127
@@ -4135,6 +4139,12 @@
         const s = total % 60;
         document.getElementById('val-totaltime').innerText =
             h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+        const measEl = document.getElementById('time-measured');
+        if (state.measStep > 0) {
+            measEl.innerText = `Measured: ${state.measStep.toFixed(1)} s/step (${state.measSh} sh)`;
+            measEl.style.color = 'var(--accent-cyan)';
+            measEl.innerText = 'Measured: run a stack to set';
+            measEl.style.color = 'var(--text-disabled)';
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -6453,6 +6463,9 @@
         if (data.stepIndex !== undefined) { state.stepIndex = data.stepIndex; updateStackCalcUI(); }
         if (data.imgs      !== undefined) { state.imgs = data.imgs; updateStackCalcUI(); }
         if (data.secStep   !== undefined) { state.secStep = data.secStep; updateStackTimeUI(); }
+        if (data.measStep  !== undefined) state.measStep = data.measStep;
+        if (data.measSh    !== undefined) state.measSh   = data.measSh;
+        if (data.measStep !== undefined || data.measSh !== undefined) updateStackTimeUI();
 
         // ── Brightness / LED ──
         // Skip brightness update while the user is dragging the slider — a

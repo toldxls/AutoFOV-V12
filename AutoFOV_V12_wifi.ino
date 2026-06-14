@@ -878,6 +878,7 @@ void wifiLoop() {
     static int      lastStepIndex    = -1;
     static int      lastImgs         = -1;
     static float    lastSecStep      = -1.0f;
+    static float    lastMeasStep     = -1.0f;   // V12.3: measured sec/step
     static int      lastTheme        = -1;
     static int      lastTint         = -1;
     static uint32_t lastDimMs        = 0xFFFFFFFFUL;
@@ -893,6 +894,7 @@ void wifiLoop() {
         stackStepIndex  != lastStepIndex    ||
         stackTotalImgs  != lastImgs         ||
         fabsf(stackTimePerStep - lastSecStep) > 0.01f ||
+        fabsf(measuredPerStep - lastMeasStep) > 0.01f ||
         currentThemeIndex != lastTheme      ||
         themeIntensity  != lastTint         ||
         (uint32_t)dimTimeoutMs   != lastDimMs   ||
@@ -907,6 +909,7 @@ void wifiLoop() {
         lastStepIndex   = stackStepIndex;
         lastImgs        = stackTotalImgs;
         lastSecStep     = stackTimePerStep;
+        lastMeasStep    = measuredPerStep;
         lastTheme       = currentThemeIndex;
         lastTint        = themeIntensity;
         lastDimMs       = (uint32_t)dimTimeoutMs;
@@ -2321,6 +2324,9 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // secStep was only in buildSettingsJson, so the web's Sec/Step sat at its
     // 3.3 default until some other device-side change pushed a settings frame.
     doc["secStep"]       = stackTimePerStep;
+    // V12.3: measured stack time (0 sec/step until a stack has been measured).
+    doc["measStep"]      = roundf(measuredPerStep * 10.0f) / 10.0f;
+    doc["measSh"]        = (int)measuredPulses;
     doc["brightness"]    = currentBrightness;
     doc["ledEnabled"]    = ledEnabled ? 1 : 0;
     doc["ledDuty"]       = currentLedDuty;
@@ -2581,6 +2587,10 @@ static void buildSettingsJson(String& out) {
     doc["stepIndex"]     = stackStepIndex;
     doc["imgs"]          = stackTotalImgs;
     doc["secStep"]       = stackTimePerStep;
+    // V12.3: measured stack time — pushed on change (incl. when a new measure
+    // does NOT auto-apply), so the dashboard's Measured line tracks the device.
+    doc["measStep"]      = roundf(measuredPerStep * 10.0f) / 10.0f;
+    doc["measSh"]        = (int)measuredPulses;
     doc["brightness"]    = currentBrightness;
     doc["ledEnabled"]    = ledEnabled ? 1 : 0;
     doc["ledDuty"]       = currentLedDuty;
