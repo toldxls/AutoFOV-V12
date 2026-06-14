@@ -2229,7 +2229,8 @@
                                            // first paint snaps the ceiling to the
                                            // observed peak instead of EMA-shrinking
                                            // from a stale 100 over ~12 s.
-    let vibCursorX   = -1;                 // hover x on the spectrum canvas (-1 = none)
+    let vibCursorX   = -1;                 // hover x on the analyzer spectrum canvas (-1 = none)
+    let vibHomeCursorX = -1;               // hover x on the home mini-spectrum canvas (-1 = none)
     let vibTrend        = [];              // [{t,v,h}] rolling RMS history
     let vibTrendLast    = 0;
     let vibTrendDispMax = 0;             // sticky Y-ceiling: fast rise, slow decay
@@ -2608,11 +2609,11 @@
     //    real motion. Honest for large-amplitude / low-frequency sway.
     const VIB_DISP_K       = 248.5 / 10;     // (mg→µm) × (deci-mg→mg)
     const VIB_DISP_MIN_BIN = 4;              // bin 4 ≈ 3.25 Hz
-    // The compact home µm graph hides everything below 5 Hz: the 1/f²
-    // integration turns sub-5 Hz sway into towering bars that swamp the rest
+    // The compact home µm graph hides everything below 10 Hz: the 1/f²
+    // integration turns sub-10 Hz sway into towering bars that swamp the rest
     // of the spectrum. The full analyzer keeps VIB_DISP_MIN_BIN so nothing is
     // hidden there.
-    const VIB_HOME_UM_MIN_BIN = Math.ceil(5 / VIB_BIN_HZ);  // bin 7 ≈ 5.7 Hz
+    const VIB_HOME_UM_MIN_BIN = Math.ceil(10 / VIB_BIN_HZ);  // bin 13 ≈ 10.6 Hz
     // Motion-blur readout: exposure time + camera geometry.
     let       vibShutterDenom = 60;          // shutter = 1/N s, user-selectable
     const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // nominal magnification (fallback)
@@ -3742,6 +3743,18 @@
 
     // Hover wiring — the spectrum + waterfall canvases exist in the static DOM at load.
     (function vibPanelInit() {
+        // Home mini-spectrum hover cursor. Coords are CSS px relative to the
+        // canvas, which is exactly the space drawVibSpectrum draws in (it sets
+        // a DPR transform, so W = clientWidth). onclick still opens the panel.
+        const hc = document.getElementById('vib-canvas');
+        if (hc) {
+            hc.addEventListener('mousemove', e => {
+                const r = hc.getBoundingClientRect();
+                vibHomeCursorX = e.clientX - r.left;
+                drawVibSpectrum();
+            });
+            hc.addEventListener('mouseleave', () => { vibHomeCursorX = -1; drawVibSpectrum(); });
+        }
         const sc = document.getElementById('vibp-spec');
         if (sc) {
             sc.addEventListener('mousemove', e => {
@@ -3972,6 +3985,46 @@
             else         g.lineTo(mL + x + 0.5, y + 0.5);
         }
         g.stroke();
+
+        // ── Dominant-frequency marker — a dashed vertical guide at the
+        //    firmware-detected peak so you can see at a glance *where* on the
+        //    axis the main vibration sits, labelled with its Hz.
+        const domHz = state.vibDom || 0;
+        if (domHz > 0 && domHz <= 208) {
+            const xd = Math.round(mL + domHz / 208 * pw) + 0.5;
+            g.save();
+            g.strokeStyle = 'rgba(255,224,0,0.55)'; g.lineWidth = 1;
+            g.setLineDash([4, 3]);
+            g.beginPath(); g.moveTo(xd, mT); g.lineTo(xd, mT + ph); g.stroke();
+            g.restore();
+            g.font = 'bold 11px monospace'; g.fillStyle = '#ffe000';
+            g.textBaseline = 'top';
+            const lbl = domHz.toFixed(0) + ' Hz';
+            const overR = xd + 4 + g.measureText(lbl).width > mL + pw;
+            g.textAlign = overR ? 'right' : 'left';
+            g.fillText(lbl, overR ? xd - 4 : xd + 4, mT + 2);
+        }
+
+        // ── Hover cursor — a vertical line + frequency/amplitude readout at the
+        //    pointer, mirroring the full analyzer so the home graph is probeable.
+        if (vibHomeCursorX >= mL && vibHomeCursorX <= mL + pw) {
+            const cx  = Math.round(vibHomeCursorX);
+            const bin = Math.max(0, Math.min(n - 1, Math.round((cx - mL) / pw * n)));
+            g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(cx + 0.5, mT); g.lineTo(cx + 0.5, mT + ph); g.stroke();
+            const hz    = bin * VIB_BIN_HZ;
+            const amp   = vibUnitsUm ? hold[bin] : hold[bin] / 10;   // deci-mg → mg
+            const units = vibUnitsUm ? 'µm' : 'mg';
+            const txt   = `${hz.toFixed(1)} Hz   ${amp.toFixed(vibUnitsUm ? 2 : 1)} ${units}`;
+            g.font = '11px monospace'; g.textBaseline = 'top';
+            const tw = g.measureText(txt).width + 12;
+            let bx = cx + 8; if (bx + tw > mL + pw) bx = cx - 8 - tw;
+            if (bx < mL) bx = mL;
+            g.fillStyle = 'rgba(12,43,46,0.93)'; g.fillRect(bx, mT + 2, tw, 18);
+            g.strokeStyle = '#1f3a33'; g.strokeRect(bx + 0.5, mT + 2.5, tw, 18);
+            g.fillStyle = '#cfe7df'; g.textAlign = 'left';
+            g.fillText(txt, bx + 6, mT + 5);
+        }
     }
     function vibUpdateReadout() {
         const stIdx = state.vibState || 0;
