@@ -773,6 +773,10 @@
             <!-- ===================== CALIBRATOR SETTINGS ===================== -->
             <div id="screen-calsettings" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 105px;">CALIBRATOR</div>
+                <!-- V12.3: backup / restore / share calibration (firmware /calib endpoints) -->
+                <div class="gfx-btn" style="left: 148px; top: 5px; width: 87px; height: 26px;
+                     background:#0a3344; border:1px solid #2a7a9a; font-size:10px;"
+                     onclick="calioOpen()">CAL I/O</div>
 
                 <!-- Row 0: Photo Width -->
                 <div class="stack-row" style="top: 45px; height: 35px;" onclick="setCalSel(0)">
@@ -1468,6 +1472,53 @@
                     appears: hold <b>BOOT</b>, briefly tap <b>RESET</b>, release
                     <b>BOOT</b>, then click Recovery Flash again.
                 </div>
+            </div>
+
+            <!-- ===== CALIBRATION I/O overlay (V12.3) =====
+                 Bezel-scoped. Export/restore a calibration as a local JSON file,
+                 or load one from the owner-curated gh-pages library. Backed by
+                 the firmware GET/POST /calib endpoints; imports re-fit on-device.
+                 z-index below #confirm-modal (200) so confirms sit on top. -->
+            <div id="calio" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.97); z-index:190;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
+                     text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
+                     letter-spacing:0.6px; border-bottom:1px solid #1c3a4a;">
+                    &#128190; CALIBRATION I/O
+                    <div class="gfx-btn" onclick="calioClose()"
+                         style="top:3px; left:205px; width:30px; height:26px;
+                                background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:10px 12px 12px;">
+                    <div style="color:var(--text-disabled); font-size:9px; line-height:1.5; margin-bottom:9px;">
+                        Back up this device's calibration, restore one, or load a
+                        shared profile. Imports are re-fit on the device.
+                    </div>
+                    <div class="gfx-btn" onclick="calioExport()"
+                         style="position:relative; left:0; top:0; width:100%; height:34px;
+                                margin-bottom:7px; background:#0d2535; border:1px solid #2a5a7a; font-size:11px;">
+                        &#11015; EXPORT (download backup)</div>
+                    <div class="gfx-btn" onclick="calioLoadFile()"
+                         style="position:relative; left:0; top:0; width:100%; height:34px;
+                                margin-bottom:7px; background:#0d2535; border:1px solid #2a5a7a; font-size:11px;">
+                        &#11014; LOAD FROM FILE</div>
+                    <div class="gfx-btn" onclick="calioLoadGithub()"
+                         style="position:relative; left:0; top:0; width:100%; height:34px;
+                                margin-bottom:7px; background:#0a3344; border:1px solid #2a7a9a; font-size:11px;">
+                        &#9729; LOAD FROM GITHUB</div>
+                    <div class="gfx-btn" onclick="calioSaveLibrary()"
+                         style="position:relative; left:0; top:0; width:100%; height:34px;
+                                margin-bottom:7px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;">
+                        &#128190; SAVE TO LIBRARY</div>
+                    <div id="calio-gh-list" style="display:none; margin-top:4px;
+                         border-top:1px solid #1c3a4a; padding-top:6px;"></div>
+                    <div id="calio-status" style="margin-top:9px; font-size:9px;
+                         line-height:1.4; color:var(--text-disabled); min-height:26px;
+                         word-break:break-word;"></div>
+                </div>
+                <input type="file" id="calio-file-input" accept=".json,application/json"
+                       style="display:none;" onchange="calioFileChosen(this)">
             </div>
 
         </div><!-- end ili9341-display -->
@@ -5174,6 +5225,141 @@
         modal.style.display = 'flex';
         document.getElementById('confirm-yes').onclick = () => { modal.style.display = 'none'; onYes(); };
         document.getElementById('confirm-no').onclick  = () => { modal.style.display = 'none'; };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CALIBRATION I/O — export / import / shared library (V12.3)
+    // Backed by the firmware GET/POST /calib endpoints. Auth mirrors /state
+    // (X-AutoFOV-Token, with a one-shot re-login on 401/403). The GitHub library
+    // is owner-curated: SAVE downloads a named file to commit; LOAD reads the
+    // published calibrations/ folder. Imports re-fit on the device.
+    // ─────────────────────────────────────────────────────────────────────────
+    function calioOpen()  { document.getElementById('calio').style.display = 'flex'; calioStatus(''); }
+    function calioClose() {
+        document.getElementById('calio').style.display = 'none';
+        document.getElementById('calio-gh-list').style.display = 'none';
+    }
+    function calioStatus(msg, color) {
+        const el = document.getElementById('calio-status');
+        if (el) { el.innerText = msg || ''; el.style.color = color || 'var(--text-disabled)'; }
+    }
+    // Authenticated device fetch with a single re-login retry on token rejection.
+    async function calioAuthedFetch(path, opts) {
+        opts = opts || {};
+        opts.headers = Object.assign({ 'X-AutoFOV-Token': csrfToken }, opts.headers || {});
+        let r = await fetch(wifiBase + path, opts);
+        if (r.status === 401 || r.status === 403) {
+            csrfToken = ''; localStorage.removeItem('afovToken');
+            if (await doLogin()) {
+                opts.headers['X-AutoFOV-Token'] = csrfToken;
+                r = await fetch(wifiBase + path, opts);
+            }
+        }
+        return r;
+    }
+    async function calioGetCalib() {
+        const r = await calioAuthedFetch('/calib');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return await r.json();
+    }
+    function calioDownload(obj, filename) {
+        const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    // POST a calibration to the device (it re-fits + saves + pushes fresh state).
+    async function calioApply(cal) {
+        const r = await calioAuthedFetch('/calib', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cal)
+        });
+        if (!r.ok) {
+            const t = await r.text().catch(() => '');
+            throw new Error('HTTP ' + r.status + (t ? ' — ' + t : ''));
+        }
+    }
+    async function calioExport() {
+        try {
+            calioStatus('Reading calibration…');
+            const cal = await calioGetCalib();
+            const stamp = new Date().toISOString().slice(0, 10);
+            calioDownload(cal, 'autofov-calib-' + stamp + '.json');
+            calioStatus('Exported ✓  saved to your downloads.', '#3ddb7a');
+        } catch (e) { calioStatus('Export failed: ' + e.message, '#ff6a6a'); }
+    }
+    function calioLoadFile() {
+        const inp = document.getElementById('calio-file-input');
+        inp.value = ''; inp.click();
+    }
+    async function calioFileChosen(input) {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        try {
+            calioStatus('Loading ' + f.name + '…');
+            const cal = JSON.parse(await f.text());
+            if (cal.fmt !== 'autofov-calib') throw new Error('not an AutoFOV calibration file');
+            await calioApply(cal);
+            calioStatus('Imported ✓  device re-fit + saved.', '#3ddb7a');
+        } catch (e) { calioStatus('Import failed: ' + e.message, '#ff6a6a'); }
+    }
+    async function calioLoadGithub() {
+        const list = document.getElementById('calio-gh-list');
+        list.style.display = 'block';
+        list.innerHTML = '<div style="color:var(--text-disabled);padding:6px;font-size:10px;">Loading library…</div>';
+        try {
+            const r = await fetch(GITHUB_PAGES_BASE + '/calibrations/index.json', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const items = (await r.json()).calibrations || [];
+            if (!items.length) {
+                list.innerHTML = '<div style="color:var(--text-disabled);padding:6px;font-size:10px;">Library is empty.</div>';
+                return;
+            }
+            list.innerHTML = '';
+            items.forEach(it => {
+                const row = document.createElement('div');
+                row.className = 'gfx-btn';
+                row.style.cssText = 'position:relative;left:0;top:0;width:100%;height:30px;' +
+                    'margin-bottom:5px;background:#0a2a1a;border:1px solid #2a6a4a;font-size:10px;';
+                row.textContent = it.name + (it.by ? '  · ' + it.by : '');
+                row.onclick = () => calioLoadGithubItem(it.file, it.name);
+                list.appendChild(row);
+            });
+        } catch (e) {
+            list.innerHTML = '<div style="color:#ff6a6a;padding:6px;font-size:10px;">Library unavailable: ' +
+                e.message + '</div>';
+        }
+    }
+    async function calioLoadGithubItem(file, name) {
+        calioStatus('Fetching "' + name + '"…');
+        let cal;
+        try {
+            const r = await fetch(GITHUB_PAGES_BASE + '/calibrations/' + file, { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            cal = await r.json();
+            if (cal.fmt !== 'autofov-calib') throw new Error('not an AutoFOV calibration');
+        } catch (e) { calioStatus('Fetch failed: ' + e.message, '#ff6a6a'); return; }
+        if (!confirm('Load "' + name + '" and overwrite the current calibration?')) {
+            calioStatus('Cancelled.'); return;
+        }
+        try { await calioApply(cal); calioStatus('Loaded "' + name + '" ✓', '#3ddb7a'); }
+        catch (e) { calioStatus('Apply failed: ' + e.message, '#ff6a6a'); }
+    }
+    async function calioSaveLibrary() {
+        const raw = prompt('Name this calibration (e.g. objective-20x):');
+        if (raw === null) return;
+        const safe = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+        if (!safe) { calioStatus('Please enter a valid name.', '#ff6a6a'); return; }
+        try {
+            calioStatus('Reading calibration…');
+            const cal = await calioGetCalib();
+            cal.name = safe;
+            calioDownload(cal, safe + '.json');
+            calioStatus('Saved ' + safe + '.json ✓  commit it to calibrations/ in the repo to share.', '#5ad6ff');
+        } catch (e) { calioStatus('Save failed: ' + e.message, '#ff6a6a'); }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
