@@ -3619,6 +3619,9 @@ void redrawCurrentScreen() {
   // target screen renders into a scrolled frame. Overlay modes re-enable scroll
   // themselves in drawInfoTextScreen(), so an unconditional reset here is safe.
   infoScrollReset();
+  // Release the ~334 KB overlay canvas whenever we're not (re)drawing an overlay
+  // — e.g. when the web navigates away, which doesn't hit the X-close path.
+  if (currentMode != WIFI_TIPS && currentMode != RECOVERY_HELP) freeInfoCanvas();
   switch (currentMode) {
     case MAIN:               drawMainScreen(); break;
     case APP_SETTINGS:       drawAppSettingsUI(); break;
@@ -4607,6 +4610,7 @@ void wakeScreen() {
     isScreenDim = false;
     analogWrite(LITE_PIN, currentBrightness);
     infoScrollReset();   // V12.3: clear any HW scroll before repaint (overlay re-enables it)
+    if (preSleepMode != WIFI_TIPS && preSleepMode != RECOVERY_HELP) freeInfoCanvas();
     switch (preSleepMode) {
       case MAIN:         drawMainScreen(); break;
       case APP_SETTINGS: drawAppSettingsUI(); break;
