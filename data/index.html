@@ -3902,6 +3902,20 @@
             g.fillText(yLabel(yVal(frac)), mL - 5, y);
         }
 
+        // ── X-axis tick marks (outer-facing) ────────────────────────────
+        // Major ticks at 0/50/100/150/200 Hz, slightly shorter minor ticks
+        // every 10 Hz between them. Ticks hang below the axis baseline.
+        const xBase = mT + ph;
+        g.strokeStyle = '#5e8c7e'; g.lineWidth = 1;
+        g.beginPath();
+        for (let hz = 0; hz <= 200; hz += 10) {
+            const x = Math.round(mL + hz / 208 * pw) + 0.5;
+            const len = (hz % 50 === 0) ? 6 : 3;
+            g.moveTo(x, xBase + 0.5);
+            g.lineTo(x, xBase + 0.5 + len);
+        }
+        g.stroke();
+
         // ── X-axis Hz tick labels ───────────────────────────────────────
         g.font = '12px monospace'; g.fillStyle = '#5e8c7e';
         g.textBaseline = 'top';
@@ -3909,7 +3923,7 @@
         for (const hz of xTicks) {
             const x = mL + hz / 208 * pw;
             g.textAlign = hz === 0 ? 'left' : (hz === 200 ? 'right' : 'center');
-            g.fillText(String(hz), x, mT + ph + 6);
+            g.fillText(String(hz), x, mT + ph + 9);
         }
         // 'Hz' axis label — bottom-right corner, below the chart so it doesn't
         // collide with the '200' tick label.
