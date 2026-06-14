@@ -4323,6 +4323,13 @@ void setup() {
   Serial.flush();
 
   pinMode(LITE_PIN, OUTPUT);
+  // V12.3: drive the backlight PWM at 20 kHz. analogWrite() defaults to ~1 kHz
+  // on the ESP32 core, which is low enough to read as a faint flicker / "wavy"
+  // shimmer on the bright button fills (worse at reduced brightness). 20 kHz is
+  // well above flicker perception and still comfortably within the LEDC range
+  // (20 kHz x 256 steps = 5.12 MHz). Set before the first write so the channel
+  // comes up at the high frequency.
+  analogWriteFrequency(LITE_PIN, 20000);
   analogWrite(LITE_PIN, Config::DEFAULT_BRIGHTNESS);
   Serial.println("[BOOT] tft.begin()..."); Serial.flush();
   tft.begin();
