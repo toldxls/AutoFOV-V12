@@ -169,6 +169,22 @@ struct WifiCmd {
 };
 static QueueHandle_t wifiCmdQueue = nullptr;
 
+// V12.3: calibration-import staging. A full calibration (up to 20 point-pairs)
+// is far too big for WifiCmd's val[64], so POST /calib parses + range-checks the
+// JSON on the AsyncTCP task (Core 0) into this buffer, then enqueues a one-word
+// "calApply"; wifiLoop() (Core 1) loads it and runs finalizeCalibration(), the
+// only place TFT + NVS writes are safe. pendingCalibReady is the cross-core
+// handoff fence — release on the writer, acquire on the reader.
+struct PendingCalib {
+    float width;
+    float demarc;
+    int   n;
+    float dist[20];
+    float fov[20];
+};
+static PendingCalib pendingCalib;
+static std::atomic<bool> pendingCalibReady{false};
+
 // Payload for ntfyTask. The topic is COPIED here at send time (Core 1) — the
 // task used to read the global ntfyTopic String directly, which the ntfyTopic
 // command can reassign (freeing the old buffer) while the task is mid-request.
@@ -1388,6 +1404,100 @@ static void startFullServer() {
         }
     );
 
+    // GET /calib — full-precision calibration export. The /state copy is rounded
+    // for the dashboard; a backup/library file wants the real numbers. Reading
+    // the calib globals here (Core 0) is a plain memory read — they only mutate
+    // on Core 1 during an explicit cal/import, never mid-request.
+    httpServer.on("/calib", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        DynamicJsonDocument doc(2048);
+        doc["fmt"]        = "autofov-calib";
+        doc["ver"]        = 1;
+        doc["device"]     = "AutoFOV V12";
+        doc["isCustom"]   = isCustomCalib ? 1 : 0;
+        doc["calWidth"]   = sensorWidthPixels;
+        doc["demarcDist"] = demarcationDist;
+        doc["calPoints"]  = nPoints;
+        JsonObject fit = doc.createNestedObject("fit");   // informational only
+        fit["slope"]     = CTRLX;
+        fit["intercept"] = CTRLY;
+        fit["r2"]        = CALIB_R2;
+        fit["err"]       = CALIB_ERROR;
+        int n = constrain(pointsCaptured, 0, 20);
+        JsonArray pts = doc.createNestedArray("points");
+        for (int i = 0; i < n; i++) {
+            JsonObject p = pts.createNestedObject();
+            p["dist"] = distPoints[i];
+            p["fov"]  = fovPoints[i];
+        }
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // POST /calib — import a calibration. Auth-gated like /cmd. The body is
+    // parsed + range-checked HERE on Core 0 (parse only — no TFT/I²C/NVS),
+    // staged into pendingCalib, then a one-word "calApply" hops to Core 1 which
+    // runs finalizeCalibration(). The points are re-fit on-device, so a file's
+    // stored slope is never trusted. A local cal in progress on the TFT owns
+    // the arrays, so we refuse while it runs.
+    httpServer.on("/calib", HTTP_POST,
+        [](AsyncWebServerRequest* req) { /* headers only — body handled below */ },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+            if (total > 4096)    { req->send(400, "text/plain", "Payload too large"); return; }
+            // Accumulate chunks. Body callbacks for one request are serialised on
+            // the AsyncTCP task, and a calibration import is a rare manual action,
+            // so a single static buffer is sufficient (no concurrent imports).
+            static String body;
+            if (index == 0) body = "";
+            body.reserve(total + 1);
+            body.concat((const char*)data, len);
+            if (index + len < total) return;            // wait for the final chunk
+
+            DynamicJsonDocument doc(4096);
+            DeserializationError err = deserializeJson(doc, body);
+            body = String();                            // free early
+            if (err) { req->send(400, "text/plain", "Bad JSON"); return; }
+            if (strcmp(doc["fmt"] | "", "autofov-calib") != 0) {
+                req->send(400, "text/plain", "Not an AutoFOV calibration"); return;
+            }
+            if (isLocalCalActive()) {
+                req->send(409, "text/plain", "Calibration in progress"); return;
+            }
+
+            float width  = doc["calWidth"]   | 0.0f;
+            float demarc = doc["demarcDist"] | 0.0f;
+            JsonArray pts = doc["points"].as<JsonArray>();
+            if (width < 100.0f || width > 30000.0f ||
+                demarc < 0.01f || demarc > 5.0f ||
+                pts.isNull() || pts.size() < 2 || pts.size() > 20) {
+                req->send(400, "text/plain", "Out-of-range calibration"); return;
+            }
+            pendingCalib.width  = width;
+            pendingCalib.demarc = demarc;
+            pendingCalib.n      = 0;
+            for (JsonObject p : pts) {
+                float d = p["dist"] | NAN;
+                float f = p["fov"]  | NAN;
+                if (!isfinite(d) || !isfinite(f)) {
+                    req->send(400, "text/plain", "Non-finite point"); return;
+                }
+                pendingCalib.dist[pendingCalib.n] = d;
+                pendingCalib.fov[pendingCalib.n]  = f;
+                pendingCalib.n++;
+            }
+            pendingCalibReady.store(true, std::memory_order_release);
+
+            WifiCmd cmd;
+            strncpy(cmd.key, "calApply", sizeof(cmd.key) - 1);
+            cmd.key[sizeof(cmd.key) - 1] = '\0';
+            cmd.val[0] = '\0';
+            xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0);
+            req->send(200, "application/json", "{\"ok\":1}");
+        }
+    );
+
     // POST /forget-wifi — clear credentials and return to portal on next restart.
     // Safe to run on Core 0: only NVS write (Preferences is internally serialised)
     // and ESP.restart() (core-agnostic). The delay() blocks the async task but
@@ -1879,6 +1989,32 @@ static void handleWifiCommand(const char* key, const char* val) {
     } else if (strcmp(key, "calTruncate") == 0) {
         if (isLocalCalActive()) return;
         if (iVal >= 0 && iVal < pointsCaptured) pointsCaptured = iVal;
+
+    // ── Calibration: apply an imported calibration (POST /calib) ──────────────
+    //    The body was parsed + range-checked on Core 0 into pendingCalib; here
+    //    on Core 1 we load the points and re-run the on-device least-squares fit
+    //    (finalizeCalibration), so an imported file's stored slope is never
+    //    trusted. nPoints must track the imported count or finalizeCalibration's
+    //    fitN = min(pointsCaptured, nPoints) would silently drop points. It saves
+    //    NVS + shows the CAL_SUCCESS screen, then we push fresh state (incl. the
+    //    cal graph) to web clients — mirroring the live web-cal flow below.
+    } else if (strcmp(key, "calApply") == 0) {
+        if (isLocalCalActive()) return;        // TFT mid-capture owns the arrays
+        if (!pendingCalibReady.load(std::memory_order_acquire)) return;
+        int n = pendingCalib.n;
+        if (n < 2 || n > 20) { pendingCalibReady.store(false, std::memory_order_relaxed); return; }
+        sensorWidthPixels = pendingCalib.width;  settings.sensorWidth = sensorWidthPixels;
+        demarcationDist   = pendingCalib.demarc; settings.demarcation = demarcationDist;
+        for (int i = 0; i < n; i++) {
+            distPoints[i] = pendingCalib.dist[i];
+            fovPoints[i]  = pendingCalib.fov[i];
+        }
+        pointsCaptured = n;
+        nPoints        = n;
+        pendingCalibReady.store(false, std::memory_order_relaxed);
+        finalizeCalibration();                 // re-fit + NVS save + CAL_SUCCESS screen
+        String out; buildFullStateJson(out);
+        wsServer.textAll(out);
 
     // ── Reset to factory calibration ─────────────────────────────────────────
     //    NOTE: we manually restore defaults rather than calling finalizeCalibration()
