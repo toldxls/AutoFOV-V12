@@ -1497,8 +1497,8 @@
                     </div>
                     <div class="gfx-btn" onclick="calioExport()"
                          style="position:relative; left:0; top:0; width:100%; height:34px;
-                                margin-bottom:7px; background:#0d2535; border:1px solid #2a5a7a; font-size:11px;">
-                        &#11015; EXPORT (download backup)</div>
+                                margin-bottom:7px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;">
+                        &#11015; EXPORT</div>
                     <div class="gfx-btn" onclick="calioLoadFile()"
                          style="position:relative; left:0; top:0; width:100%; height:34px;
                                 margin-bottom:7px; background:#0d2535; border:1px solid #2a5a7a; font-size:11px;">
@@ -1507,10 +1507,6 @@
                          style="position:relative; left:0; top:0; width:100%; height:34px;
                                 margin-bottom:7px; background:#0a3344; border:1px solid #2a7a9a; font-size:11px;">
                         &#9729; LOAD FROM GITHUB</div>
-                    <div class="gfx-btn" onclick="calioSaveLibrary()"
-                         style="position:relative; left:0; top:0; width:100%; height:34px;
-                                margin-bottom:7px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;">
-                        &#128190; SAVE TO LIBRARY</div>
                     <div id="calio-gh-list" style="display:none; margin-top:4px;
                          border-top:1px solid #1c3a4a; padding-top:6px;"></div>
                     <div id="calio-status" style="margin-top:9px; font-size:9px;
@@ -1710,6 +1706,44 @@
         <button id="login-go" type="submit">SIGN IN</button>
       </form>
       <div id="login-err"></div>
+    </div>
+
+    <!-- Calibration EXPORT name overlay — viewport-scoped, styled like the login
+         overlay. Replaces window.prompt() so the name entry matches the app. -->
+    <style>
+      #calio-name-overlay { display:none; position:fixed; inset:0; z-index:660;
+        background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
+        -webkit-backdrop-filter:blur(4px); flex-direction:column;
+        align-items:center; justify-content:center; padding:0 24px;
+        color:#cfe7df; font-family:monospace; text-align:center; }
+      #calio-name-overlay.open { display:flex; }
+      #calio-name-overlay .lgTitle { font-size:20px; font-weight:bold; color:#00c8b4;
+        letter-spacing:3px; margin-bottom:6px; }
+      #calio-name-overlay .lgSub { font-size:11px; color:#7ab4a2; line-height:1.5;
+        margin-bottom:20px; max-width:300px; }
+      #calio-name-input { width:100%; max-width:280px; padding:11px; font-size:15px;
+        font-family:monospace; background:#0c2b2e; border:1px solid #2a5e58;
+        border-radius:4px; color:#e7f5ee; margin-bottom:16px; text-align:center; }
+      #calio-name-input:focus { outline:none; border-color:#00c8b4; }
+      #calio-name-row { display:flex; gap:10px; width:100%; max-width:280px; }
+      #calio-name-row button { flex:1; padding:12px; font-size:14px; font-weight:bold;
+        letter-spacing:1px; border-radius:4px; cursor:pointer; font-family:monospace; }
+      #calio-name-save   { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df; }
+      #calio-name-save:active { filter:brightness(1.3); }
+      #calio-name-cancel { background:#2a1414; border:1px solid #7a3a3a; color:#e7cfcf; }
+    </style>
+    <div id="calio-name-overlay">
+      <div class="lgTitle">EXPORT</div>
+      <div class="lgSub">Name this calibration profile (e.g. objective-20x).<br>
+        It downloads as &lt;name&gt;.json — drop it into the library to share.</div>
+      <form id="calio-name-form" onsubmit="calioNameConfirm(); return false;">
+        <input id="calio-name-input" type="text" placeholder="objective-20x"
+               spellcheck="false" autocomplete="off">
+        <div id="calio-name-row">
+          <button type="button" id="calio-name-cancel" onclick="calioNameClose()">CANCEL</button>
+          <button type="submit"  id="calio-name-save">EXPORT</button>
+        </div>
+      </form>
     </div>
 
     <!-- Firmware-flash password overlay — styled like the login + reboot
@@ -5319,13 +5353,28 @@
             throw new Error('HTTP ' + r.status + (t ? ' — ' + t : ''));
         }
     }
-    async function calioExport() {
+    // EXPORT — opens the styled name overlay; the file downloads as <name>.json
+    // (named so it can drop straight into the calibrations/ library).
+    function calioExport() {
+        const inp = document.getElementById('calio-name-input');
+        inp.value = '';
+        document.getElementById('calio-name-overlay').classList.add('open');
+        setTimeout(() => inp.focus(), 50);
+    }
+    function calioNameClose() {
+        document.getElementById('calio-name-overlay').classList.remove('open');
+    }
+    async function calioNameConfirm() {
+        const raw  = document.getElementById('calio-name-input').value || '';
+        const safe = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+        if (!safe) return;                 // empty/invalid → leave the popup open
+        calioNameClose();
         try {
             calioStatus('Reading calibration…');
             const cal = await calioGetCalib();
-            const stamp = new Date().toISOString().slice(0, 10);
-            calioDownload(cal, 'autofov-calib-' + stamp + '.json');
-            calioStatus('Exported ✓  saved to your downloads.', '#3ddb7a');
+            cal.name = safe;
+            calioDownload(cal, safe + '.json');
+            calioStatus('Exported ' + safe + '.json ✓', '#3ddb7a');
         } catch (e) { calioStatus('Export failed: ' + e.message, '#ff6a6a'); }
     }
     function calioLoadFile() {
@@ -5415,19 +5464,6 @@
         // sync (a bare nav would leave the dashboard behind on the CALIBRATOR).
         calioClose();
         switchScreen('screen-fovinfo');
-    }
-    async function calioSaveLibrary() {
-        const raw = prompt('Name this calibration (e.g. objective-20x):');
-        if (raw === null) return;
-        const safe = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-        if (!safe) { calioStatus('Please enter a valid name.', '#ff6a6a'); return; }
-        try {
-            calioStatus('Reading calibration…');
-            const cal = await calioGetCalib();
-            cal.name = safe;
-            calioDownload(cal, safe + '.json');
-            calioStatus('Saved ' + safe + '.json ✓  commit it to calibrations/ in the repo to share.', '#5ad6ff');
-        } catch (e) { calioStatus('Save failed: ' + e.message, '#ff6a6a'); }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
