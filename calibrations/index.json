@@ -1,3 +1,5 @@
 {
-  "calibrations": []
+  "calibrations": [
+    { "name": "Objective 20x", "file": "obj-20-t.json", "by": "travis" }
+  ]
 }
