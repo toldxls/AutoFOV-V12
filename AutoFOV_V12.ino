@@ -1084,7 +1084,7 @@ void refreshWifiInfoValues();              // patched3: live row refresh
 void handleWifiInfoTouch(TS_Point p);      // patched3
 void openInfoScreen(DisplayMode mode);     // V12.3: enter a drag-scrolled info overlay
 void drawInfoTextScreen();                 // V12.3: full repaint of the active info overlay
-void blitInfoViewport();                   // V12.3: blit the canvas window at the current scroll
+void infoScrollReset();                    // V12.3: disable HW vertical scroll (restore normal)
 void handleInfoTextTouch(TS_Point p);      // V12.3: drag-scroll / close for info overlays
 void wifiForgetAndRestart();               // patched3: defined in patched3_wifi.ino
 const char* wifiGetPortalCode();           // patched3: random WPA2 code shown on TFT during setup
@@ -3452,7 +3452,7 @@ static void buildInfoCanvas() {
   infoMaxScrollY = infoCanvasH - INFO_VP_H;
   if (infoMaxScrollY < 0) infoMaxScrollY = 0;
   infoCanvas = new (std::nothrow) PSRAMCanvas16(240, infoCanvasH);
-  if (!infoCanvas) return;                 // blitInfoViewport() falls back to text
+  if (!infoCanvas) return;                 // render falls back to software text
   infoCanvas->begin();
   if (!infoCanvas->allocated()) return;    // ps_malloc failed → text fallback
   infoCanvas->fillScreen(THEME_BG);
@@ -3469,45 +3469,76 @@ static void buildInfoCanvas() {
   }
 }
 
-// Thin right-edge scrollbar so the drag has a sense of position + extent.
-static void drawInfoScrollbar() {
-  if (infoMaxScrollY <= 0) return;        // nothing to scroll → no bar
-  const int x = 234;
-  tft.drawFastVLine(x + 2, INFO_VP_TOP, INFO_VP_H, 0x2104);
-  int thumbH = (int)((long)INFO_VP_H * INFO_VP_H / infoCanvasH);
-  if (thumbH < 18) thumbH = 18;
-  int thumbY = INFO_VP_TOP + (int)((long)(INFO_VP_H - thumbH) * infoScrollY / infoMaxScrollY);
-  tft.fillRect(x, thumbY, 5, thumbH, themedText(COLOR_TEAL));
+// Disable hardware vertical scroll → restore normal full-screen addressing.
+// MUST run before drawing any non-overlay screen, or that screen renders into a
+// scrolled frame. Called from redrawCurrentScreen()/wakeScreen() and on open.
+void infoScrollReset() {
+  tft.setScrollMargins(0, 0);                 // TFA=0, VSA=320, BFA=0
+  tft.scrollTo(0);
 }
 
-void blitInfoViewport() {
-  if (infoCanvas && infoCanvas->allocated()) {
-    int rows = INFO_VP_H;
-    if (infoScrollY + rows > infoCanvasH) rows = infoCanvasH - infoScrollY;
-    if (rows > 0)
-      tft.drawRGBBitmap(0, INFO_VP_TOP,
-                        infoCanvas->getBuffer() + (int32_t)infoScrollY * 240, 240, rows);
-    if (rows < INFO_VP_H)
-      tft.fillRect(0, INFO_VP_TOP + rows, 240, INFO_VP_H - rows, THEME_BG);
-  } else {
-    // Fallback (canvas alloc failed): line-granular direct render — functional,
-    // just without the smooth pixel scroll.
-    tft.fillRect(0, INFO_VP_TOP, 240, INFO_VP_H, THEME_BG);
-    setSmoothFont(1);
-    tft.setTextWrap(false);
-    int first = infoScrollY / INFO_LINE_H;
-    int yb = INFO_VP_TOP + 14 - (infoScrollY % INFO_LINE_H);
-    for (int i = first; i < infoLineCount && yb < INFO_VP_TOP + INFO_VP_H + INFO_LINE_H; i++) {
-      if (infoLines[i].length()) {
-        tft.setTextColor(infoLineColor(infoLineKind[i]));
-        tft.setCursor(10, yb);
-        tft.print(infoLines[i]);
-      }
-      yb += INFO_LINE_H;
+// Draw `count` virtual content rows starting at vStart into their GDDRAM ring
+// slots (gddram_y = INFO_VP_TOP + (v % INFO_VP_H)) from the off-screen canvas.
+// The ring wrap splits into at most two contiguous spans. Only the changed rows
+// are pushed, so a scroll step touches just a few rows — no full-viewport sweep.
+static void infoDrawRows(int vStart, int count) {
+  if (!infoCanvas || !infoCanvas->allocated() || count <= 0) return;
+  int v = vStart, remaining = count;
+  while (remaining > 0) {
+    int ring = v % INFO_VP_H;                 // v >= 0 here → plain modulo
+    int gY   = INFO_VP_TOP + ring;
+    int span = INFO_VP_H - ring;              // rows until the ring wraps
+    if (span > remaining) span = remaining;
+    int avail = infoCanvasH - v;              // real content rows left
+    if (avail <= 0) {
+      tft.fillRect(0, gY, 240, span, THEME_BG);
+    } else {
+      int drawn = (span < avail) ? span : avail;
+      tft.drawRGBBitmap(0, gY, infoCanvas->getBuffer() + (int32_t)v * 240, 240, drawn);
+      if (drawn < span) tft.fillRect(0, gY + drawn, 240, span - drawn, THEME_BG);
     }
-    tft.setTextWrap(true);
+    v += span; remaining -= span;
   }
-  drawInfoScrollbar();
+}
+
+// Software fallback when the PSRAM canvas failed to allocate: line-granular
+// direct render (no hardware scroll → the old flicker, but it still works).
+static void infoSoftRender() {
+  tft.fillRect(0, INFO_VP_TOP, 240, INFO_VP_H, THEME_BG);
+  setSmoothFont(1);
+  tft.setTextWrap(false);
+  int first = infoScrollY / INFO_LINE_H;
+  int yb = INFO_VP_TOP + 14 - (infoScrollY % INFO_LINE_H);
+  for (int i = first; i < infoLineCount && yb < INFO_VP_TOP + INFO_VP_H + INFO_LINE_H; i++) {
+    if (infoLines[i].length()) {
+      tft.setTextColor(infoLineColor(infoLineKind[i]));
+      tft.setCursor(10, yb);
+      tft.print(infoLines[i]);
+    }
+    yb += INFO_LINE_H;
+  }
+  tft.setTextWrap(true);
+}
+
+// Move to a new scroll position. With the canvas: draw only the newly-revealed
+// rows into the ring, then nudge the hardware scroll pointer — the bulk of the
+// content is never redrawn, so there's no blit sweep (the blink). Falls back to
+// a full software re-render when the canvas is unavailable.
+static void infoScrollToY(int newS) {
+  if (newS < 0) newS = 0;
+  if (newS > infoMaxScrollY) newS = infoMaxScrollY;
+  if (newS == infoScrollY) return;
+  if (infoCanvas && infoCanvas->allocated()) {
+    int d = newS - infoScrollY;
+    if (d >= INFO_VP_H || -d >= INFO_VP_H) infoDrawRows(newS, INFO_VP_H);  // big jump
+    else if (d > 0) infoDrawRows(infoScrollY + INFO_VP_H, d);              // reveal bottom
+    else            infoDrawRows(newS, -d);                                // reveal top
+    infoScrollY = newS;
+    tft.scrollTo(INFO_VP_TOP + (infoScrollY % INFO_VP_H));
+  } else {
+    infoScrollY = newS;
+    infoSoftRender();
+  }
 }
 
 void openInfoScreen(DisplayMode mode) {
@@ -3529,11 +3560,20 @@ void openInfoScreen(DisplayMode mode) {
 }
 
 void drawInfoTextScreen() {
+  infoScrollReset();                          // normal addressing for the fixed parts
   tft.fillScreen(THEME_BG);
   drawLeftBoxedText(infoTitle, 5, 5, infoTitleCol);
   btnInfoTextClose.draw(tft);
   tft.drawFastHLine(5, 38, 230, 0x39E7);
-  blitInfoViewport();
+  if (infoScrollY > infoMaxScrollY) infoScrollY = infoMaxScrollY;
+  if (infoScrollY < 0) infoScrollY = 0;
+  if (infoCanvas && infoCanvas->allocated()) {
+    infoDrawRows(infoScrollY, INFO_VP_H);     // paint the visible window into the ring
+    tft.setScrollMargins(INFO_VP_TOP, 320 - INFO_VP_TOP - INFO_VP_H);   // TFA=42, BFA=6
+    tft.scrollTo(INFO_VP_TOP + (infoScrollY % INFO_VP_H));
+  } else {
+    infoSoftRender();
+  }
 }
 
 void handleInfoTextTouch(TS_Point p) {
@@ -3558,15 +3598,11 @@ void handleInfoTextTouch(TS_Point p) {
   int ns = infoDragStartScroll - (p.y - infoDragStartY);
   if (ns < 0) ns = 0;
   if (ns > infoMaxScrollY) ns = infoMaxScrollY;
-  // Deadzone: the FT6206 jitters a couple px between reads; without this the
-  // viewport re-blits constantly while the finger is "still", which reads as a
-  // flashy shimmer. Only redraw once the move exceeds a few px (but always honor
-  // the clamped ends so the last bit of travel isn't lost).
+  // Deadzone: the FT6206 jitters a couple px between reads. Only act once the
+  // move exceeds a few px (but always honor the clamped ends so the last bit of
+  // travel isn't lost). infoScrollToY() no-ops if the position is unchanged.
   if (abs(ns - infoScrollY) >= 3 || ns == 0 || ns == infoMaxScrollY) {
-    if (ns != infoScrollY) {
-      infoScrollY = ns;
-      blitInfoViewport();
-    }
+    infoScrollToY(ns);
   }
 }
 
@@ -3579,6 +3615,10 @@ void handleInfoTextTouch(TS_Point p) {
 // owns the screen; mid-sample repaint would erase the sampling progress
 // rendered by the loop's CAL_SAMPLING block.
 void redrawCurrentScreen() {
+  // V12.3: leaving an info overlay must restore normal addressing first, or the
+  // target screen renders into a scrolled frame. Overlay modes re-enable scroll
+  // themselves in drawInfoTextScreen(), so an unconditional reset here is safe.
+  infoScrollReset();
   switch (currentMode) {
     case MAIN:               drawMainScreen(); break;
     case APP_SETTINGS:       drawAppSettingsUI(); break;
@@ -4566,6 +4606,7 @@ void wakeScreen() {
     isScreenSleep = false;
     isScreenDim = false;
     analogWrite(LITE_PIN, currentBrightness);
+    infoScrollReset();   // V12.3: clear any HW scroll before repaint (overlay re-enables it)
     switch (preSleepMode) {
       case MAIN:         drawMainScreen(); break;
       case APP_SETTINGS: drawAppSettingsUI(); break;
