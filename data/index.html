@@ -2608,6 +2608,11 @@
     //    real motion. Honest for large-amplitude / low-frequency sway.
     const VIB_DISP_K       = 248.5 / 10;     // (mg→µm) × (deci-mg→mg)
     const VIB_DISP_MIN_BIN = 4;              // bin 4 ≈ 3.25 Hz
+    // The compact home µm graph hides everything below 5 Hz: the 1/f²
+    // integration turns sub-5 Hz sway into towering bars that swamp the rest
+    // of the spectrum. The full analyzer keeps VIB_DISP_MIN_BIN so nothing is
+    // hidden there.
+    const VIB_HOME_UM_MIN_BIN = Math.ceil(5 / VIB_BIN_HZ);  // bin 7 ≈ 5.7 Hz
     // Motion-blur readout: exposure time + camera geometry.
     let       vibShutterDenom = 60;          // shutter = 1/N s, user-selectable
     const     OBJ_MAG         = { 1: 5, 2: 10, 3: 20 };  // nominal magnification (fallback)
@@ -3827,11 +3832,12 @@
 
         // ── Convert a deci-mg spectrum to displacement (µm per bin) using
         //    the same K/f² per-bin integration as the analyzer panel.  Bins
-        //    below VIB_DISP_MIN_BIN (~3 Hz) are zeroed so the 1/f² rise can't
-        //    amplify sub-3 Hz sensor noise into a fake reading.
+        //    below VIB_HOME_UM_MIN_BIN (5 Hz) are zeroed: the 1/f² rise turns
+        //    sub-5 Hz sway into bars that swamp everything else on this small
+        //    graph. (The full analyzer keeps its lower 3 Hz floor.)
         const toUm = (src) => {
             const out = new Float32Array(src.length);
-            for (let k = VIB_DISP_MIN_BIN; k < src.length; k++) {
+            for (let k = VIB_HOME_UM_MIN_BIN; k < src.length; k++) {
                 const f = k * VIB_BIN_HZ;
                 const floor = (vibBaseV && vibBaseV[k]) ? vibBaseV[k] * VIB_BASE_STRENGTH : 0;
                 const a = src[k] > floor ? src[k] - floor : 0;
@@ -3848,7 +3854,7 @@
         const hold = haveData ? (vibUnitsUm ? toUm(holdSrc) : holdSrc) : null;
         const live = haveData ? (vibUnitsUm ? toUm(liveSrc) : liveSrc) : null;
         const n      = haveData ? vibSpec.length : 0;
-        const cutoff = vibUnitsUm ? VIB_DISP_MIN_BIN : 2;
+        const cutoff = vibUnitsUm ? VIB_HOME_UM_MIN_BIN : 2;
         // mg source is deci-mg internally; µm is already µm post-conversion.
         // Seed the floor so a quiet signal doesn't show an empty chart.
         let mx = vibUnitsUm ? 0.5 : 30;
@@ -3903,27 +3909,37 @@
         }
 
         // ── X-axis tick marks (outer-facing) ────────────────────────────
-        // Major ticks at 0/50/100/150/200 Hz, slightly shorter minor ticks
-        // every 10 Hz between them. Ticks hang below the axis baseline.
+        // Minor ticks every 10 Hz; bolder, longer major ticks at the labelled
+        // 0/50/100/150/200 Hz. Both hang below the axis baseline.
         const xBase = mT + ph;
+        // Minor ticks (1 px, length 6) — skip the multiples of 50 the majors own.
         g.strokeStyle = '#5e8c7e'; g.lineWidth = 1;
         g.beginPath();
-        for (let hz = 0; hz <= 200; hz += 10) {
+        for (let hz = 10; hz < 200; hz += 10) {
+            if (hz % 50 === 0) continue;
             const x = Math.round(mL + hz / 208 * pw) + 0.5;
-            const len = (hz % 50 === 0) ? 6 : 3;
             g.moveTo(x, xBase + 0.5);
-            g.lineTo(x, xBase + 0.5 + len);
+            g.lineTo(x, xBase + 0.5 + 6);
+        }
+        g.stroke();
+        // Major ticks (2 px, length 11, brighter).
+        g.strokeStyle = '#8fc2b2'; g.lineWidth = 2;
+        g.beginPath();
+        for (let hz = 0; hz <= 200; hz += 50) {
+            const x = Math.round(mL + hz / 208 * pw);
+            g.moveTo(x, xBase);
+            g.lineTo(x, xBase + 11);
         }
         g.stroke();
 
-        // ── X-axis Hz tick labels ───────────────────────────────────────
-        g.font = '12px monospace'; g.fillStyle = '#5e8c7e';
+        // ── X-axis Hz tick labels (bold, matching the major ticks) ───────
+        g.font = 'bold 13px monospace'; g.fillStyle = '#8fc2b2';
         g.textBaseline = 'top';
         const xTicks = [0, 50, 100, 150, 200];
         for (const hz of xTicks) {
             const x = mL + hz / 208 * pw;
             g.textAlign = hz === 0 ? 'left' : (hz === 200 ? 'right' : 'center');
-            g.fillText(String(hz), x, mT + ph + 9);
+            g.fillText(String(hz), x, mT + ph + 14);
         }
         // 'Hz' axis label — bottom-right corner, below the chart so it doesn't
         // collide with the '200' tick label.
