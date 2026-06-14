@@ -5824,14 +5824,16 @@ void drawStackCalcUI() {
   tft.fillScreen(THEME_BG);
   drawLeftBoxedText("STACK CALC", 5, 5, COLOR_DARKBLUE);
   
-  setSmoothFont(1);
+  // Smaller font for the OBJ label — FreeSans9 butted right up against the
+  // "STACK CALC" title box on the 240px TFT; FreeSans7 gives it clearance.
+  tft.setFont(&FreeSans7pt7b);
   tft.setTextColor(themedText(COLOR_GREENYELLOW));
   const char* objLabel = (currentobj == 1) ? "5x" : (currentobj == 2) ? "10x" : "20x";
   char objBuf[16];
   snprintf(objBuf, sizeof(objBuf), "OBJ: %s", objLabel);
   int16_t x1, y1; uint16_t w, h;
   tft.getTextBounds(objBuf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(198 - w - x1, 25);   // right-aligned clear of the X close button
+  tft.setCursor(198 - w - x1, 24);   // right-aligned clear of the X close button
   tft.print(objBuf);
   
   refreshStackCalcValues(true);
