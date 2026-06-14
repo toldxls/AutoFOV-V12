@@ -5839,7 +5839,7 @@
     let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
     let ghManifest = null;     // {version, sha256, bin} from the last good check
     let ghAutoChecked = false;  // one-shot: auto-check GitHub once buildVersion is known
-    const GH_AUTOCHECK_MS = 15 * 60 * 1000;  // then re-check this often so the glow stays live
+    const GH_AUTOCHECK_MS = 60 * 1000;  // then re-check this often so a fresh release lights the glow within ~1 min
 
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
