@@ -930,6 +930,19 @@ bool shutterActive = false;
 unsigned long firstPulseTime = 0;
 unsigned long lastPulseTime = 0;
 
+// V12.3: measured stack time. The trigger watcher already times the real
+// photo-pulse sequence (firstPulseTime..lastPulseTime); counting the shutter
+// edges turns that into a measured sec/step for the just-finished MJKZZ stack.
+// When the projected total at the configured image count (measuredPerStep x
+// stackTotalImgs) drifts >= MEASURED_DRIFT_SEC from the manual stackTimePerStep,
+// the measured value auto-replaces it so Sec/Step rarely needs hand-tuning.
+// Advisory feedback only — this never gates or delays capture.
+uint32_t stackPulseCount = 0;            // shutter edges in the active sequence
+float    measuredPerStep = 0.0f;         // last measured sec/step (0 = none yet)
+uint32_t measuredTotalSec = 0;           // last measured total stack duration, s
+uint32_t measuredPulses = 0;             // shots counted in the last measured stack
+const float MEASURED_DRIFT_SEC = 30.0f;  // projected-total drift that auto-applies
+
 // patched3: deferred WiFi-forget timer. When the user taps FORGET WiFi we want
 // to show a "CLEARING..." flash for ~600 ms before rebooting, but blocking the
 // loop with delay() also blocks touch and any other loop-driven refresh.  We
@@ -4450,6 +4463,10 @@ void loop() {
       tft.fillCircle(110, 295, 2, TFT_WHITE);
     }
     shutterActive = true;
+    // V12.3: count each shot after the first. The first pulse seeds the count
+    // in the sequence-init block below (isSequenceActive is still false here on
+    // that first edge), so every subsequent rising edge increments cleanly.
+    if (isSequenceActive) stackPulseCount++;
     // V12: note the shutter-pulse edge for passive settle-time analysis.
     // Passive only — nothing here delays or gates the trigger path.
     vibPulseRingPos = vibRawHead;
@@ -4469,6 +4486,7 @@ void loop() {
     if (!isSequenceActive) {
       isSequenceActive = true;
       firstPulseTime = pulseTime;
+      stackPulseCount = 1;   // V12.3: this first shot; later edges add to it
       vibStackStartSeq.fetch_add(1, std::memory_order_relaxed);
     }
     lastPulseTime = pulseTime;
@@ -4482,6 +4500,24 @@ void loop() {
       // V12: ask vibTask to compute the aggregate suggested wait, then persist.
       vibStackDoneSeq.fetch_add(1, std::memory_order_relaxed);
       vibPrefsDirty = true; lastVibEditMs = millis();
+
+      // V12.3: turn this run into a measured stack time. Per-step is the mean
+      // interval between shots (gaps = pulses - 1), which is robust even when
+      // the rail fired a different shot count than the configured stackTotalImgs.
+      measuredPulses   = stackPulseCount;
+      measuredTotalSec = (uint32_t)((totalActiveTime + 500) / 1000);
+      if (stackPulseCount >= 2) {
+        measuredPerStep = (float)totalActiveTime / 1000.0f / (float)(stackPulseCount - 1);
+        // Auto-apply when the projected total at the configured image count
+        // would shift by >= 30 s, so the manual Sec/Step keeps up on its own.
+        float projectedDelta = fabsf(measuredPerStep - stackTimePerStep) * (float)stackTotalImgs;
+        if (projectedDelta >= MEASURED_DRIFT_SEC) {
+          stackTimePerStep = constrain(measuredPerStep, 0.1f, 60.0f);
+          settings.stackTimePerStep = stackTimePerStep;
+          calibPrefsDirty = true; lastCalibEditMs = millis();
+        }
+        if (currentMode == STACK_TIME) drawStackTimeUI();
+      }
     } else {
       // Too short to be a stack (single shot / aborted run) — tell vibTask to
       // leave in-stack mode without folding this into the suggested wait.
@@ -5597,6 +5633,29 @@ void refreshStackTimeValues(bool force) {
     tft.drawRGBBitmap(0, 234, distSprite.getBuffer(), 240, 35);
 
     lastImgs = stackTotalImgs;
+  }
+
+  // V12.3: measured sec/step from the last completed stack. Auto-applies above
+  // on >=30 s drift, so this line just makes the source of any change visible.
+  static float lastMeasuredShown = -2.0f;
+  if (force || fabsf(lastMeasuredShown - measuredPerStep) > 0.01f) {
+    char mbuf[40];
+    if (measuredPerStep > 0.0f)
+      snprintf(mbuf, sizeof(mbuf), "Measured: %.1f s/step (%u sh)",
+               measuredPerStep, (unsigned)measuredPulses);
+    else
+      snprintf(mbuf, sizeof(mbuf), "Measured: run a stack to set");
+
+    distSprite.fillScreen(THEME_BG);
+    distSprite.setFont(&FreeSans9pt7b);
+    distSprite.setTextColor(measuredPerStep > 0.0f ? themedText(COLOR_TEAL)
+                                                   : themedText(COLOR_LIGHTGREY));
+    int16_t mx, my; uint16_t mw, mh;
+    distSprite.getTextBounds(mbuf, 0, 0, &mx, &my, &mw, &mh);
+    distSprite.setCursor((240 - mw) / 2 - mx, 20);
+    distSprite.print(mbuf);
+    tft.drawRGBBitmap(0, 276, distSprite.getBuffer(), 240, 28);
+    lastMeasuredShown = measuredPerStep;
   }
 }
 
