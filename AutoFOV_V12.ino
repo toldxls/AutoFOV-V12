@@ -741,12 +741,12 @@ Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 Button btnWifiInfoForget(20, 275, 200, 36, "FORGET WiFi",  COLOR_MAROON, TFT_WHITE, 1, true);
 Button btnWifiInfoBack  (205,  2,  33, 33, "X",            0x4208,       COLOR_RED, 2, true);
 // V12.3: (i) on the WiFi title bar → scrollable SECURITY TIPS (mirrors the web).
-Button btnWifiInfoTips  (160,  4,  32, 30, "i",            0x0A28,       COLOR_TEAL, 2, true);
+Button btnWifiInfoTips  (143,  4,  32, 30, "i",            0x0A28,       COLOR_TEAL, 2, true);
 
 // --- ABOUT screen (V11) — opened from the CALIB / version label on main screen ---
 Button btnAboutClose(205, 2, 33, 33,    "X",             0x4208,       COLOR_RED, 2, true);
 // V12.3: (i) on the ABOUT title bar → scrollable RECOVERY FLASH help (mirrors the web).
-Button btnAboutInfo (160, 5, 32, 28,    "i",             0x0A28,       COLOR_TEAL, 2, true);
+Button btnAboutInfo (143, 5, 32, 28,    "i",             0x0A28,       COLOR_TEAL, 2, true);
 
 // V12.3: shared drag-scrolled info overlay (SECURITY TIPS / RECOVERY FLASH).
 // Just an X close in the title bar — the body is dragged with a finger.
@@ -3363,44 +3363,69 @@ static bool infoDragActive      = false;
 static int  infoDragStartY      = 0;    // touch-Y where the drag began
 static int  infoDragStartScroll = 0;    // infoScrollY at drag start
 
-// Geometry.
+// Geometry. Text column is x=10..(10+INFO_TEXT_W); the scrollbar sits at x=234,
+// and INFO_TEXT_W leaves a margin before both it and the 240 px canvas edge so a
+// wrapped line never reaches the edge (which would trigger GFX auto-wrap).
 static const int INFO_LINE_H = 18;
-static const int INFO_TEXT_W = 218;     // word-wrap width (leaves room for scrollbar)
+static const int INFO_TEXT_W = 208;     // word-wrap width, px (x=10..218)
 static const int INFO_VP_TOP = 42;      // viewport top on screen
 static const int INFO_VP_H   = 272;     // viewport height (42..314)
 
+static int infoTextW(const String& s) {
+  int16_t x1, y1; uint16_t w, h;
+  tft.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  return (int)w;
+}
+static void infoPushLine(const String& s, uint8_t kind) {
+  if (infoLineCount < INFO_MAX_LINES) {
+    infoLines[infoLineCount] = s; infoLineKind[infoLineCount] = kind; infoLineCount++;
+  }
+}
+
 // Word-wrap the content blocks into infoLines[] at the render font (9pt). Uses
 // tft metrics for FreeSans9 — the same font buildInfoCanvas() renders with — so
-// the measured wrap matches the drawn glyphs.
+// the measured wrap matches the drawn glyphs. Words wider than the column (e.g.
+// the recovery URL) are broken at the character level so nothing overflows.
 static void buildInfoLines(const InfoBlock* blocks, int nBlocks) {
   infoLineCount = 0;
   setSmoothFont(1);
   for (int b = 0; b < nBlocks && infoLineCount < INFO_MAX_LINES; b++) {
     // Blank separator before each section heading (not the first block).
-    if (b > 0 && blocks[b].kind != INFO_BODY && infoLineCount < INFO_MAX_LINES) {
-      infoLines[infoLineCount] = ""; infoLineKind[infoLineCount] = INFO_BODY; infoLineCount++;
-    }
+    if (b > 0 && blocks[b].kind != INFO_BODY) infoPushLine("", INFO_BODY);
+
     String text = blocks[b].text;
     String line = "";
     int start = 0;
     while (start <= (int)text.length() && infoLineCount < INFO_MAX_LINES) {
       int sp = text.indexOf(' ', start);
       String w = (sp < 0) ? text.substring(start) : text.substring(start, sp);
+
       String trial = line.length() ? line + " " + w : w;
-      int16_t x1, y1; uint16_t tw, th;
-      tft.getTextBounds(trial, 0, 0, &x1, &y1, &tw, &th);
-      if ((int)tw > INFO_TEXT_W && line.length()) {
-        infoLines[infoLineCount] = line; infoLineKind[infoLineCount] = blocks[b].kind; infoLineCount++;
-        line = w;
-      } else {
+      if (infoTextW(trial) <= INFO_TEXT_W) {
         line = trial;
+      } else {
+        if (line.length()) { infoPushLine(line, blocks[b].kind); line = ""; }
+        if (infoTextW(w) <= INFO_TEXT_W) {
+          line = w;
+        } else {
+          // Single word too wide for the column — break it character by character.
+          String chunk = "";
+          for (int ci = 0; ci < (int)w.length() && infoLineCount < INFO_MAX_LINES; ci++) {
+            String t2 = chunk + w[ci];
+            if (chunk.length() && infoTextW(t2) > INFO_TEXT_W) {
+              infoPushLine(chunk, blocks[b].kind);
+              chunk = String(w[ci]);
+            } else {
+              chunk = t2;
+            }
+          }
+          line = chunk;
+        }
       }
       if (sp < 0) break;
       start = sp + 1;
     }
-    if (line.length() && infoLineCount < INFO_MAX_LINES) {
-      infoLines[infoLineCount] = line; infoLineKind[infoLineCount] = blocks[b].kind; infoLineCount++;
-    }
+    if (line.length()) infoPushLine(line, blocks[b].kind);
   }
 }
 
@@ -3427,6 +3452,7 @@ static void buildInfoCanvas() {
   if (!infoCanvas->allocated()) return;    // ps_malloc failed → text fallback
   infoCanvas->fillScreen(THEME_BG);
   infoCanvas->setFont(&FreeSans9pt7b);
+  infoCanvas->setTextWrap(false);         // never auto-wrap onto the next line; lines are pre-fit
   int y = 14;                             // baseline of the first line
   for (int i = 0; i < infoLineCount; i++) {
     if (infoLines[i].length()) {
@@ -3463,6 +3489,7 @@ void blitInfoViewport() {
     // just without the smooth pixel scroll.
     tft.fillRect(0, INFO_VP_TOP, 240, INFO_VP_H, THEME_BG);
     setSmoothFont(1);
+    tft.setTextWrap(false);
     int first = infoScrollY / INFO_LINE_H;
     int yb = INFO_VP_TOP + 14 - (infoScrollY % INFO_LINE_H);
     for (int i = first; i < infoLineCount && yb < INFO_VP_TOP + INFO_VP_H + INFO_LINE_H; i++) {
@@ -3473,6 +3500,7 @@ void blitInfoViewport() {
       }
       yb += INFO_LINE_H;
     }
+    tft.setTextWrap(true);
   }
   drawInfoScrollbar();
 }
@@ -3525,9 +3553,15 @@ void handleInfoTextTouch(TS_Point p) {
   int ns = infoDragStartScroll - (p.y - infoDragStartY);
   if (ns < 0) ns = 0;
   if (ns > infoMaxScrollY) ns = infoMaxScrollY;
-  if (ns != infoScrollY) {
-    infoScrollY = ns;
-    blitInfoViewport();
+  // Deadzone: the FT6206 jitters a couple px between reads; without this the
+  // viewport re-blits constantly while the finger is "still", which reads as a
+  // flashy shimmer. Only redraw once the move exceeds a few px (but always honor
+  // the clamped ends so the last bit of travel isn't lost).
+  if (abs(ns - infoScrollY) >= 3 || ns == 0 || ns == infoMaxScrollY) {
+    if (ns != infoScrollY) {
+      infoScrollY = ns;
+      blitInfoViewport();
+    }
   }
 }
 
