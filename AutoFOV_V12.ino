@@ -6,6 +6,7 @@
 #include <vl53l4cx_class.h>
 #include <Preferences.h>
 #include <atomic>
+#include <new>          // V12.3: std::nothrow for the transient info-overlay canvas
 
 // WiFi / web-server headers pulled in HERE (not in the _wifi tab) so that the
 // Arduino preprocessor's auto-generated forward declarations can see types like
@@ -122,6 +123,15 @@ struct Theme {
   uint16_t titleBg;     // accent stripe behind the screen title
   uint16_t swatch;      // small color shown on the picker button
 };
+
+// V12.3: one paragraph of a scrollable info overlay (SECURITY TIPS / RECOVERY
+// FLASH). Declared up here — ahead of the Arduino auto-prototype insertion point
+// (~line 178) — so the generated buildInfoLines() prototype sees the type. The
+// content arrays + renderer live down by handleWifiInfoTouch().
+#define INFO_BODY 0
+#define INFO_HEAD 1
+#define INFO_WARN 2
+struct InfoBlock { const char* text; uint8_t kind; };
 
 // Index aligns with the order the buttons appear on the THEME picker.
 const Theme THEMES[] = {
@@ -730,9 +740,17 @@ Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 // --- WIFI_INFO screen (patched3) — opened from WiFi zone in header (x=93..151, y=0..42) ---
 Button btnWifiInfoForget(20, 275, 200, 36, "FORGET WiFi",  COLOR_MAROON, TFT_WHITE, 1, true);
 Button btnWifiInfoBack  (205,  2,  33, 33, "X",            0x4208,       COLOR_RED, 2, true);
+// V12.3: (i) on the WiFi title bar → scrollable SECURITY TIPS (mirrors the web).
+Button btnWifiInfoTips  (160,  4,  32, 30, "i",            0x0A28,       COLOR_TEAL, 2, true);
 
 // --- ABOUT screen (V11) — opened from the CALIB / version label on main screen ---
 Button btnAboutClose(205, 2, 33, 33,    "X",             0x4208,       COLOR_RED, 2, true);
+// V12.3: (i) on the ABOUT title bar → scrollable RECOVERY FLASH help (mirrors the web).
+Button btnAboutInfo (160, 5, 32, 28,    "i",             0x0A28,       COLOR_TEAL, 2, true);
+
+// V12.3: shared drag-scrolled info overlay (SECURITY TIPS / RECOVERY FLASH).
+// Just an X close in the title bar — the body is dragged with a finger.
+Button btnInfoTextClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 
 // --- CAL_REVIEW screen buttons ---
 Button btnReviewUp(195, 45, 35, 40, "UP", COLOR_BLUEGREEN, TFT_WHITE, 1, true);
@@ -852,7 +870,9 @@ enum DisplayMode {
   VIB_HOME,           // V12: vibration-monitor hub (3 nav buttons)
   VIB_SPECTRUM,       // V12: live FFT spectrum + waterfall
   VIB_SETTLE,         // V12: motor-step settle-time analysis
-  VIB_SIGNATURES      // V12: reference-spectrum library / compare
+  VIB_SIGNATURES,     // V12: reference-spectrum library / compare
+  WIFI_TIPS,          // V12.3: scrollable WiFi security-tips overlay (from WIFI_INFO)
+  RECOVERY_HELP       // V12.3: scrollable USB-recovery help overlay (from ABOUT)
 };
 DisplayMode currentMode = MAIN;
 DisplayMode preSleepMode = MAIN;
@@ -1050,6 +1070,10 @@ void fireTriggerLed(bool on);              // V17b: centralised active-low LED d
 void drawWifiInfoUI();                     // patched3: WiFi status screen
 void refreshWifiInfoValues();              // patched3: live row refresh
 void handleWifiInfoTouch(TS_Point p);      // patched3
+void openInfoScreen(DisplayMode mode);     // V12.3: enter a drag-scrolled info overlay
+void drawInfoTextScreen();                 // V12.3: full repaint of the active info overlay
+void blitInfoViewport();                   // V12.3: blit the canvas window at the current scroll
+void handleInfoTextTouch(TS_Point p);      // V12.3: drag-scroll / close for info overlays
 void wifiForgetAndRestart();               // patched3: defined in patched3_wifi.ino
 const char* wifiGetPortalCode();           // patched3: random WPA2 code shown on TFT during setup
 void wifiNotifyStackComplete();            // stack-done WebSocket event
@@ -1448,6 +1472,7 @@ void drawAboutUI() {
   tft.fillScreen(THEME_BG);
   drawLeftBoxedText("ABOUT", 5, 5, COLOR_DARKBLUE);
   btnAboutClose.draw(tft);
+  btnAboutInfo.draw(tft);
 
   // Big firmware banner — same FreeSans18 used elsewhere for emphasis.
   setSmoothFont(3);
@@ -1534,6 +1559,10 @@ void drawAboutUI() {
 }
 
 void handleAboutTouch(TS_Point p) {
+  if (btnAboutInfo.contains(p.x, p.y)) {
+    openInfoScreen(RECOVERY_HELP);
+    return;
+  }
   if (btnAboutClose.contains(p.x, p.y)) {
     currentMode = MAIN; drawMainScreen();
   }
@@ -3240,9 +3269,14 @@ void drawWifiInfoUI() {
 
   btnWifiInfoForget.draw(tft);
   btnWifiInfoBack.draw(tft);
+  btnWifiInfoTips.draw(tft);
 }
 
 void handleWifiInfoTouch(TS_Point p) {
+  if (btnWifiInfoTips.contains(p.x, p.y)) {
+    openInfoScreen(WIFI_TIPS);
+    return;
+  }
   if (btnWifiInfoForget.contains(p.x, p.y)) {
     // Flash label and schedule the actual clear+restart for 600 ms later.
     // The deferred timer is polled by loop(); this returns immediately so
@@ -3253,6 +3287,238 @@ void handleWifiInfoTouch(TS_Point p) {
   }
   if (btnWifiInfoBack.contains(p.x, p.y)) {
     currentMode = MAIN; drawMainScreen();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V12.3: drag-scrolled info overlays — SECURITY TIPS (from WIFI_INFO) and
+// RECOVERY FLASH help (from ABOUT). These bring the on-device screens to parity
+// with the web dashboard's (i) overlays. Content is word-wrapped at runtime to
+// the panel width, rendered once into a tall off-screen PSRAM canvas, then
+// scrolled by blitting a finger-following window of it (smooth, no per-frame
+// re-render). A thin right-edge scrollbar shows position + extent.
+// (struct InfoBlock + INFO_* kinds are declared up by the DisplayMode enum.)
+// ─────────────────────────────────────────────────────────────────────────────
+static const InfoBlock WIFI_TIPS_CONTENT[] = {
+  {"! Power from a wall charger", INFO_WARN},
+  {"Power AutoFOV from a USB wall charger, not a computer. A USB data link to a PC can expose the device console and allow reflashing.", INFO_BODY},
+  {"Use a strong login password", INFO_HEAD},
+  {"Set a unique device password in WiFi Setup. It guards the dashboard and firmware flashing. Blank falls back to the random code shown on the device screen.", INFO_BODY},
+  {"Keep AutoFOV on your LAN", INFO_HEAD},
+  {"Traffic is plain HTTP (no TLS, by design). Never port-forward AutoFOV to the internet or join it to an untrusted public network.", INFO_BODY},
+  {"Prefer the IP over autofov.local", INFO_HEAD},
+  {"On a shared network the numeric IP skips the mDNS name lookup, which other devices can spoof. Otherwise the two are equally secure.", INFO_BODY},
+  {"Sign out on shared computers", INFO_HEAD},
+  {"Your login is remembered per-browser. Tap SIGN OUT when you're on a machine that isn't yours.", INFO_BODY},
+  {"Locked out? Hold BOOT", INFO_HEAD},
+  {"Hold the BOOT button while powering on to relaunch WiFi Setup and set new credentials - no calibration is lost.", INFO_BODY},
+  {"Can't update?", INFO_HEAD},
+  {"If an update fails or leaves AutoFOV misbehaving, you can reflash over USB from a browser - no terminal needed - and it keeps your calibration and WiFi settings.", INFO_BODY},
+};
+
+static const InfoBlock RECOVERY_HELP_CONTENT[] = {
+  {"If an update or settings change leaves AutoFOV misbehaving, you can reflash it over USB from your browser - no terminal needed - keeping your calibration and WiFi settings.", INFO_BODY},
+  {"! Bookmark the link first", INFO_WARN},
+  {"The flasher runs on your computer, so it can even recover a device that won't boot - but you can't open the page if the device is dead. Save the link while you still can.", INFO_BODY},
+  {"You need", INFO_HEAD},
+  {"- A computer running Chrome or Edge (Safari and Firefox can't flash over USB).", INFO_BODY},
+  {"- A data-capable USB-C cable - charge-only cables won't enumerate the device.", INFO_BODY},
+  {"Steps", INFO_HEAD},
+  {"1. Open toldxls.github.io/AutoFOV-V12 in Chrome or Edge.", INFO_BODY},
+  {"2. Plug AutoFOV into the computer.", INFO_BODY},
+  {"3. Click the green Recovery Flash button.", INFO_BODY},
+  {"4. Pick the device's serial port, then Connect.", INFO_BODY},
+  {"5. Click Install and wait - don't unplug.", INFO_BODY},
+  {"6. The device reboots into working firmware on its own.", INFO_BODY},
+  {"No port shown?", INFO_HEAD},
+  {"The ESP32-S3 usually enters flash mode by itself. If no port appears: hold BOOT, briefly tap RESET, release BOOT, then click Recovery Flash again.", INFO_BODY},
+};
+
+// Flattened wrapped lines for the active overlay (built by buildInfoLines).
+#define INFO_MAX_LINES 80
+static String      infoLines[INFO_MAX_LINES];
+static uint8_t     infoLineKind[INFO_MAX_LINES];
+static int         infoLineCount  = 0;
+static const char* infoTitle      = "";
+static uint16_t    infoTitleCol   = COLOR_TEAL;
+static DisplayMode infoReturnMode = WIFI_INFO;
+
+// Off-screen render of the whole text column. Scrolling just blits a different
+// vertical slice — contiguous memory, since the canvas is 240 wide — so the drag
+// follows the finger with one fast drawRGBBitmap per frame (no re-rendering).
+static PSRAMCanvas16* infoCanvas  = nullptr;
+static int  infoCanvasH         = 0;
+static int  infoScrollY         = 0;    // current pixel scroll offset
+static int  infoMaxScrollY      = 0;
+static bool infoDragActive      = false;
+static int  infoDragStartY      = 0;    // touch-Y where the drag began
+static int  infoDragStartScroll = 0;    // infoScrollY at drag start
+
+// Geometry.
+static const int INFO_LINE_H = 18;
+static const int INFO_TEXT_W = 218;     // word-wrap width (leaves room for scrollbar)
+static const int INFO_VP_TOP = 42;      // viewport top on screen
+static const int INFO_VP_H   = 272;     // viewport height (42..314)
+
+// Word-wrap the content blocks into infoLines[] at the render font (9pt). Uses
+// tft metrics for FreeSans9 — the same font buildInfoCanvas() renders with — so
+// the measured wrap matches the drawn glyphs.
+static void buildInfoLines(const InfoBlock* blocks, int nBlocks) {
+  infoLineCount = 0;
+  setSmoothFont(1);
+  for (int b = 0; b < nBlocks && infoLineCount < INFO_MAX_LINES; b++) {
+    // Blank separator before each section heading (not the first block).
+    if (b > 0 && blocks[b].kind != INFO_BODY && infoLineCount < INFO_MAX_LINES) {
+      infoLines[infoLineCount] = ""; infoLineKind[infoLineCount] = INFO_BODY; infoLineCount++;
+    }
+    String text = blocks[b].text;
+    String line = "";
+    int start = 0;
+    while (start <= (int)text.length() && infoLineCount < INFO_MAX_LINES) {
+      int sp = text.indexOf(' ', start);
+      String w = (sp < 0) ? text.substring(start) : text.substring(start, sp);
+      String trial = line.length() ? line + " " + w : w;
+      int16_t x1, y1; uint16_t tw, th;
+      tft.getTextBounds(trial, 0, 0, &x1, &y1, &tw, &th);
+      if ((int)tw > INFO_TEXT_W && line.length()) {
+        infoLines[infoLineCount] = line; infoLineKind[infoLineCount] = blocks[b].kind; infoLineCount++;
+        line = w;
+      } else {
+        line = trial;
+      }
+      if (sp < 0) break;
+      start = sp + 1;
+    }
+    if (line.length() && infoLineCount < INFO_MAX_LINES) {
+      infoLines[infoLineCount] = line; infoLineKind[infoLineCount] = blocks[b].kind; infoLineCount++;
+    }
+  }
+}
+
+static uint16_t infoLineColor(uint8_t kind) {
+  return (kind == INFO_HEAD) ? themedText(COLOR_TEAL)
+       : (kind == INFO_WARN) ? COLOR_ORANGE
+       :                       themedText(COLOR_LIGHTGREY);
+}
+
+static void freeInfoCanvas() {
+  if (infoCanvas) { delete infoCanvas; infoCanvas = nullptr; }
+}
+
+// Render every wrapped line into the tall off-screen canvas, once per open.
+static void buildInfoCanvas() {
+  freeInfoCanvas();
+  infoCanvasH = infoLineCount * INFO_LINE_H + 14;
+  if (infoCanvasH < INFO_VP_H) infoCanvasH = INFO_VP_H;
+  infoMaxScrollY = infoCanvasH - INFO_VP_H;
+  if (infoMaxScrollY < 0) infoMaxScrollY = 0;
+  infoCanvas = new (std::nothrow) PSRAMCanvas16(240, infoCanvasH);
+  if (!infoCanvas) return;                 // blitInfoViewport() falls back to text
+  infoCanvas->begin();
+  if (!infoCanvas->allocated()) return;    // ps_malloc failed → text fallback
+  infoCanvas->fillScreen(THEME_BG);
+  infoCanvas->setFont(&FreeSans9pt7b);
+  int y = 14;                             // baseline of the first line
+  for (int i = 0; i < infoLineCount; i++) {
+    if (infoLines[i].length()) {
+      infoCanvas->setTextColor(infoLineColor(infoLineKind[i]));
+      infoCanvas->setCursor(10, y);
+      infoCanvas->print(infoLines[i]);
+    }
+    y += INFO_LINE_H;
+  }
+}
+
+// Thin right-edge scrollbar so the drag has a sense of position + extent.
+static void drawInfoScrollbar() {
+  if (infoMaxScrollY <= 0) return;        // nothing to scroll → no bar
+  const int x = 234;
+  tft.drawFastVLine(x + 2, INFO_VP_TOP, INFO_VP_H, 0x2104);
+  int thumbH = (int)((long)INFO_VP_H * INFO_VP_H / infoCanvasH);
+  if (thumbH < 18) thumbH = 18;
+  int thumbY = INFO_VP_TOP + (int)((long)(INFO_VP_H - thumbH) * infoScrollY / infoMaxScrollY);
+  tft.fillRect(x, thumbY, 5, thumbH, themedText(COLOR_TEAL));
+}
+
+void blitInfoViewport() {
+  if (infoCanvas && infoCanvas->allocated()) {
+    int rows = INFO_VP_H;
+    if (infoScrollY + rows > infoCanvasH) rows = infoCanvasH - infoScrollY;
+    if (rows > 0)
+      tft.drawRGBBitmap(0, INFO_VP_TOP,
+                        infoCanvas->getBuffer() + (int32_t)infoScrollY * 240, 240, rows);
+    if (rows < INFO_VP_H)
+      tft.fillRect(0, INFO_VP_TOP + rows, 240, INFO_VP_H - rows, THEME_BG);
+  } else {
+    // Fallback (canvas alloc failed): line-granular direct render — functional,
+    // just without the smooth pixel scroll.
+    tft.fillRect(0, INFO_VP_TOP, 240, INFO_VP_H, THEME_BG);
+    setSmoothFont(1);
+    int first = infoScrollY / INFO_LINE_H;
+    int yb = INFO_VP_TOP + 14 - (infoScrollY % INFO_LINE_H);
+    for (int i = first; i < infoLineCount && yb < INFO_VP_TOP + INFO_VP_H + INFO_LINE_H; i++) {
+      if (infoLines[i].length()) {
+        tft.setTextColor(infoLineColor(infoLineKind[i]));
+        tft.setCursor(10, yb);
+        tft.print(infoLines[i]);
+      }
+      yb += INFO_LINE_H;
+    }
+  }
+  drawInfoScrollbar();
+}
+
+void openInfoScreen(DisplayMode mode) {
+  infoReturnMode = currentMode;     // return to whatever opened us
+  if (mode == RECOVERY_HELP) {
+    infoTitle = "RECOVERY FLASH"; infoTitleCol = COLOR_TEAL;
+    buildInfoLines(RECOVERY_HELP_CONTENT,
+                   sizeof(RECOVERY_HELP_CONTENT) / sizeof(RECOVERY_HELP_CONTENT[0]));
+  } else {
+    infoTitle = "SECURITY TIPS"; infoTitleCol = COLOR_TEAL;
+    buildInfoLines(WIFI_TIPS_CONTENT,
+                   sizeof(WIFI_TIPS_CONTENT) / sizeof(WIFI_TIPS_CONTENT[0]));
+  }
+  buildInfoCanvas();
+  infoScrollY    = 0;
+  infoDragActive = false;
+  currentMode    = mode;
+  drawInfoTextScreen();
+}
+
+void drawInfoTextScreen() {
+  tft.fillScreen(THEME_BG);
+  drawLeftBoxedText(infoTitle, 5, 5, infoTitleCol);
+  btnInfoTextClose.draw(tft);
+  tft.drawFastHLine(5, 38, 230, 0x39E7);
+  blitInfoViewport();
+}
+
+void handleInfoTextTouch(TS_Point p) {
+  // Title bar (above the viewport) — the X close. Never starts a drag, and is
+  // ignored mid-drag so a vertical swipe can't accidentally close.
+  if (p.y < INFO_VP_TOP) {
+    if (!infoDragActive && btnInfoTextClose.contains(p.x, p.y)) {
+      freeInfoCanvas();
+      currentMode = infoReturnMode;
+      redrawCurrentScreen();
+    }
+    return;
+  }
+  // Drag-scroll the body. The first sample of a press sets the baseline; later
+  // samples track the finger 1:1 so the text stays under it and your place holds.
+  if (!infoDragActive) {
+    infoDragActive      = true;
+    infoDragStartY      = p.y;
+    infoDragStartScroll = infoScrollY;
+    return;
+  }
+  int ns = infoDragStartScroll - (p.y - infoDragStartY);
+  if (ns < 0) ns = 0;
+  if (ns > infoMaxScrollY) ns = infoMaxScrollY;
+  if (ns != infoScrollY) {
+    infoScrollY = ns;
+    blitInfoViewport();
   }
 }
 
@@ -3288,6 +3554,8 @@ void redrawCurrentScreen() {
     case VIB_SPECTRUM:       drawVibSpectrumUI(); break;
     case VIB_SETTLE:         drawVibSettleUI(); break;
     case VIB_SIGNATURES:     drawVibSignaturesUI(); break;
+    case WIFI_TIPS:          drawInfoTextScreen(); break;
+    case RECOVERY_HELP:      drawInfoTextScreen(); break;
     case CAL_SAMPLING:       /* skip — sampling actively owns the screen */ break;
     default:                 drawMainScreen(); break;
   }
@@ -4266,6 +4534,8 @@ void wakeScreen() {
       case VIB_SPECTRUM:       drawVibSpectrumUI(); break;
       case VIB_SETTLE:         drawVibSettleUI(); break;
       case VIB_SIGNATURES:     drawVibSignaturesUI(); break;
+      case WIFI_TIPS:          drawInfoTextScreen(); break;
+      case RECOVERY_HELP:      drawInfoTextScreen(); break;
       default:           drawMainScreen(); break;
     }
     currentMode = preSleepMode;
@@ -4548,6 +4818,9 @@ void loop() {
           if (displayPrefsDirty) saveDisplayPrefs();
           tintDragActive = false;
         }
+        // V12.3: finger lifted — end any info-overlay drag so the next press
+        // starts a fresh 1:1 baseline instead of jumping.
+        if (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP) infoDragActive = false;
         activelyTouching = false;
         adjFingerLifted = true;   // tell adj logic the finger genuinely lifted
       }
@@ -4574,7 +4847,11 @@ void loop() {
     bool isSlider = (currentMode == BRIGHTNESS_SETTINGS && ((p.y >= 80 && p.y <= 125) || (p.y >= 166 && p.y <= 196)))
                   || (currentMode == APP_SETTINGS && p.y >= 76 && p.y <= 118)
                   || (currentMode == SCREEN_TIMEOUT && p.x >= 65 && p.x <= 230 && p.y >= 183 && p.y <= 215);
-    int debounce = isSlider ? 20 : 150;
+    // V12.3: info-overlay body drag wants the same fast sampling as sliders so
+    // the text tracks the finger smoothly. It is NOT isSlider (which routes to
+    // the inline brightness/tint handlers) — it falls through to the switch.
+    bool isInfoDrag = (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP) && p.y >= INFO_VP_TOP;
+    int debounce = (isSlider || isInfoDrag) ? 20 : 150;
 
     // ── Menu-transition guard ───────────────────────────────────────────────
     // Ignore all button taps for 350 ms after any screen change.  This stops
@@ -4662,6 +4939,8 @@ void loop() {
           case VIB_SPECTRUM:       handleVibSpectrumTouch(p); break;
           case VIB_SETTLE:         handleVibSettleTouch(p); break;
           case VIB_SIGNATURES:     handleVibSignaturesTouch(p); break;
+          case WIFI_TIPS:          handleInfoTextTouch(p); break;
+          case RECOVERY_HELP:      handleInfoTextTouch(p); break;
           default: break;
         }
       }
