@@ -2197,6 +2197,7 @@
         const m = document.getElementById('vibmenu');
         if (m) m.classList.add('open');
         sendCommand('vibPanel', 1);   // device starts streaming the spectrum
+        vibHomeCursorX = -1;          // clear any stale hover/touch cursor
         vibMenuResize();              // size the spectrum canvas to its flex box, then paint
         vibUpdateReadout();
     }
@@ -3754,6 +3755,28 @@
                 drawVibSpectrum();
             });
             hc.addEventListener('mouseleave', () => { vibHomeCursorX = -1; drawVibSpectrum(); });
+            // Touch: drag a finger across the graph to place the cursor (touch
+            // screens have no hover). A real drag (past an 8 px slop) moves the
+            // cursor and calls preventDefault, which both stops the page from
+            // scrolling and suppresses the compatibility click — so the drag
+            // does NOT open the analyzer. A plain tap still fires the click and
+            // opens it. The cursor persists after lift so the readout stays
+            // legible; vibEnter() clears it next time the screen opens.
+            let touchStartX = 0, touchDragging = false;
+            hc.addEventListener('touchstart', e => {
+                if (!e.touches.length) return;
+                touchStartX  = e.touches[0].clientX - hc.getBoundingClientRect().left;
+                touchDragging = false;
+            }, { passive: true });
+            hc.addEventListener('touchmove', e => {
+                if (!e.touches.length) return;
+                const x = e.touches[0].clientX - hc.getBoundingClientRect().left;
+                if (!touchDragging && Math.abs(x - touchStartX) < 8) return;  // ignore tap jitter
+                touchDragging  = true;
+                vibHomeCursorX = x;
+                drawVibSpectrum();
+                e.preventDefault();
+            }, { passive: false });
         }
         const sc = document.getElementById('vibp-spec');
         if (sc) {
