@@ -6232,7 +6232,7 @@ void refreshCalSettingsValues(bool force) {
 
     distSprite.setFont(&FreeSans12pt7b);
     distSprite.setTextColor(themedText(TFT_WHITE));
-    distSprite.setCursor(115, 24);
+    distSprite.setCursor(115, 26);   // +2 baseline → vertically centre value in the 35px row
     char vbuf[16]; snprintf(vbuf, sizeof(vbuf), "%d px", (int)sensorWidthPixels);
     distSprite.print(vbuf);
 
@@ -6250,7 +6250,7 @@ void refreshCalSettingsValues(bool force) {
 
     distSprite.setFont(&FreeSans12pt7b);
     distSprite.setTextColor(themedText(TFT_WHITE));
-    distSprite.setCursor(115, 24);
+    distSprite.setCursor(115, 26);   // +2 baseline → vertically centre value in the 35px row
     char vbuf[16]; snprintf(vbuf, sizeof(vbuf), "%.2f mm", demarcationDist);
     distSprite.print(vbuf);
 
@@ -6268,7 +6268,7 @@ void refreshCalSettingsValues(bool force) {
 
     distSprite.setFont(&FreeSans12pt7b);
     distSprite.setTextColor(themedText(TFT_WHITE));
-    distSprite.setCursor(115, 24);
+    distSprite.setCursor(115, 26);   // +2 baseline → vertically centre value in the 35px row
     char vbuf[16]; snprintf(vbuf, sizeof(vbuf), "%d", nPoints);
     distSprite.print(vbuf);
 
@@ -6583,25 +6583,20 @@ void drawAdjButtons(int y) {
   tft.fillRect(120, y, 50, 40, COLOR_DARKGREY);  // +
   tft.fillRect(175, y, 50, 40, COLOR_DARKGREEN); // ++
 
-  setSmoothFont(2);
-  tft.setTextColor(themedText(TFT_WHITE));
-  
-  int baseY_minus = y + 27; 
-  int baseY_plus = y + 25; 
-  
-  int16_t x1, y1; uint16_t w, h;
-
-  tft.getTextBounds("--", 0, 0, &x1, &y1, &w, &h); 
-  tft.setCursor(10 + (50 - w) / 2 - x1, baseY_minus); tft.print("--");
-  
-  tft.getTextBounds("-", 0, 0, &x1, &y1, &w, &h); 
-  tft.setCursor(65 + (50 - w) / 2 - x1, baseY_minus); tft.print("-");
-  
-  tft.getTextBounds("+", 0, 0, &x1, &y1, &w, &h); 
-  tft.setCursor(120 + (50 - w) / 2 - x1, baseY_plus); tft.print("+");
-  
-  tft.getTextBounds("++", 0, 0, &x1, &y1, &w, &h); 
-  tft.setCursor(175 + (50 - w) / 2 - x1, baseY_plus); tft.print("++");
+  // Black triangles, apex pointing the direction of change: double chevrons
+  // for the accelerated --/++ buttons, single for the fine -/+ buttons. Each
+  // button is 50 wide; its centre is bx+25.
+  const int cy = y + 20;
+  // -- : two left-pointing triangles (centre x = 35)
+  tft.fillTriangle(35 - 11, cy, 35 - 2,  cy - 8, 35 - 2,  cy + 8, TFT_BLACK);
+  tft.fillTriangle(35 + 1,  cy, 35 + 10, cy - 8, 35 + 10, cy + 8, TFT_BLACK);
+  // -  : one left-pointing triangle (centre x = 90)
+  tft.fillTriangle(90 - 7,  cy, 90 + 6,  cy - 9, 90 + 6,  cy + 9, TFT_BLACK);
+  // +  : one right-pointing triangle (centre x = 145)
+  tft.fillTriangle(145 + 7, cy, 145 - 6, cy - 9, 145 - 6, cy + 9, TFT_BLACK);
+  // ++ : two right-pointing triangles (centre x = 200)
+  tft.fillTriangle(200 - 1,  cy, 200 - 10, cy - 8, 200 - 10, cy + 8, TFT_BLACK);
+  tft.fillTriangle(200 + 10, cy, 200 + 1,  cy - 8, 200 + 1,  cy + 8, TFT_BLACK);
 }
 
 void drawSuccessScreen() {

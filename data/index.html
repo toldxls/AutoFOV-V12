@@ -232,7 +232,8 @@
         .btn-menu   { left: 20px; width: 200px; height: 35px; font-size: 13px; }
         .btn-close-x { left: 205px; top: 2px; width: 33px; height: 33px;
                        background: #404040; color: #FF0000; font-size: 16px; z-index: 100; }
-        .btn-adj { width: 50px; height: 40px; font-size: 18px; }
+        .btn-adj { width: 50px; height: 40px; font-size: 15px; color: #000;
+                   letter-spacing: -1px; text-shadow: none; }
         .adj-row { position: absolute; left: 0; width: 240px; height: 40px; }
 
         /* --- MAIN SCREEN --- */
@@ -289,6 +290,10 @@
         /* --- STACK CALC / TIME --- */
         .stack-row { position: absolute; left: 0; width: 240px; cursor: pointer; height: 33px; }
         .stack-row:active { background-color: #111; }
+        /* Vertically centre the label + value within the row (= the haptic
+           press box) instead of pinning them near the top. Overrides the inline
+           top:6/8px the rows ship with. */
+        .stack-row .gfx-text { top: 50% !important; transform: translateY(-50%); }
 
         #plot-area { position: absolute; left: 25px; top: 40px; width: 200px; height: 242px;
                      box-sizing: border-box; }
@@ -600,10 +605,10 @@
                 <div id="val-overlap" class="gfx-text" style="left: 10px; top: 174px; color: #00FF00; font-size: 11px;">Overlap: 85%</div>
 
                 <div class="adj-row" style="top: 207px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjStack(-2)">--</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjStack(-1)">-</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjStack(1)">+</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjStack(2)">++</div>
+                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjStack(-2)">◄◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjStack(-1)">◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjStack(1)">►</div>
+                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjStack(2)">►►</div>
                 </div>
 
                 <div class="gfx-btn" style="left: 40px; top: 258px; width: 160px; height: 50px;
@@ -623,10 +628,10 @@
                 <div id="val-secstep" class="gfx-text" style="left: 115px; top: 122px; font-size: 16px; color: var(--text-primary);">2.0 s</div>
 
                 <div class="adj-row" style="top: 155px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #780000;" onclick="adjTime(-2)">--</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjTime(-1)">-</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjTime(1)">+</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjTime(2)">++</div>
+                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #780000;" onclick="adjTime(-2)">◄◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjTime(-1)">◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjTime(1)">►</div>
+                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjTime(2)">►►</div>
                 </div>
 
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 224px; color: var(--accent-magenta);">Calculated Stack Time</div>
@@ -795,10 +800,10 @@
                 </div>
 
                 <div class="adj-row" style="top: 165px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCal(-2)">--</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCal(-1)">-</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCal(1)">+</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCal(2)">++</div>
+                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCal(-2)">◄◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCal(-1)">◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCal(1)">►</div>
+                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCal(2)">►►</div>
                 </div>
 
                 <div class="gfx-btn" style="left: 10px; top: 215px; width: 105px; height: 55px; background: #0000CD;"
@@ -825,10 +830,10 @@
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 86px; font-size: 10px; color: var(--text-disabled);">take photo, input pixel # and capture</div>
 
                 <div class="adj-row" style="top: 104px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">--</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCalRun(-1)">-</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCalRun(1)">+</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCalRun(2)">++</div>
+                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">◄◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCalRun(-1)">◄</div>
+                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCalRun(1)">►</div>
+                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCalRun(2)">►►</div>
                 </div>
 
                 <div class="gfx-btn" style="left: 10px; top: 144px; width: 220px; height: 38px;
