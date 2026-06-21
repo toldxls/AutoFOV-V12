@@ -1,3 +1,11 @@
+// =============================================================================
+// AutoFOV — photomicroscopy FOV calculator & focus-stacking assistant
+// Copyright © 2026 Travis Olds
+//
+// Licensed under the PolyForm Noncommercial License 1.0.0 — noncommercial use
+// only; commercial use requires a separate license from the author.
+// Full terms: see LICENSE.md or https://polyformproject.org/licenses/noncommercial/1.0.0
+// =============================================================================
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>

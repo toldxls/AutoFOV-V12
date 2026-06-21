@@ -143,3 +143,21 @@ Access via **SETTINGS → VIBRATION** on the device or web dashboard. The state 
 2. Set photo width (pixels) and demarcation distance (default 0.4 mm).
 3. Capture 3–20 points at varying distances.
 4. The device fits a linear regression and saves slope, intercept, R², and RMSE to NVS.
+
+## License
+
+Copyright © 2026 Travis Olds.
+
+AutoFOV is released as **source-available** under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md). You are free to use, study,
+modify, and share it for any **noncommercial** purpose — personal projects,
+hobby and amateur use, education, research, and noncommercial organizations.
+
+**Commercial use is not permitted without a separate license from the author.**
+That includes selling devices that run this firmware, bundling it into a product
+or paid service, or otherwise using it to generate revenue. To use AutoFOV
+commercially, contact the author to arrange a commercial license.
+
+Third-party libraries (Arduino-ESP32 core, Adafruit GFX/sensor libraries,
+ESPAsyncWebServer, AsyncTCP, etc.) remain under their own respective licenses;
+this notice covers only the original AutoFOV source in this repository.
