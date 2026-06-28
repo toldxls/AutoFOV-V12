@@ -4564,6 +4564,13 @@ void setup() {
   // populated when the user entered FOV_INFO and tapped GRAPH; navigating
   // directly to CAL_GRAPH on a factory boot plotted uninitialised memory.
   if (!isCustomCalib) {
+    // Factory cal IS the firmware's built-in default. Force the current default
+    // coefficients so a stale persisted factory save (e.g. from a dev build that
+    // shared this CALIB_MAGIC but used different defaults) can't leave CTRLX/CTRLY
+    // out of sync with FACTORY_DIST/FACTORY_FOV — the cause of a fit line that
+    // didn't match the plotted points.
+    CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
+    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9997f;
     nPoints = FACTORY_N;
     for (int i = 0; i < FACTORY_N; i++) {
       distPoints[i] = FACTORY_DIST[i];
