@@ -2351,7 +2351,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     float mult = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
     float fov  = valid ? (mult * (avgDist * CTRLX + CTRLY)) : 0.0f;
 
-    DynamicJsonDocument doc(3584);
+    // 4096 (was 3584): the vibsigs array now stores COPIED name strings (the
+    // fix for the dangling File::name() pointer below), so the pool must hold up
+    // to VIB_SIG_MAX(12) × VIB_SIG_NAME_MAX(15) chars on top of the state frame.
+    DynamicJsonDocument doc(4096);
 
     // ── Live sensor ──────────────────────────────────────────────────────────
     doc["dist"]          = valid ? roundf(dist_mm * 10.0f) / 10.0f : 0;
@@ -2483,7 +2486,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
                 if (!e.isDirectory()) {
                     const char* fn = e.name();
                     const char* slash = strrchr(fn, '/');
-                    sigArr.add(slash ? slash + 1 : fn);
+                    // Copy into a String: ArduinoJson stores const char* BY
+                    // REFERENCE, and fn points into the File impl that e.close()
+                    // frees below — serializeJson() would read freed memory.
+                    sigArr.add(String(slash ? slash + 1 : fn));
                 }
                 e.close();
             }

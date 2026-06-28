@@ -6925,7 +6925,7 @@
         if (data.dimMs   !== undefined) { state.dimMs = data.dimMs; updateTimeoutUI(); }
         if (data.sleepMs !== undefined) { state.sleepMs = data.sleepMs; updateTimeoutUI(); }
         if (data.theme   !== undefined) applyTheme(data.theme);
-        if (data.tint    !== undefined) { state.tintPct = data.tint; updateTimeoutUI(); }
+        if (data.tint    !== undefined && activeSlider !== 'tint') { state.tintPct = data.tint; updateTimeoutUI(); }
 
         // ── Sensor state & live readings ──
         if (data.sensorSleeping !== undefined) { state.sensorSleeping = !!data.sensorSleeping; if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
