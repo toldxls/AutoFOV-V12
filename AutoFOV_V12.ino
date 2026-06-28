@@ -6527,17 +6527,20 @@ void updateDisplay() {
     sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
 
     float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
-    float fov = mult * fovAt(averageDist);
-    
-    // ── Error = 2σ of the displayed AVG FOV over the last ~5 seconds ──
+    float fovBase = fovAt(averageDist);   // 20x base FOV — objective-independent
+    float fov = mult * fovBase;
+
+    // ── Error = 2σ of the AVG FOV over the last ~5 seconds ──
     // A direct empirical measure of how much the reading actually moves (sensor
-    // jitter + slow drift), in the displayed FOV's own units — not a model
-    // estimate and not averaged down by √N. Sampled ~20 Hz; the window is a true
-    // 5 s. Builds up to a value once ≥3 samples are in range.
+    // jitter + slow drift) — not a model estimate, not averaged down by √N.
+    // We track the OBJECTIVE-INDEPENDENT base FOV so switching objectives doesn't
+    // inject a fake jump into the window, then scale the spread by the current
+    // multiplier so the ± lands in the displayed FOV's units. Sampled ~20 Hz; the
+    // window is a true 5 s; builds up once ≥3 samples are in range.
     uint32_t nowMs = millis();
     if (nowMs - fovErrLastSample >= 50) {
       fovErrLastSample = nowMs;
-      fovErrWin[fovErrHead] = fov; fovErrWinT[fovErrHead] = nowMs;
+      fovErrWin[fovErrHead] = fovBase; fovErrWinT[fovErrHead] = nowMs;
       fovErrHead = (fovErrHead + 1) % FOV_ERR_WIN;
       if (fovErrCount < FOV_ERR_WIN) fovErrCount++;
     }
@@ -6550,7 +6553,7 @@ void updateDisplay() {
         float mean = sum / cnt, var = 0;
         for (int i = 0; i < fovErrCount; i++)
           if (nowMs - fovErrWinT[i] <= 5000) { float dv = fovErrWin[i] - mean; var += dv * dv; }
-        fovErrorBound = 2.0f * sqrtf(var / (cnt - 1));   // 2σ empirical spread
+        fovErrorBound = 2.0f * mult * sqrtf(var / (cnt - 1));   // 2σ, scaled to displayed units
       }
     }
     
