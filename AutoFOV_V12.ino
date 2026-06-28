@@ -4469,6 +4469,19 @@ void setup() {
 
     isCustomCalib = (settings.isCustom != 0);
 
+    // If a previously-saved "custom" cal is actually the default line (e.g. the
+    // user loaded the default cal back before this check existed), demote it to
+    // default so the badge reads DEFAULT. Mirrors finalizeCalibration(); runs
+    // before the points-restore below so it falls through to the factory points.
+    // Not re-persisted here (idempotent each boot) — the next finalize saves it.
+    if (isCustomCalib &&
+        fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 3.0e-4f &&
+        fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 2.0e-3f) {
+      CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
+      CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
+      isCustomCalib = false;
+    }
+
     // V11 fix: restore the persisted calibration scatter points so CAL_GRAPH
     // and the web graph can plot them after a power-cycle.
     if (isCustomCalib && settings.calPointsCaptured > 0 &&
@@ -5532,10 +5545,25 @@ void finalizeCalibration() {
     CALIB_R2 = (sst > 0.0001) ? (1.0f - (sse / sst)) : 0.9999f;
   }
 
+  // If the freshly-fit calibration is indistinguishable from the built-in
+  // default line (e.g. the user LOADED the default cal back), treat it as the
+  // default rather than "custom/loaded": the badge reads DEFAULT and the
+  // canonical default coefficients are stored so a round-trip can't drift. The
+  // test is on the effective line (slope + intercept), so it's robust to point
+  // count/precision in an imported file; tolerances exceed the factory-dataset
+  // refit error (ΔX≈5e-5, ΔY≈5e-4) yet reject any real calibration.
+  bool matchesDefault =
+      fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 3.0e-4f &&
+      fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 2.0e-3f;
+  if (matchesDefault) {
+    CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
+    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
+  }
+
   settings.magic = CALIB_MAGIC; settings.ctrlX = CTRLX; settings.ctrlY = CTRLY;
   settings.sensorWidth = sensorWidthPixels; settings.demarcation = demarcationDist;
   settings.calibError = CALIB_ERROR; settings.brightness = currentBrightness;
-  settings.isCustom = 1;
+  settings.isCustom = matchesDefault ? 0 : 1;
   settings.calibR2 = CALIB_R2;        // V17: persist R²
 
   // V11 fix: persist the scatter points so CAL_GRAPH survives a reboot.
@@ -5550,7 +5578,7 @@ void finalizeCalibration() {
   preferences.putBytes("settings", &settings, sizeof(CalibData));
   preferences.end();
   
-  isCustomCalib = true; 
+  isCustomCalib = !matchesDefault; 
   drawSuccessScreen();
 }
 

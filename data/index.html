@@ -509,12 +509,15 @@
                 <div id="btn-obj-3" class="gfx-btn btn-obj" style="left: 174px;" onclick="setObjective(3)">20x</div>
 
                 <div id="calib-block" class="gfx-btn" onclick="switchScreen('screen-about')">
-                    <div id="calib-status" style="color: #FFA500; font-size: 10px; font-weight: bold;">CALIB: FACTORY</div>
-                    <div style="color: var(--text-disabled); font-size: 9px; margin-top: 1px;">AutoFOV V12</div>
+                    <div style="color: var(--text-muted); font-size: 10px; font-weight: bold; line-height: 1.15;">AutoFOV V12</div>
+                    <div id="calib-block-version" style="color: var(--text-disabled); font-size: 9px; line-height: 1.15;">—</div>
                 </div>
 
                 <div class="gfx-btn" style="left: 144px; top: 280px; width: 94px; height: 35px;
-                     background-color: #008894; font-size: 11px;" onclick="switchScreen('screen-calsettings')">CALIBRATE</div>
+                     background-color: #008894; flex-direction: column;" onclick="switchScreen('screen-calsettings')">
+                    <div style="font-size: 11px; line-height: 1.1;">CALIBRATE</div>
+                    <div id="calib-status" style="font-size: 8px; font-weight: bold; line-height: 1.1; color: #FFA500; margin-top: 1px;">CALIB: DEFAULT</div>
+                </div>
 
                 <!-- patched3: shaded-sphere shutter indicator. Last in
                      #screen-main so it z-orders above the calib block. -->
@@ -6975,8 +6978,10 @@
         if (data.isCustomCalib !== undefined) {
             state.isCustomCalib = !!data.isCustomCalib;
             const el = document.getElementById('calib-status');
-            el.innerText   = state.isCustomCalib ? 'CALIB: LOADED' : 'CALIB: FACTORY';
-            el.style.color = state.isCustomCalib ? '#ADFF2F' : '#FFA500';
+            if (el) {
+                el.innerText   = state.isCustomCalib ? 'CALIB: LOADED' : 'CALIB: DEFAULT';
+                el.style.color = state.isCustomCalib ? '#ADFF2F' : '#FFA500';
+            }
         }
 
         // ── Calibration fit results (FOV info screen) ──
@@ -7068,6 +7073,9 @@
         let otaDirty   = false;   // rollback availability lives in /state too
         if (data.buildVersion !== undefined) {
             state.buildVersion = data.buildVersion; aboutDirty = true;
+            // Mirror the installed version onto the main-screen About button.
+            const cbv = document.getElementById('calib-block-version');
+            if (cbv) cbv.innerText = state.buildVersion ? 'v' + state.buildVersion : '—';
             // First time we learn the REAL running version (not the '—' default),
             // auto-check GitHub so the main-screen About-button glow can surface
             // an available update without opening the About/OTA screen — then keep
