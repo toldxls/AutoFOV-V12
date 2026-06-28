@@ -247,6 +247,7 @@
            colour-coded 3D sub-box whose leading "cube face" marks the level.
            Colour ramp matches the firmware thresholds (green ≥60%, yellow ≥30%). */
         #tof-box { position: absolute; left: 12px; top: 11px; }
+        #dist-box { position: absolute; left: 42px; top: 165px; }
 
         #btn-fov-info {
             position: absolute; left: 152px; top: 2px; width: 44px; height: 40px; cursor: pointer;
@@ -550,7 +551,24 @@
                 <div id="val-fov" class="gfx-text" style="width: 240px; text-align: center; top: 88px; font-size: 28px; color: var(--accent-green); font-weight: bold;">1.25 mm</div>
 
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 130px; font-size: 15px; color: var(--text-disabled);">DISTANCE:</div>
-                <div id="val-dist" class="gfx-text" style="width: 240px; text-align: center; top: 147px; font-size: 22px; color: var(--accent-cyan);">142 mm</div>
+                <div id="val-dist" class="gfx-text" style="width: 240px; text-align: center; top: 147px; font-size: 15px; color: var(--accent-cyan);">142 mm</div>
+
+                <!-- Bellows-position indicator: 3D isometric bar (up-left extrusion),
+                     0mm anchored at the right end, fill grows leftward; unlabeled
+                     25mm notches on the front-bottom edge. Faces set by
+                     setDistBar(); the bar only re-renders on >=4mm moves. -->
+                <svg id="dist-box" width="156" height="26" viewBox="0 0 162 26">
+                    <!-- behind the fill: back-bottom edge + right(anchor) connector -->
+                    <path d="M2,12 H152 M158,18 L152,12" fill="none" stroke="#4a4a4a" stroke-width="0.7" stroke-linecap="round"/>
+                    <!-- translucent dark-blue 3D fill (d set by setDistBar) -->
+                    <path id="dist-fill-top"   d="" fill="rgb(60,120,255)" fill-opacity="0.55"/>
+                    <path id="dist-fill-front" d="" fill="rgb(40,82,200)"  fill-opacity="0.6"/>
+                    <path id="dist-fill-end"   d="" fill="rgb(24,50,120)"  fill-opacity="0.62"/>
+                    <!-- in front of the fill: front-bottom (full track) + left end connector -->
+                    <path d="M8,18 H158 M8,18 L2,12" fill="none" stroke="#6a6a6a" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+                    <!-- unlabeled 25mm notches (25..150mm) on the front-bottom edge -->
+                    <path d="M133,18 V15.4 M108,18 V15.4 M83,18 V15.4 M58,18 V15.4 M33,18 V15.4 M8,18 V15.4" fill="none" stroke="#8a8a8a" stroke-width="0.7" stroke-linecap="round"/>
+                </svg>
 
                 <div id="btn-obj-1" class="gfx-btn btn-obj" style="left: 2px;"  onclick="setObjective(1)">5x</div>
                 <div id="btn-obj-2" class="gfx-btn btn-obj" style="left: 88px;" onclick="setObjective(2)">10x</div>
@@ -899,8 +917,9 @@
                 <div class="gfx-text" style="left: 160px; top: 10px; font-size: 9px; color: var(--text-muted);">LIVE DIST</div>
                 <div id="calrun-live-dist" class="gfx-text" style="left: 160px; top: 22px; font-size: 14px; color: var(--accent-green); font-weight: bold;">— mm</div>
 
-                <div style="position: absolute; left: 20px; top: 42px; width: 200px; height: 40px; background: #000;">
-                    <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 8px; font-size: 20px; color: var(--accent-green); font-weight: bold;">1920 px</div>
+                <div style="position: absolute; left: 20px; top: 42px; width: 200px; height: 40px; background: #000; border: 1px solid #2f2f2f; border-radius: 4px; box-sizing: border-box; cursor: pointer;"
+                     onclick="openCalPxInput()" title="Tap to type the pixel count">
+                    <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 7px; font-size: 20px; color: var(--accent-green); font-weight: bold;">1920 px</div>
                 </div>
 
                 <div class="gfx-text" style="width: 240px; text-align: center; top: 86px; font-size: 10px; color: var(--text-disabled);">take photo, input pixel # and capture</div>
@@ -1174,10 +1193,13 @@
                 <div id="btn-retake" class="gfx-btn"
                      style="left:10px; top:206px; width:105px; height:46px; background:#0000CD; font-size:12px;"
                      onclick="calRetake()">RETAKE</div>
-                <div class="gfx-btn"
+                <div id="btn-calrev-back" class="gfx-btn"
                      style="left:125px; top:206px; width:105px; height:46px; background:#000; border:1px solid #787878; font-size:12px;"
-                     onclick="goBack('screen-calrun')">GO BACK</div>
+                     onclick="calRevBack()">GO BACK</div>
 
+                <!-- Fit metrics (shown only once all points are captured / finalized) -->
+                <div id="calrev-metrics" class="gfx-text" style="display:none; width:240px; text-align:center;
+                     top:258px; font-size:10px; color: var(--accent-green); line-height:1.35;"></div>
                 <div id="calrev-sel-hint" class="gfx-text"
                      style="width:240px; text-align:center; top:262px; font-size:10px; color: var(--text-disabled);">tap a row to select</div>
             </div>
@@ -1823,6 +1845,43 @@
         <div id="calio-name-row">
           <button type="button" id="calio-name-cancel" onclick="calioNameClose()">CANCEL</button>
           <button type="submit"  id="calio-name-save">EXPORT</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Cal-run pixel-entry overlay — styled like the OTA/updater popups so the
+         user can type an exact pixel count instead of stepping with the arrows. -->
+    <style>
+      #calpx-overlay { display:none; position:fixed; inset:0; z-index:660;
+        background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
+        -webkit-backdrop-filter:blur(4px); flex-direction:column;
+        align-items:center; justify-content:center; padding:0 24px;
+        color:#cfe7df; font-family:monospace; text-align:center; }
+      #calpx-overlay.open { display:flex; }
+      #calpx-overlay .cpTitle { font-size:20px; font-weight:bold; color:#3ddb7a;
+        letter-spacing:3px; margin-bottom:6px; }
+      #calpx-overlay .cpSub { font-size:11px; color:#7ab4a2; line-height:1.5;
+        margin-bottom:20px; max-width:300px; }
+      #calpx-input { width:100%; max-width:220px; padding:11px; font-size:18px;
+        font-family:monospace; background:#0c2b2e; border:1px solid #2a5e58;
+        border-radius:4px; color:#e7f5ee; margin-bottom:16px; text-align:center; }
+      #calpx-input:focus { outline:none; border-color:#3ddb7a; }
+      #calpx-row { display:flex; gap:10px; width:100%; max-width:220px; }
+      #calpx-row button { flex:1; padding:12px; font-size:14px; font-weight:bold;
+        letter-spacing:1px; border-radius:4px; cursor:pointer; font-family:monospace; }
+      #calpx-set    { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df; }
+      #calpx-set:active { filter:brightness(1.3); }
+      #calpx-cancel { background:#2a1414; border:1px solid #7a3a3a; color:#e7cfcf; }
+    </style>
+    <div id="calpx-overlay">
+      <div class="cpTitle">PIXELS</div>
+      <div class="cpSub">Type the measured pixel width for this point.</div>
+      <form id="calpx-form" onsubmit="calPxConfirm(); return false;">
+        <input id="calpx-input" type="number" inputmode="numeric" min="1" step="1"
+               spellcheck="false" autocomplete="off">
+        <div id="calpx-row">
+          <button type="button" id="calpx-cancel" onclick="calPxClose()">CANCEL</button>
+          <button type="submit"  id="calpx-set">SET</button>
         </div>
       </form>
     </div>
@@ -4535,9 +4594,28 @@
 
     function adjCalRun(adj) {
         const big = Math.abs(adj) >= 2;
-        const step = big ? 100 : 10;
+        const step = big ? 100 : 1;   // single arrow = ±1 (fine), double = ±100 (coarse)
         state.calRunPx = Math.max(1, state.calRunPx + Math.sign(adj) * step);
         document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
+    }
+
+    // Tap the pixel box to type an exact value (updater-popup styled overlay).
+    function openCalPxInput() {
+        const inp = document.getElementById('calpx-input');
+        inp.value = state.calRunPx;
+        document.getElementById('calpx-overlay').classList.add('open');
+        setTimeout(() => { inp.focus(); inp.select(); }, 30);   // type replaces current value
+    }
+    function calPxClose() {
+        document.getElementById('calpx-overlay').classList.remove('open');
+    }
+    function calPxConfirm() {
+        const v = parseInt(document.getElementById('calpx-input').value, 10);
+        if (!isNaN(v) && v >= 1) {
+            state.calRunPx = v;
+            document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
+        }
+        calPxClose();
     }
 
     // Ack-driven capture: send calCapture, show SAMPLING…, then advance ONLY
@@ -4608,8 +4686,39 @@
         retake.style.background = calRevSel >= 0 ? '#0000CD' : '#101010';
         retake.style.color      = calRevSel >= 0 ? '#FFF'    : '#787878';
 
-        document.getElementById('calrev-sel-hint').innerText =
-            calRevSel >= 0 ? 'pt ' + (calRevSel + 1) + ' selected — tap RETAKE to redo' : 'tap a row to select';
+        // When every point is captured the device has finalized + saved: show the
+        // fit metrics and turn GO BACK into FINISH (was walking into a bogus 14/13).
+        const backBtn  = document.getElementById('btn-calrev-back');
+        const metrics  = document.getElementById('calrev-metrics');
+        const hint     = document.getElementById('calrev-sel-hint');
+        const complete = state.calPointsCaptured >= state.calPoints;
+        if (complete) {
+            backBtn.innerText = 'FINISH';
+            backBtn.style.background = '#1a4a3a';
+            backBtn.style.border = '1px solid #3ddb7a';
+            const fmt = (v, d) => (v === null || v === undefined) ? '—' : (+v).toFixed(d);
+            metrics.innerHTML =
+                'm ' + fmt(state.fovSlope, 5) + ' &nbsp; b ' + fmt(state.fovIntercept, 3) + '<br>' +
+                'R² ' + fmt(state.calibR2, 3) + ' &nbsp; RMSE ' + fmt(state.calibError, 4) +
+                ' &nbsp; n=' + state.calPointsCaptured;
+            metrics.style.display = 'block';
+            hint.style.display = 'none';
+        } else {
+            backBtn.innerText = 'GO BACK';
+            backBtn.style.background = '#000';
+            backBtn.style.border = '1px solid #787878';
+            metrics.style.display = 'none';
+            hint.style.display = 'block';
+            hint.innerText = calRevSel >= 0
+                ? 'pt ' + (calRevSel + 1) + ' selected — tap RETAKE to redo'
+                : 'tap a row to select';
+        }
+    }
+
+    // Review-screen back/finish: FINISH (→ main) once complete, else resume capture.
+    function calRevBack() {
+        if (state.calPointsCaptured >= state.calPoints) switchScreen('screen-main');
+        else goBack('screen-calrun');
     }
 
     function calRevScroll(dir) {
@@ -4620,31 +4729,46 @@
 
     function calRetake() {
         if (calRevSel < 0) return;
-        // Remove this point and all after it so the run resumes from here
-        state.capturedPoints.splice(calRevSel);
-        state.calPointsCaptured = calRevSel;
-        // Drop the same points on the firmware side. Without this the device
-        // kept its old pointsCaptured, so the next capture APPENDED instead of
-        // re-taking — the "discarded" points still went into the final fit and
-        // the device finalized early while the web showed points remaining.
-        sendCommand('calTruncate', calRevSel);
-        state.calRunPx = 1920;
-        updateCalRunUI(calRevSel + 1);
-        drawCalMiniGraph();
-        goBack('screen-calrun');
+        // RETAKE truncates from the selected point to the end (the firmware only
+        // supports append/truncate today — true single-point retake is the
+        // planned firmware follow-up). Confirm first when it would discard MORE
+        // than just the selected point, so a mid-set retake can't nuke the rest
+        // by accident.
+        const doRetake = () => {
+            state.capturedPoints.splice(calRevSel);
+            state.calPointsCaptured = calRevSel;
+            // Drop the same points on the firmware side so the next capture
+            // re-takes instead of appending past the discarded ones.
+            sendCommand('calTruncate', calRevSel);
+            state.calRunPx = 1920;
+            updateCalRunUI(calRevSel + 1);
+            drawCalMiniGraph();
+            goBack('screen-calrun');
+        };
+        if (state.calPointsCaptured - calRevSel > 1) {
+            showConfirm('Retake point ' + (calRevSel + 1) + '?\nThis discards points ' +
+                        (calRevSel + 1) + '–' + state.calPointsCaptured +
+                        ' and re-captures from there.', doRetake);
+        } else {
+            doRetake();   // retaking only the last point loses nothing extra
+        }
     }
 
     function calGoBack() {
         if (state.calPointsCaptured === 0) {
             goBack('screen-calsettings');
         } else {
-            // Undo last captured point, stay on calrun at that point number
-            state.calPointsCaptured--;
-            state.capturedPoints.splice(state.calPointsCaptured, 1);
-            state.calRunPx = 1920;
-            updateCalRunUI(state.calPointsCaptured + 1);
-            drawCalMiniGraph();
-            sendCommand('calUndoPoint', state.calPointsCaptured + 1);
+            // This UNDOES the last captured point (not just a screen nav) — confirm
+            // so it can't silently delete a point while the user is mid-entry.
+            const n = state.calPointsCaptured;
+            showConfirm('Undo point ' + n + ' and step back?', () => {
+                state.calPointsCaptured--;
+                state.capturedPoints.splice(state.calPointsCaptured, 1);
+                state.calRunPx = 1920;
+                updateCalRunUI(state.calPointsCaptured + 1);
+                drawCalMiniGraph();
+                sendCommand('calUndoPoint', state.calPointsCaptured + 1);
+            });
         }
     }
 
@@ -6816,6 +6940,24 @@
         end.setAttribute('d', `M${xL},${yT} L${xL+D},${yT-D} L${xL+D},${yB-D} L${xL},${yB} Z`);   end.setAttribute('fill', sh(0.7));
     }
 
+    // Bellows-distance bar: 0mm anchored at the right (XR), fill grows LEFT,
+    // 1 svg-unit = 1 mm over 0..150 mm. Up-LEFT isometric depth so the leading
+    // cube face shows on the left. Colours are static (set in markup) — only the
+    // three face `d` attributes change. Called gated to >=4mm moves.
+    function setDistBar(distMM) {
+        const top = document.getElementById('dist-fill-top');
+        const fr  = document.getElementById('dist-fill-front');
+        const end = document.getElementById('dist-fill-end');
+        if (!top || !fr || !end) return;
+        const XR = 158, yT = 10, yB = 18, D = 6;        // geometry mirrors the svg
+        const d  = Math.max(0, Math.min(150, distMM));
+        if (d <= 0.5) { top.setAttribute('d',''); fr.setAttribute('d',''); end.setAttribute('d',''); return; }
+        const xL = XR - d;                              // leading (left) edge of fill
+        top.setAttribute('d', `M${xL},${yT} L${xL-D},${yT-D} L${XR-D},${yT-D} L${XR},${yT} Z`);
+        fr .setAttribute('d', `M${xL},${yT} L${XR},${yT} L${XR},${yB} L${xL},${yB} Z`);
+        end.setAttribute('d', `M${xL},${yT} L${xL-D},${yT-D} L${xL-D},${yB-D} L${xL},${yB} Z`);
+    }
+
     function applyFullState(data) {
         // Unpack minified fast-telem keys → canonical long names so the
         // rest of the handler never needs to know which frame type arrived.
@@ -6949,6 +7091,13 @@
                     // Distance only — no FOV (would just reflect the stale fit).
                     const calLive = document.getElementById('calrun-live-dist');
                     if (calLive) calLive.innerText = state._pendingDist + ' mm';
+                    // Bellows-position bar: only re-render on a real >=4mm move so
+                    // the ±2-3mm sensor jitter doesn't make it twitch.
+                    if (state._lastBarDist === undefined ||
+                        Math.abs(state._pendingDist - state._lastBarDist) >= 4) {
+                        setDistBar(state._pendingDist);
+                        state._lastBarDist = state._pendingDist;
+                    }
                 }
                 if (state._pendingFov !== undefined) {
                     const errCentimm = state._pendingFovErr;
@@ -7072,6 +7221,22 @@
         // ── Cal graph points (device sends full array after custom calibration) ──
         if (data.calGraphPoints !== undefined) {
             state.calGraphPoints = data.calGraphPoints;
+            // Device is the source of truth for the point set — mirror it into the
+            // review list so the web can't drift out of sync (was: web 11 / dev 13).
+            // The device stores only dist+fov, so reverse the pixel count from the
+            // FOV formula (fov = demarc/px * sensorWidth -> px = demarc*sensorWidth/fov).
+            // Skipped while a capture is in flight (incremental calPointResult owns
+            // it) and for the factory-default set (not a user calibration).
+            if (!_pendingCalCapture && state.isCustomCalib) {
+                const dw = state.demarcDist, sw = state.photoWidth;
+                state.capturedPoints = data.calGraphPoints.map((p, i) => ({
+                    idx: i + 1,
+                    px: (p.fov > 0 && dw && sw) ? Math.round(dw * sw / p.fov) : 0,
+                    dist: p.dist, fov: p.fov
+                }));
+                state.calPointsCaptured = data.calGraphPoints.length;
+                if (state.screen === 'screen-calreview') renderCalReview();
+            }
             if (state.screen === 'screen-calgraph') drawCalGraph();
         }
 
