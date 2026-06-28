@@ -2390,8 +2390,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["isCustomCalib"] = isCustomCalib ? 1 : 0;
     doc["fovSlope"]      = roundf(CTRLX * 1e6f) / 1e6f;   // 6 dp — slope is ~0.000xxx
     doc["fovIntercept"]  = roundf(CTRLY * 1000.0f) / 1000.0f;
-    doc["calibError"]    = roundf(CALIB_ERROR * 1000.0f) / 1000.0f;
-    doc["calibR2"]       = roundf(CALIB_R2 * 1000.0f) / 1000.0f;
+    // 5 dp: a near-perfect pixel-space fit (R²≈0.9997, RMSE≈0.0049) must not get
+    // rounded to 1.000 / 0.005 over the wire — that defeated the web's 4-dp display.
+    doc["calibError"]    = roundf(CALIB_ERROR * 100000.0f) / 100000.0f;
+    doc["calibR2"]       = roundf(CALIB_R2 * 100000.0f) / 100000.0f;
     doc["calWidth"]      = (int)sensorWidthPixels;
     doc["demarcDist"]    = roundf(demarcationDist * 100.0f) / 100.0f;
     doc["calPoints"]     = nPoints;
