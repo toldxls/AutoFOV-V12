@@ -59,6 +59,30 @@ patch=$((commit_count - v_base))
 [ "$patch" -lt 0 ] && patch=0
 current="$v_major.$v_minor.$patch"
 
+# ── Flash-usage check ──────────────────────────────────────────────────────
+# Surface how full the OTA app slot is so slow binary growth toward the
+# partition cap is visible at a glance. Best-effort: needs a built .bin plus a
+# partitions.csv, and is silently skipped if either is missing. The slot size
+# is read from partitions.csv (app0) so it tracks any future repartition.
+# Always warns (even under --quiet) once usage crosses FLASH_WARN_PCT.
+FLASH_WARN_PCT=90
+bin=$(ls -t build/*/*.ino.bin 2>/dev/null | head -1)
+slot_hex=$(awk -F',' '/^[[:space:]]*app0[[:space:]]*,/{gsub(/[[:space:]]/,"",$5); print $5}' partitions.csv 2>/dev/null)
+if [ -n "$bin" ] && [ -n "$slot_hex" ]; then
+    bin_size=$(wc -c < "$bin")
+    slot=$((slot_hex))
+    if [ "$slot" -gt 0 ]; then
+        pct=$((bin_size * 100 / slot))
+        free_kb=$(((slot - bin_size) / 1024))
+        flash_msg="flash: ${pct}% of OTA slot (${free_kb} KB free)"
+        if [ "$pct" -ge "$FLASH_WARN_PCT" ]; then
+            echo "${YEL}${flash_msg} — nearing cap${RST}"
+        elif [ "$QUIET" = 0 ]; then
+            echo "${DIM}${flash_msg}${RST}"
+        fi
+    fi
+fi
+
 if [ -z "$released" ]; then
     [ "$QUIET" = 1 ] || echo "${YEL}gh-pages has no release yet${RST} — current: v$current"
     [ "$CHECK" = 1 ] && exit 1

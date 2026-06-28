@@ -466,10 +466,35 @@
                     <div class="fov-bullet" style="left: 33px;"></div>
                 </div>
 
-                <!-- Gear icon — 8-tooth trapezoidal profile, single evenodd path -->
+                <!-- Gear icon — 8-tooth trapezoidal profile, rendered with depth:
+                     a dark extruded copy underneath the lit, gradient-shaded top
+                     face, plus a recessed centre hub and a soft drop shadow. -->
                 <div id="btn-gear" onclick="switchScreen('screen-settings')">
-                    <svg width="26" height="26" viewBox="-14 -14 28 28">
-                        <path fill-rule="evenodd" fill="#00FF00" d="M6.79,-1.69 L10.83,-1.91 L10.83,1.91 L6.79,1.69 L6.00,3.61 L9.01,6.31 L6.31,9.01 L3.61,6.00 L1.69,6.79 L1.91,10.83 L-1.91,10.83 L-1.69,6.79 L-3.61,6.00 L-6.31,9.01 L-9.01,6.31 L-6.00,3.61 L-6.79,1.69 L-10.83,1.91 L-10.83,-1.91 L-6.79,-1.69 L-6.00,-3.61 L-9.01,-6.31 L-6.31,-9.01 L-3.61,-6.00 L-1.69,-6.79 L-1.91,-10.83 L1.91,-10.83 L1.69,-6.79 L3.61,-6.00 L6.31,-9.01 L9.01,-6.31 L6.00,-3.61 Z M3,0 A3,3 0 1 0 -3,0 A3,3 0 1 0 3,0 Z"/>
+                    <svg width="28" height="28" viewBox="-15 -15 30 30">
+                        <defs>
+                            <linearGradient id="gear-face" x1="0" y1="-11" x2="0" y2="11" gradientUnits="userSpaceOnUse">
+                                <stop offset="0"    stop-color="#A6FFA6"/>
+                                <stop offset="0.42" stop-color="#23E823"/>
+                                <stop offset="1"    stop-color="#0B8C0B"/>
+                            </linearGradient>
+                            <radialGradient id="gear-hub" cx="0" cy="-0.6" r="3.4" gradientUnits="userSpaceOnUse">
+                                <stop offset="0"   stop-color="#042804"/>
+                                <stop offset="0.7" stop-color="#073807"/>
+                                <stop offset="1"   stop-color="#0C5E0C"/>
+                            </radialGradient>
+                            <filter id="gear-shadow" x="-40%" y="-40%" width="180%" height="180%">
+                                <feDropShadow dx="1.4" dy="1" stdDeviation="0.9" flood-color="#000" flood-opacity="0.65"/>
+                            </filter>
+                        </defs>
+                        <g filter="url(#gear-shadow)">
+                            <!-- extruded depth: dark copy offset down-right reads as cog thickness -->
+                            <path fill="#0A5210" transform="translate(1.8,1.2)" d="M6.79,-1.69 L10.83,-1.91 L10.83,1.91 L6.79,1.69 L6.00,3.61 L9.01,6.31 L6.31,9.01 L3.61,6.00 L1.69,6.79 L1.91,10.83 L-1.91,10.83 L-1.69,6.79 L-3.61,6.00 L-6.31,9.01 L-9.01,6.31 L-6.00,3.61 L-6.79,1.69 L-10.83,1.91 L-10.83,-1.91 L-6.79,-1.69 L-6.00,-3.61 L-9.01,-6.31 L-6.31,-9.01 L-3.61,-6.00 L-1.69,-6.79 L-1.91,-10.83 L1.91,-10.83 L1.69,-6.79 L3.61,-6.00 L6.31,-9.01 L9.01,-6.31 L6.00,-3.61 Z"/>
+                            <!-- lit top face -->
+                            <path fill="url(#gear-face)" d="M6.79,-1.69 L10.83,-1.91 L10.83,1.91 L6.79,1.69 L6.00,3.61 L9.01,6.31 L6.31,9.01 L3.61,6.00 L1.69,6.79 L1.91,10.83 L-1.91,10.83 L-1.69,6.79 L-3.61,6.00 L-6.31,9.01 L-9.01,6.31 L-6.00,3.61 L-6.79,1.69 L-10.83,1.91 L-10.83,-1.91 L-6.79,-1.69 L-6.00,-3.61 L-9.01,-6.31 L-6.31,-9.01 L-3.61,-6.00 L-1.69,-6.79 L-1.91,-10.83 L1.91,-10.83 L1.69,-6.79 L3.61,-6.00 L6.31,-9.01 L9.01,-6.31 L6.00,-3.61 Z"/>
+                            <!-- recessed centre bore -->
+                            <circle cx="0" cy="0" r="3.1" fill="url(#gear-hub)"/>
+                            <circle cx="0" cy="0.5" r="3.1" fill="none" stroke="#2BC02B" stroke-width="0.5" stroke-opacity="0.7"/>
+                        </g>
                     </svg>
                 </div>
 
