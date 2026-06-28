@@ -4703,7 +4703,7 @@
             const fmt = (v, d) => (v === null || v === undefined) ? '—' : (+v).toFixed(d);
             metrics.innerHTML =
                 'm ' + fmt(state.fovSlope, 5) + ' &nbsp; b ' + fmt(state.fovIntercept, 3) + '<br>' +
-                'R² ' + fmt(state.calibR2, 3) + ' &nbsp; RMSE ' + fmt(state.calibError, 4) +
+                'R² ' + fmt(state.calibR2, 4) + ' &nbsp; RMSE ' + fmt(state.calibError, 4) +
                 ' &nbsp; n=' + state.calPointsCaptured;
             metrics.style.display = 'block';
             hint.style.display = 'none';
@@ -5214,11 +5214,11 @@
         if (g('fovinfo-intercept')) g('fovinfo-intercept').innerText = intc  !== null ? intc.toFixed(4)         : '—';
         if (g('fovinfo-err'))  { g('fovinfo-err').innerText  = err !== null ? err.toFixed(4) + ' mm' : '—';
                                   g('fovinfo-err').style.color = err !== null ? (err < 0.05 ? '#00FF00' : '#FFA500') : '#787878'; }
-        if (g('fovinfo-r2'))   { g('fovinfo-r2').innerText   = r2  !== null ? r2.toFixed(3)          : '—';
+        if (g('fovinfo-r2'))   { g('fovinfo-r2').innerText   = r2  !== null ? r2.toFixed(4)          : '—';
                                   g('fovinfo-r2').style.color  = r2  !== null ? (r2  > 0.99 ? '#00FF00' : '#FFA500') : '#787878'; }
         if (g('fovinfo-photowidth')) g('fovinfo-photowidth').innerText = state.photoWidth + ' px';
         // sync cal graph legend
-        if (g('calgraph-r2'))        g('calgraph-r2').innerText        = r2    !== null ? r2.toFixed(3)    : '—';
+        if (g('calgraph-r2'))        g('calgraph-r2').innerText        = r2    !== null ? r2.toFixed(4)    : '—';
         if (g('calgraph-slope'))     g('calgraph-slope').innerText     = slope !== null ? slope.toFixed(5) : '—';
         if (g('calgraph-intercept')) g('calgraph-intercept').innerText = intc  !== null ? intc.toFixed(4)  : '—';
         if (g('calgraph-rmse'))      g('calgraph-rmse').innerText      = err   !== null ? err.toFixed(4)   : '—';

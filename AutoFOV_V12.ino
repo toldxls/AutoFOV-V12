@@ -859,6 +859,11 @@ bool isRetakeMode = false;     // V17: true when CAL_RUN was entered to retake a
 float CTRLX = Config::DEFAULT_CTRL_X, CTRLY = Config::DEFAULT_CTRL_Y;
 float CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; 
 float CALIB_R2 = 0.994f;      // V17: factory-default R² (0.994 empirically verified)
+// V12.3: cached pixel-space fit statistics for the distance-dependent prediction
+// interval (recomputed from the cal points on load/finalize — no new persisted
+// fields). gCalSpx = pixel residual SD, gCalXbar = mean cal distance,
+// gCalSxx = Σ(dist-mean)², gCalN = point count.
+float gCalSpx = 0.0f, gCalXbar = 0.0f, gCalSxx = 0.0f; int gCalN = 0;
 float mul_5x = 4.0, mul_10x = 2.0, mul_20x = 1.0;
 int tempPixels = Config::DEFAULT_TEMP_PIXELS;
 
@@ -1306,7 +1311,7 @@ void drawCalGraphUI() {
   uint16_t r2Col   = (CALIB_R2 > 0.995f)   ? COLOR_PUREGREEN : (CALIB_R2 > 0.98f)   ? COLOR_YELLOW : COLOR_ORANGE;
   uint16_t rmseCol = (CALIB_ERROR < 0.02f)  ? COLOR_PUREGREEN : (CALIB_ERROR < 0.05f) ? COLOR_YELLOW : COLOR_ORANGE;
 
-  fmt3(buf, sizeof(buf), CALIB_R2);
+  snprintf(buf, sizeof(buf), "%.4f", CALIB_R2);   // R² at 4 dp (≈1.000 hides a near-perfect fit)
   {
     tft.fillRect(lbx + 1, lby + 4, lbw - 2, 12, 0x0841);
     char combined[20]; snprintf(combined, sizeof(combined), "R :%s", buf); // space placeholder for superscript
@@ -4583,6 +4588,8 @@ void setup() {
     pointsCaptured = FACTORY_N;
   }
 
+  computeCalStats();   // prime prediction-interval stats from the loaded cal points
+
   analogWrite(LITE_PIN, currentBrightness);
 
   recoverI2CBus();
@@ -5532,6 +5539,28 @@ float fovAt(float distMm) {
   return (px > 1.0f) ? (demarcationDist * sensorWidthPixels / px) : 0.0f;
 }
 
+// V12.3: recompute the cached fit statistics used by the live prediction
+// interval. Call after any change to the calibration points/coefficients.
+void computeCalStats() {
+  int nn = (pointsCaptured < 0) ? 0 : pointsCaptured;
+  gCalN = nn;
+  if (nn < 1) { gCalSpx = 0; gCalXbar = 0; gCalSxx = 0; return; }
+  float kPx = demarcationDist * sensorWidthPixels;
+  float sx = 0;
+  for (int i = 0; i < nn; i++) sx += distPoints[i];
+  gCalXbar = sx / nn;
+  float sxx = 0, sse = 0;
+  for (int i = 0; i < nn; i++) {
+    float dx = distPoints[i] - gCalXbar;
+    sxx += dx * dx;
+    float pxMeas = (fovPoints[i] > 1e-4f) ? (kPx / fovPoints[i]) : 0.0f;
+    float pxPred = CTRLX * distPoints[i] + CTRLY;
+    sse += (pxMeas - pxPred) * (pxMeas - pxPred);
+  }
+  gCalSxx = sxx;
+  gCalSpx = (nn > 2) ? sqrtf(sse / (nn - 2)) : 0.0f;   // pixel residual SD
+}
+
 void finalizeCalibration() {
   tft.fillRect(0, 305, 240, 15, THEME_BG);
   setSmoothFont(1); tft.setTextColor(0x07FF);
@@ -5611,7 +5640,8 @@ void finalizeCalibration() {
   preferences.putBytes("settings", &settings, sizeof(CalibData));
   preferences.end();
   
-  isCustomCalib = !matchesDefault; 
+  isCustomCalib = !matchesDefault;
+  computeCalStats();            // refresh prediction-interval stats from the new fit
   drawSuccessScreen();
 }
 
@@ -6507,7 +6537,18 @@ void updateDisplay() {
     float dFovdDist = (pxHere > 1.0f)
         ? (demarcationDist * sensorWidthPixels * fabsf(CTRLX) / (pxHere * pxHere)) : 0.0f;
     float liveFovError = dFovdDist * stdDevDist / sqrtf((float)numReadings);
-    float totalFovError = sqrt((liveFovError * liveFovError) + (CALIB_ERROR * CALIB_ERROR));
+    // Calibration term: the pixel-space fit's PREDICTION INTERVAL at this distance
+    // — includes residual scatter + slope/intercept uncertainty, and widens away
+    // from the calibrated range. Converted to FOV via dFOV/dpx = kPx/px².
+    // PI_px = s · √(1 + 1/n + (d-x̄)²/Sxx).  Falls back to the flat RMSE if stats
+    // aren't available (n<3 or degenerate spread).
+    float calFovError = CALIB_ERROR;
+    if (gCalN > 2 && gCalSxx > 1e-6f && pxHere > 1.0f) {
+      float dxc  = averageDist - gCalXbar;
+      float piPx = gCalSpx * sqrtf(1.0f + 1.0f / (float)gCalN + (dxc * dxc) / gCalSxx);
+      calFovError = (demarcationDist * sensorWidthPixels) / (pxHere * pxHere) * piPx;
+    }
+    float totalFovError = sqrt((liveFovError * liveFovError) + (calFovError * calFovError));
     
     float fovErrorBound = 2.0 * totalFovError; 
     
