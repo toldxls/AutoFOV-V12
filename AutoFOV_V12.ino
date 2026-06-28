@@ -65,9 +65,14 @@
 #define FIRMWARE_VERSION  "Auto FOV V12"
 
 namespace Config {
-  constexpr float DEFAULT_CTRL_X = -0.005f;
-  constexpr float DEFAULT_CTRL_Y = 1.5688f;
-  constexpr float DEFAULT_CALIB_ERROR = 0.0146f;
+  // V12.3 pixel-space calibration: pixels = CTRL_X*dist + CTRL_Y, then
+  // FOV = demarcation * sensorWidth / pixels. Pixels are linear in distance, so
+  // this straight-line fit is accurate (FOV-vs-distance is the resulting 1/x
+  // curve). Defaults are the least-squares pixel-space fit of the reference
+  // dataset below (FACTORY_DIST/FACTORY_FOV), R²≈0.9997.
+  constexpr float DEFAULT_CTRL_X = 6.3725f;       // px per mm (pixel slope)
+  constexpr float DEFAULT_CTRL_Y = 1227.140f;     // px at distance 0 (pixel intercept)
+  constexpr float DEFAULT_CALIB_ERROR = 0.0049f;  // calibration RMSE in FOV mm
   constexpr float DEFAULT_SENSOR_WIDTH_PX = 6960.0f;
   constexpr float DEFAULT_DEMARCATION_MM = 0.4f;
   constexpr int   DEFAULT_TEMP_PIXELS = 1800;
@@ -93,18 +98,18 @@ const float STEP_TABLE[] = {
 };
 const int STEP_TABLE_LEN = 23;
 
-// Factory default calibration data points (13 points measured at default settings)
-// Used for the graph view when no custom calibration has been run.
-// patched3: rounded to 3 decimals — the original 4-decimal values were noise
-// (sensor + photo-measurement repeatability is ~50 µm and 0.001 mm respectively).
+// Factory reference calibration (13 points) used for the graph/seed when no
+// custom calibration has been run. Stored as (distance mm, FOV mm); FOV here is
+// 0.4*6960/pixels from the measured pixel counts. DEFAULT_CTRL_X/Y above are the
+// pixel-space least-squares fit of these points.
 const int   FACTORY_N = 13;
 const float FACTORY_DIST[13] = {
-  14.471f, 24.300f, 35.083f, 43.774f, 52.866f, 64.487f, 74.432f,
-  84.771f, 93.494f, 104.024f, 112.809f, 123.855f, 69.014f
+  22.0f, 33.0f, 42.0f, 52.0f, 62.0f, 73.0f, 83.0f,
+  91.0f, 102.0f, 112.0f, 121.0f, 132.0f, 144.0f
 };
 const float FACTORY_FOV[13] = {
-  1.526f, 1.454f, 1.393f, 1.343f, 1.296f, 1.235f, 1.192f,
-  1.134f, 1.098f, 1.059f, 1.022f, 0.974f, 1.216f
+  2.0486f, 1.9307f, 1.8597f, 1.7846f, 1.7122f, 1.6493f, 1.5872f,
+  1.5398f, 1.4809f, 1.4343f, 1.3899f, 1.3469f, 1.3009f
 };
 
 int stackStepIndex = 2;
@@ -826,7 +831,7 @@ CalibData settings;
 
 // V17: Magic bumped because CalibData layout grew (calibR2 added).
 // Devices upgrading from V16 will see a one-time return to defaults.
-#define CALIB_MAGIC 0x544F4C4C  // V11: bumped — CalibData now persists calibration scatter points
+#define CALIB_MAGIC 0x544F4C4D  // V12.3: bumped — ctrlX/ctrlY are now pixel-space coefficients (old FOV-coefficient calibs reset to factory)
 
 bool isCustomCalib = false;
 int currentBrightness = Config::DEFAULT_BRIGHTNESS;
@@ -1247,14 +1252,22 @@ void drawCalGraphUI() {
   int xTitleW = strlen(xTitle) * 6;
   tft.setCursor(pL + (pW - xTitleW) / 2, pB + 22); tft.print(xTitle);
 
-  // ── Regression line ──
-  int rx0 = pL, ry0 = constrain(toScreenY(CTRLX * xLo + CTRLY), pT, pB);
-  int rx1 = pR, ry1 = constrain(toScreenY(CTRLX * xHi + CTRLY), pT, pB);
-  tft.drawLine(rx0, ry0, rx1, ry1, COLOR_BLUEGREEN);
+  // ── Regression curve (pixel-space cal → FOV = fovAt() is a 1/x curve) ──
+  {
+    int prevx = -1, prevy = 0;
+    const int SAMPLES = 24;
+    for (int s = 0; s <= SAMPLES; s++) {
+      float d  = xLo + (xHi - xLo) * s / (float)SAMPLES;
+      int   cx = toScreenX(d);
+      int   cy = constrain(toScreenY(fovAt(d)), pT, pB);
+      if (prevx >= 0) tft.drawLine(prevx, prevy, cx, cy, COLOR_BLUEGREEN);
+      prevx = cx; prevy = cy;
+    }
+  }
 
   // ── Data points — colour by residual magnitude ──
   for (int i = 0; i < n; i++) {
-    float predicted = CTRLX * distPoints[i] + CTRLY;
+    float predicted = fovAt(distPoints[i]);
     float resid = fovPoints[i] - predicted;
     bool within = fabsf(resid) < CALIB_ERROR;
     int sx = toScreenX(distPoints[i]);
@@ -4475,8 +4488,8 @@ void setup() {
     // before the points-restore below so it falls through to the factory points.
     // Not re-persisted here (idempotent each boot) — the next finalize saves it.
     if (isCustomCalib &&
-        fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 3.0e-4f &&
-        fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 2.0e-3f) {
+        fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 0.02f &&
+        fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 3.0f) {
       CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
       CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
       isCustomCalib = false;
@@ -5503,6 +5516,15 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
   }
 }
 
+// V12.3 pixel-space calibration: pixels = CTRLX*dist + CTRLY (linear fit), and
+// the demarcation's field of view is FOV = demarcation * sensorWidth / pixels.
+// Centralises the derivation so every readout uses the same math. Returns the
+// base (20x) FOV in mm; callers apply the objective multiplier.
+float fovAt(float distMm) {
+  float px = CTRLX * distMm + CTRLY;
+  return (px > 1.0f) ? (demarcationDist * sensorWidthPixels / px) : 0.0f;
+}
+
 void finalizeCalibration() {
   tft.fillRect(0, 305, 240, 15, THEME_BG);
   setSmoothFont(1); tft.setTextColor(0x07FF);
@@ -5514,47 +5536,51 @@ void finalizeCalibration() {
   // us, but a future code path could miss that check and we'd otherwise read
   // uninitialised distPoints[] / fovPoints[] entries.
   int fitN = (pointsCaptured < nPoints) ? pointsCaptured : nPoints;
+  // V12.3: fit in PIXEL space. Pixels are linear in distance; FOV (∝ 1/pixels)
+  // is not, so the old FOV-vs-distance line systematically under/over-shot over
+  // a wide range. Recover each point's measured pixel count from its stored FOV
+  // (px = kPx/FOV — the exact inverse of how calCapture made FOV), fit
+  // pixels = CTRLX*dist + CTRLY, and derive FOV from that at runtime (fovAt()).
+  float kPx = demarcationDist * sensorWidthPixels;       // FOV = kPx / pixels
   float sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
   for (int i = 0; i < fitN; i++) {
-    sumX += distPoints[i]; sumY += fovPoints[i];
-    sumXY += (distPoints[i] * fovPoints[i]); sumX2 += (distPoints[i] * distPoints[i]);
+    float px = (fovPoints[i] > 1e-4f) ? (kPx / fovPoints[i]) : 0.0f;
+    sumX += distPoints[i]; sumY += px;
+    sumXY += (distPoints[i] * px); sumX2 += (distPoints[i] * distPoints[i]);
   }
 
   float denominator = (fitN * sumX2 - sumX * sumX);
   if (fabs(denominator) < 0.0001) {
-    // V11 fix: clamp degenerate-fit R² to 0.9999f instead of 1.0f.
-    // The boot heuristic at loadCalibration() rejects values within 1e-4 of
-    // 1.0 as "uninitialised" and replaces with 0.994, so persisting 1.0 here
-    // caused a silent round-trip where the next boot overwrote this value.
+    // Degenerate fit → factory defaults (R² clamped <1 so loadCalibration()'s
+    // boot heuristic doesn't treat it as uninitialised).
     CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y; CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9999f;
   } else {
-    CTRLX = (fitN * sumXY - sumX * sumY) / denominator;
-    CTRLY = (sumY - CTRLX * sumX) / fitN;
-    float sse = 0, sst = 0, meanY = sumY / fitN;
+    CTRLX = (fitN * sumXY - sumX * sumY) / denominator;   // px per mm
+    CTRLY = (sumY - CTRLX * sumX) / fitN;                  // px at distance 0
+    // R² in pixel space (the quantity actually fit); RMSE in FOV mm so it stays
+    // meaningful as the calibration's FOV uncertainty.
+    float ssePx = 0, sstPx = 0, sseFov = 0, meanPx = sumY / fitN;
     for (int i = 0; i < fitN; i++) {
-      float predictedFov = CTRLX * distPoints[i] + CTRLY;
-      float residual = fovPoints[i] - predictedFov;
-      sse += (residual * residual);
-      float diffY = fovPoints[i] - meanY;
-      sst += (diffY * diffY);
+      float px      = (fovPoints[i] > 1e-4f) ? (kPx / fovPoints[i]) : 0.0f;
+      float predPx  = CTRLX * distPoints[i] + CTRLY;
+      ssePx += (px - predPx) * (px - predPx);
+      sstPx += (px - meanPx) * (px - meanPx);
+      float predFov = (predPx > 1.0f) ? (kPx / predPx) : 0.0f;
+      sseFov += (fovPoints[i] - predFov) * (fovPoints[i] - predFov);
     }
-    // n-2 dof for a 2-parameter fit; degenerate (fitN < 3) → use 1 to avoid
-    // div-by-zero. CALIB_R2 already handles its own degenerate case below.
-    CALIB_ERROR = sqrt(sse / ((fitN > 2) ? (fitN - 2) : 1));
-    // Same clamp here for the sst≈0 degenerate case.
-    CALIB_R2 = (sst > 0.0001) ? (1.0f - (sse / sst)) : 0.9999f;
+    // n-2 dof for a 2-parameter fit; degenerate (fitN < 3) → use 1.
+    CALIB_ERROR = sqrt(sseFov / ((fitN > 2) ? (fitN - 2) : 1));   // FOV mm RMSE
+    CALIB_R2    = (sstPx > 0.0001) ? (1.0f - (ssePx / sstPx)) : 0.9999f;
   }
 
   // If the freshly-fit calibration is indistinguishable from the built-in
-  // default line (e.g. the user LOADED the default cal back), treat it as the
+  // default pixel line (e.g. the user LOADED the default cal back), treat it as
   // default rather than "custom/loaded": the badge reads DEFAULT and the
-  // canonical default coefficients are stored so a round-trip can't drift. The
-  // test is on the effective line (slope + intercept), so it's robust to point
-  // count/precision in an imported file; tolerances exceed the factory-dataset
-  // refit error (ΔX≈5e-5, ΔY≈5e-4) yet reject any real calibration.
+  // canonical default coefficients are stored so a round-trip can't drift.
+  // Pixel-space tolerances (slope ~9 px/mm, intercept ~1669 px).
   bool matchesDefault =
-      fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 3.0e-4f &&
-      fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 2.0e-3f;
+      fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 0.02f &&
+      fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 3.0f;
   if (matchesDefault) {
     CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
     CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
@@ -6455,7 +6481,7 @@ void updateDisplay() {
     sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
 
     float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
-    float fov = mult * ((averageDist * CTRLX) + CTRLY);
+    float fov = mult * fovAt(averageDist);
     
     float variance = 0;
     for (int i = 0; i < numReadings; i++) {
@@ -6466,10 +6492,14 @@ void updateDisplay() {
     
     float stdDevDist = sqrt(variance);
     
-    // stdDevDist is the spread of one reading, but the displayed FOV is
-    // computed from the numReadings-sample mean — so the sensor-noise term is
-    // the standard error of that mean (stdDevDist / sqrt(N)), not stdDevDist.
-    float liveFovError = fabs(CTRLX) * stdDevDist / sqrtf((float)numReadings);
+    // stdDevDist is the spread of one reading; the displayed FOV uses the
+    // numReadings-sample mean, so the sensor-noise term is the standard error of
+    // that mean (stdDevDist / sqrt(N)). FOV = kPx/pixels (pixel-space cal), so
+    // propagate through dFOV/dDist = kPx*|slope| / pixels².
+    float pxHere    = CTRLX * averageDist + CTRLY;
+    float dFovdDist = (pxHere > 1.0f)
+        ? (demarcationDist * sensorWidthPixels * fabsf(CTRLX) / (pxHere * pxHere)) : 0.0f;
+    float liveFovError = dFovdDist * stdDevDist / sqrtf((float)numReadings);
     float totalFovError = sqrt((liveFovError * liveFovError) + (CALIB_ERROR * CALIB_ERROR));
     
     float fovErrorBound = 2.0 * totalFovError; 

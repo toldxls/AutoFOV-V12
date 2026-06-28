@@ -766,7 +766,7 @@
                 <!-- Y-axis label rotated. left:-8 hugs the screen's left edge
                      so the rotated text sits just left of the canvas y-tick
                      column without a wasted gutter. -->
-                <div class="gfx-text" style="left:-8px; top:150px; color: var(--accent-red-dark); font-size:9px;
+                <div id="calgraph-ylabel" class="gfx-text" style="left:-8px; top:150px; color: var(--accent-red-dark); font-size:9px;
                      transform:rotate(-90deg); transform-origin:center center; white-space:nowrap;">FOV (mm)</div>
                 <!-- X-axis label — top tightened so it sits just under the
                      x-tick numbers instead of with a visible gap below them. -->
@@ -794,6 +794,10 @@
                     </div>
                 </div>
                 <div id="graph-n" class="gfx-text" style="right:14px; top:286px; font-size:8px; color:#404040;"></div>
+                <!-- Toggle FOV-vs-distance (curve) ⇄ Pixels-vs-distance (the straight
+                     line that's actually fit, where R²/m/b read literally). -->
+                <div id="calgraph-mode" class="gfx-btn" style="left:6px; top:299px; width:128px; height:17px;
+                     background:#143a3a; border:1px solid #2a5e58; font-size:9px;" onclick="toggleCalGraphMode()">VIEW: FOV vs DIST</div>
             </div>
 
             <!-- ===================== TOF SENSOR INFO ===================== -->
@@ -2197,6 +2201,7 @@
         capturedPoints: [],
         // Calibration fit results (filled from device telemetry)
         fovSlope: null, fovIntercept: null, calibError: null, calibR2: null,
+        calGraphMode: 'fov',   // cal-graph view: 'fov' (curve) or 'px' (linear fit)
         // Sensor live readings
         sensorSignal: null, sensorAmbient: null, sensorStatusCode: null,
         // Memory (filled from device telemetry)
@@ -2214,21 +2219,20 @@
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // FACTORY CALIBRATION CONSTANTS (from AutoFOV_V11_patched2.ino)
-    // DEFAULT_CTRL_X = -0.005, DEFAULT_CTRL_Y = 1.5688, DEFAULT_CALIB_ERROR = 0.0146
-    // CALIB_R2 = 0.994 (empirically verified factory default)
+    // FACTORY CALIBRATION CONSTANTS (V12.3 pixel-space; must match firmware Config)
+    // DEFAULT_CTRL_X = 6.3725 px/mm, DEFAULT_CTRL_Y = 1227.140 px,
+    // DEFAULT_CALIB_ERROR = 0.0049 mm, pixel-fit R² = 0.9997
     // ─────────────────────────────────────────────────────────────────────────
-    const FACTORY_DIST = [14.4714,24.3,35.0833,43.7738,52.8659,64.4868,74.4321,
-                          84.7711,93.494,104.0241,112.8095,123.8554,69.0143];
-    const FACTORY_FOV  = [1.5255,1.4538,1.3927,1.3430,1.2955,1.2351,1.1923,
-                          1.1340,1.0978,1.0590,1.0224,0.9738,1.2157];
+    const FACTORY_DIST = [22,33,42,52,62,73,83,91,102,112,121,132,144];
+    const FACTORY_FOV  = [2.0486,1.9307,1.8597,1.7846,1.7122,1.6493,1.5872,
+                          1.5398,1.4809,1.4343,1.3899,1.3469,1.3009];
     const FACTORY_POINTS = FACTORY_DIST.map((d, i) => ({ dist: d, fov: FACTORY_FOV[i] }));
 
     // Pre-load factory defaults into state so FOV info and graph show real data immediately
-    state.fovSlope     = -0.005;
-    state.fovIntercept =  1.5688;
-    state.calibError   =  0.0146;
-    state.calibR2      =  0.994;
+    state.fovSlope     =  6.3725;     // pixel-space: px/mm
+    state.fovIntercept =  1227.140;   // pixel-space: px at dist 0
+    state.calibError   =  0.0049;
+    state.calibR2      =  0.9997;
     state.calGraphPoints = FACTORY_POINTS.slice(); // copy — overwritten when device sends custom
 
     const STEP_TABLE = [
@@ -5385,6 +5389,13 @@
     // ─────────────────────────────────────────────────────────────────────────
     // CALIBRATION SCATTER GRAPH (canvas render)
     // ─────────────────────────────────────────────────────────────────────────
+    function toggleCalGraphMode() {
+        state.calGraphMode = (state.calGraphMode === 'px') ? 'fov' : 'px';
+        const btn = document.getElementById('calgraph-mode');
+        if (btn) btn.textContent = state.calGraphMode === 'px' ? 'VIEW: PIXELS vs DIST' : 'VIEW: FOV vs DIST';
+        drawCalGraph();
+    }
+
     function drawCalGraph() {
         const canvas = document.getElementById('cal-canvas');
         if (!canvas) return;
@@ -5404,9 +5415,20 @@
         ctx.clearRect(0, 0, CW, CH);
 
         const pts   = state.calGraphPoints || FACTORY_POINTS;
-        const slope = state.fovSlope     ?? -0.005;
-        const intc  = state.fovIntercept ?? 1.5688;
+        const slope = state.fovSlope     ?? 6.3725;
+        const intc  = state.fovIntercept ?? 1227.140;
         const rmse  = state.calibError   ?? 0.0146;
+        // Pixel-space cal: pixels = slope*dist + intc; FOV = kPx/pixels (curve).
+        const kPx   = (state.demarcDist || 0.4) * (state.photoWidth || 6960);
+        const fovPred = d => { const px = slope * d + intc; return px > 1 ? kPx / px : 0; };
+        // View mode: 'fov' = FOV vs distance (curve); 'px' = pixels vs distance
+        // (the straight line actually fit, where m/b/R² read literally).
+        const mode   = state.calGraphMode || 'fov';
+        const yOf    = mode === 'px' ? (p => (p.fov > 0 ? kPx / p.fov : 0)) : (p => p.fov);
+        const lineAt = mode === 'px' ? (d => slope * d + intc) : fovPred;
+        const yFmt   = mode === 'px' ? (v => v.toFixed(0)) : (v => v.toFixed(2));
+        const ylab = document.getElementById('calgraph-ylabel');
+        if (ylab) ylab.textContent = mode === 'px' ? 'Pixels' : 'FOV (mm)';
 
         if (!pts || pts.length < 2) {
             ctx.fillStyle = '#787878'; ctx.font = 'bold 22px Arial';
@@ -5424,7 +5446,7 @@
         const PH = CH - MT - MB;
 
         // ── Data ranges with 5% padding ──
-        const xVals = pts.map(p => p.dist), yVals = pts.map(p => p.fov);
+        const xVals = pts.map(p => p.dist), yVals = pts.map(yOf);
         const xMin = Math.min(...xVals), xMax = Math.max(...xVals);
         const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
         const xPad = (xMax - xMin) * 0.05 || 5;
@@ -5485,7 +5507,7 @@
             const yv = ya + (yb - ya) * i / N_TICKS;
             const py = toY(yv);
             ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML - 5, py); ctx.stroke();
-            ctx.fillText(yv.toFixed(2), ML - 7, py);
+            ctx.fillText(yFmt(yv), ML - 7, py);
         }
 
         // ── Regression line (clipped to plot area) ──
@@ -5493,15 +5515,19 @@
         ctx.beginPath(); ctx.rect(ML, MT, PW, PH); ctx.clip();
         ctx.strokeStyle = '#008B8B'; ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(toX(xa), toY(slope * xa + intc));
-        ctx.lineTo(toX(xb), toY(slope * xb + intc));
+        const SAMP = 40;
+        for (let s = 0; s <= SAMP; s++) {
+            const d = xa + (xb - xa) * s / SAMP;
+            const X = toX(d), Y = toY(lineAt(d));
+            if (s === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
         ctx.stroke();
         ctx.restore();
 
-        // ── Data points ──
+        // ── Data points (outlier status is FOV-residual based, view-independent) ──
         pts.forEach(pt => {
-            const outlier = Math.abs(pt.fov - (slope * pt.dist + intc)) > rmse;
-            const px = toX(pt.dist), py = toY(pt.fov);
+            const outlier = Math.abs(pt.fov - fovPred(pt.dist)) > rmse;
+            const px = toX(pt.dist), py = toY(yOf(pt));
             ctx.fillStyle   = outlier ? '#FF6600' : '#00DD00';
             ctx.strokeStyle = outlier ? '#AA4400' : '#FFFFFF';
             ctx.lineWidth   = 1;
@@ -5554,21 +5580,28 @@
         ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
         ctx.strokeRect(ML + 0.5, MT + 0.5, PW - 1, PH - 1);
 
-        // Least-squares slope/intercept on the running captures
+        // Least-squares fit in PIXEL space (matches the device cal model):
+        // recover pixels = kPx/fov, fit pixels = slope*dist + intc, FOV = kPx/pixels.
+        const kPx = (state.demarcDist || 0.4) * (state.photoWidth || 6960);
         let sx = 0, sy = 0, sxy = 0, sxx = 0;
-        for (const p of pts) { sx += p.dist; sy += p.fov; sxy += p.dist * p.fov; sxx += p.dist * p.dist; }
+        for (const p of pts) { const pv = p.fov > 0 ? kPx / p.fov : 0; sx += p.dist; sy += pv; sxy += p.dist * pv; sxx += p.dist * p.dist; }
         const n = pts.length;
         const denom = (n * sxx - sx * sx);
         const slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0;
         const intc  = (sy - slope * sx) / n;
+        const fovPred = d => { const px = slope * d + intc; return px > 1 ? kPx / px : 0; };
 
-        // Regression line
+        // Regression curve (FOV = kPx/pixels)
         ctx.save();
         ctx.beginPath(); ctx.rect(ML, MT, PW, PH); ctx.clip();
         ctx.strokeStyle = '#008B8B'; ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(toX(xa), toY(slope * xa + intc));
-        ctx.lineTo(toX(xb), toY(slope * xb + intc));
+        const SAMP = 30;
+        for (let s = 0; s <= SAMP; s++) {
+            const d = xa + (xb - xa) * s / SAMP;
+            const X = toX(d), Y = toY(fovPred(d));
+            if (s === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+        }
         ctx.stroke();
         ctx.restore();
 
@@ -5586,7 +5619,7 @@
 
         // Residual of latest point — quick "is this an outlier?" cue
         const last = pts[lastIdx];
-        const resid = last.fov - (slope * last.dist + intc);
+        const resid = last.fov - fovPred(last.dist);
         const residEl = document.getElementById('calrun-mini-resid');
         if (residEl) {
             const absR = Math.abs(resid);

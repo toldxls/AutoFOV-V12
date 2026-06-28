@@ -2349,7 +2349,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // the value the ~30 Hz fast-telemetry stream sends (buildFastTelemJson).
     float avgDist = sensorAvgDist.load(std::memory_order_acquire) / 10.0f;
     float mult = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
-    float fov  = valid ? (mult * (avgDist * CTRLX + CTRLY)) : 0.0f;
+    float fov  = valid ? (mult * fovAt(avgDist)) : 0.0f;
 
     // 4096 (was 3584): the vibsigs array now stores COPIED name strings (the
     // fix for the dangling File::name() pointer below), so the pool must hold up
@@ -2513,7 +2513,7 @@ static void buildFastTelemJson(String& out) {
     float   ambient = (amb & 0xFFFFFF) / 1000.0f;
 
     float mult = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
-    float fov  = valid ? (mult * (avgDist * CTRLX + CTRLY)) : 0.0f;
+    float fov  = valid ? (mult * fovAt(avgDist)) : 0.0f;
 
     // Short keys save ~30 bytes/frame at 30 Hz.  HTML applyFullState() unpacks
     // them back to long names at the top of the function.
@@ -2717,7 +2717,7 @@ static void ntfyTask(void* param) {
 void wifiNotifyStackComplete() {
     float avgDist = sensorAvgDist.load(std::memory_order_acquire) / 10.0f;
     float mult    = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
-    float fov     = mult * (avgDist * CTRLX + CTRLY);
+    float fov     = mult * fovAt(avgDist);
     unsigned long durMs = lastPulseTime - firstPulseTime;
 
     if (wsServer.count() > 0) {
