@@ -10,6 +10,13 @@ ARDUINO_CLI="$HOME/bin/arduino-cli"
 FQBN="esp32:esp32:adafruit_feather_esp32s3:PSRAM=enabled,PartitionScheme=custom,LoopCore=1,EventsCore=1"
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
 
+# Optional minify deps — warn (non-fatal) if absent so the ~46 KB JS/CSS/HTML
+# minify in embed_html.py doesn't silently fall back to an un-minified embed.
+if ! python3 -c "import rjsmin, rcssmin" 2>/dev/null; then
+    echo "WARNING: rjsmin/rcssmin missing — HTML will embed un-minified (~46 KB larger)."
+    echo "         install with: pip3 install -r tools/requirements.txt"
+fi
+
 echo "=== Step 1: embed HTML ==="
 python3 tools/embed_html.py
 
