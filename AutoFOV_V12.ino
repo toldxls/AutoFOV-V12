@@ -1027,6 +1027,15 @@ const uint8_t keyboardReportMap[] = {
 const int numReadings = 5;
 int readings[numReadings] = {0};
 int readIndex = 0;
+
+// V12.3: rolling ~5 s window of the displayed AVG FOV, sampled ~20 Hz, for the
+// empirical error (2σ of the FOV's actual variation — sensor jitter + slow drift
+// — not a model estimate). Timestamped so the window is a true 5 s at any rate.
+#define FOV_ERR_WIN 128
+float    fovErrWin[FOV_ERR_WIN];
+uint32_t fovErrWinT[FOV_ERR_WIN];
+int      fovErrHead = 0, fovErrCount = 0;
+uint32_t fovErrLastSample = 0;
 long totalDist = 0;
 float averageDist = 0;
 bool bufferFilled = false;
@@ -6520,37 +6529,30 @@ void updateDisplay() {
     float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
     float fov = mult * fovAt(averageDist);
     
-    float variance = 0;
-    for (int i = 0; i < numReadings; i++) {
-      float diff = readings[i] - averageDist;
-      variance += diff * diff;
+    // ── Error = 2σ of the displayed AVG FOV over the last ~5 seconds ──
+    // A direct empirical measure of how much the reading actually moves (sensor
+    // jitter + slow drift), in the displayed FOV's own units — not a model
+    // estimate and not averaged down by √N. Sampled ~20 Hz; the window is a true
+    // 5 s. Builds up to a value once ≥3 samples are in range.
+    uint32_t nowMs = millis();
+    if (nowMs - fovErrLastSample >= 50) {
+      fovErrLastSample = nowMs;
+      fovErrWin[fovErrHead] = fov; fovErrWinT[fovErrHead] = nowMs;
+      fovErrHead = (fovErrHead + 1) % FOV_ERR_WIN;
+      if (fovErrCount < FOV_ERR_WIN) fovErrCount++;
     }
-    variance /= numReadings; 
-    
-    float stdDevDist = sqrt(variance);
-    
-    // stdDevDist is the spread of one reading; the displayed FOV uses the
-    // numReadings-sample mean, so the sensor-noise term is the standard error of
-    // that mean (stdDevDist / sqrt(N)). FOV = kPx/pixels (pixel-space cal), so
-    // propagate through dFOV/dDist = kPx*|slope| / pixels².
-    float pxHere    = CTRLX * averageDist + CTRLY;
-    float dFovdDist = (pxHere > 1.0f)
-        ? (demarcationDist * sensorWidthPixels * fabsf(CTRLX) / (pxHere * pxHere)) : 0.0f;
-    float liveFovError = dFovdDist * stdDevDist / sqrtf((float)numReadings);
-    // Calibration term: the pixel-space fit's PREDICTION INTERVAL at this distance
-    // — includes residual scatter + slope/intercept uncertainty, and widens away
-    // from the calibrated range. Converted to FOV via dFOV/dpx = kPx/px².
-    // PI_px = s · √(1 + 1/n + (d-x̄)²/Sxx).  Falls back to the flat RMSE if stats
-    // aren't available (n<3 or degenerate spread).
-    float calFovError = CALIB_ERROR;
-    if (gCalN > 2 && gCalSxx > 1e-6f && pxHere > 1.0f) {
-      float dxc  = averageDist - gCalXbar;
-      float piPx = gCalSpx * sqrtf(1.0f + 1.0f / (float)gCalN + (dxc * dxc) / gCalSxx);
-      calFovError = (demarcationDist * sensorWidthPixels) / (pxHere * pxHere) * piPx;
+    float fovErrorBound = 0.0f;
+    {
+      float sum = 0; int cnt = 0;
+      for (int i = 0; i < fovErrCount; i++)
+        if (nowMs - fovErrWinT[i] <= 5000) { sum += fovErrWin[i]; cnt++; }
+      if (cnt >= 3) {
+        float mean = sum / cnt, var = 0;
+        for (int i = 0; i < fovErrCount; i++)
+          if (nowMs - fovErrWinT[i] <= 5000) { float dv = fovErrWin[i] - mean; var += dv * dv; }
+        fovErrorBound = 2.0f * sqrtf(var / (cnt - 1));   // 2σ empirical spread
+      }
     }
-    float totalFovError = sqrt((liveFovError * liveFovError) + (calFovError * calFovError));
-    
-    float fovErrorBound = 2.0 * totalFovError; 
     
     int errInt = round(fovErrorBound * 100.0);
     if (errInt < 1) errInt = 1;
