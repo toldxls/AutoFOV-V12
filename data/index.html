@@ -1614,7 +1614,8 @@
                 <div style="flex:1 1 auto; overflow-y:auto; padding:10px 12px 12px;">
                     <div style="color:var(--text-disabled); font-size:9px; line-height:1.5; margin-bottom:9px;">
                         Back up this device's calibration, restore one, or load a
-                        shared profile. Imports are re-fit on the device.
+                        shared profile (.json or exported .txt). Imports are re-fit
+                        on the device.
                     </div>
                     <div class="gfx-btn" onclick="calioExport()"
                          style="position:relative; left:0; top:0; width:100%; height:34px;
@@ -1634,7 +1635,7 @@
                          line-height:1.4; color:var(--text-disabled); min-height:26px;
                          word-break:break-word;"></div>
                 </div>
-                <input type="file" id="calio-file-input" accept=".json,application/json"
+                <input type="file" id="calio-file-input" accept=".json,.txt,application/json,text/plain"
                        style="display:none;" onchange="calioFileChosen(this)">
             </div>
 
@@ -5477,6 +5478,22 @@
     // Drag the legend anywhere over the plot (it can obscure the line, e.g. in
     // PIXELS mode). Position persists in localStorage. Accounts for the device
     // frame's 2× CSS scale by dividing pointer deltas by the measured scale.
+    // Default corner per mode: the legend lives in the empty corner of each plot
+    // — top-right for FOV-vs-dist (curve falls left→right) and top-left for
+    // PIXELS-vs-dist (line rises left→right). A drag overrides the default and is
+    // saved per mode, so each view remembers where you put it.
+    const LEGEND_DEFAULTS = { fov: { l: 159, t: 50 }, px: { l: 46, t: 50 } };
+    let legendModeApplied = null;
+    function applyLegendPos(mode) {
+        const box = document.getElementById('legend-box');
+        if (!box) return;
+        let pos = LEGEND_DEFAULTS[mode] || LEGEND_DEFAULTS.fov;
+        try { const s = localStorage.getItem('afCalLegendPos_' + mode); if (s) pos = JSON.parse(s); }
+        catch (e) {}
+        box.style.left = pos.l + 'px';
+        box.style.top  = pos.t + 'px';
+    }
+
     let legendDragBound = false;
     function bindLegendDrag() {
         if (legendDragBound) return;
@@ -5485,10 +5502,6 @@
         legendDragBound = true;
         box.style.cursor = 'move';
         box.style.touchAction = 'none';
-        try {
-            const s = localStorage.getItem('afCalLegendPos');
-            if (s) { const p = JSON.parse(s); box.style.left = p.l + 'px'; box.style.top = p.t + 'px'; }
-        } catch (e) {}
         let drag = null;
         box.addEventListener('pointerdown', e => {
             const scale = box.getBoundingClientRect().width / box.offsetWidth || 1;
@@ -5506,7 +5519,7 @@
         });
         const end = () => {
             if (!drag) return; drag = null;
-            try { localStorage.setItem('afCalLegendPos',
+            try { localStorage.setItem('afCalLegendPos_' + (state.calGraphMode || 'fov'),
                 JSON.stringify({ l: box.offsetLeft, t: box.offsetTop })); } catch (e) {}
         };
         box.addEventListener('pointerup', end);
@@ -5596,6 +5609,9 @@
         // View mode: 'fov' = FOV vs distance (curve); 'px' = pixels vs distance
         // (the straight line actually fit, where m/b/R² read literally).
         const mode   = state.calGraphMode || 'fov';
+        // Reposition the legend to this mode's corner only when the mode changes,
+        // so live redraws never yank a legend the user is mid-drag.
+        if (mode !== legendModeApplied) { applyLegendPos(mode); legendModeApplied = mode; }
         const yOf    = mode === 'px' ? (p => (p.fov > 0 ? kPx / p.fov : 0)) : (p => p.fov);
         const lineAt = mode === 'px' ? (d => slope * d + intc) : fovPred;
         const yFmt   = mode === 'px' ? (v => v.toFixed(0)) : (v => v.toFixed(2));
@@ -5935,7 +5951,10 @@
         try {
             let txt, name;
             if (calPointsView === 'factory') {
-                txt = calPointsTxt('source      : factory default reference\r\n',
+                // Include width/demarc so the factory .txt re-imports cleanly.
+                txt = calPointsTxt('source      : factory default reference\r\n' +
+                                   'photo width : 6960 px\r\n' +
+                                   'demarc dist : 0.40 mm\r\n',
                                    FACTORY_POINTS, 0.40 * 6960, null);
                 name = 'autofov-factory.txt';
             } else {
@@ -5992,15 +6011,39 @@
         const inp = document.getElementById('calio-file-input');
         inp.value = ''; inp.click();
     }
+    // Parse an exported point .txt back into an importable calibration. The
+    // device re-fits from the dist/fov points, so the PIXELS column is ignored;
+    // we only need photo width, demarc dist, and the point rows.
+    function parseCalTxt(text, fallbackName) {
+        let width = 0, demarc = 0;
+        const pts = [];
+        for (const line of text.split(/\r?\n/)) {
+            let m;
+            if ((m = line.match(/photo\s*width\s*:\s*([0-9.]+)/i)))     { width = parseFloat(m[1]); continue; }
+            if ((m = line.match(/demarc(?:\s*dist)?\s*:\s*([0-9.]+)/i))) { demarc = parseFloat(m[1]); continue; }
+            const cols = line.trim().split(/\s+/);
+            if (cols.length >= 2 && /^[0-9]/.test(cols[0]) && /^[0-9.]+$/.test(cols[1])) {
+                const d = Number(cols[0]), v = Number(cols[1]);
+                if (Number.isFinite(d) && Number.isFinite(v)) pts.push({ dist: d, fov: v });
+            }
+        }
+        if (!(width > 0) || !(demarc > 0) || pts.length < 2)
+            throw new Error('could not read width/demarc/points from .txt');
+        return { fmt: 'autofov-calib', ver: 1, calWidth: width, demarcDist: demarc,
+                 name: fallbackName, points: pts };
+    }
     async function calioFileChosen(input) {
         const f = input.files && input.files[0];
         if (!f) return;
         try {
             calioStatus('Loading ' + f.name + '…');
-            const cal = JSON.parse(await f.text());
+            const raw = await f.text();
+            // .txt (or any non-JSON-looking body) → parse the point table; else JSON.
+            const isTxt = /\.txt$/i.test(f.name) || !/^\s*[{[]/.test(raw);
+            const cal = isTxt ? parseCalTxt(raw, f.name.replace(/\.[^.]+$/, '')) : JSON.parse(raw);
             if (cal.fmt !== 'autofov-calib') throw new Error('not an AutoFOV calibration file');
             await calioApply(cal);
-            await calioShowSuccess(cal.name || f.name.replace(/\.json$/i, ''));
+            await calioShowSuccess(cal.name || f.name.replace(/\.(json|txt)$/i, ''));
         } catch (e) { calioStatus('Import failed: ' + e.message, '#ff6a6a'); }
     }
     async function calioLoadGithub() {
