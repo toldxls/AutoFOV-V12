@@ -678,14 +678,22 @@ Button btnMemClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);      // X c
 Button btnStartCal(10, 215, 105, 55, "START CAL", 0x001F, TFT_WHITE, 1, true);
 Button btnResetAll(125, 215, 105, 55, "RESET ALL", 0x7800, TFT_WHITE, 1, true);
 Button btnCancelCal(60, 280, 120, 35, "CANCEL", 0xF800, TFT_WHITE, 1, true);
+// Top-right "i" on CAL_SETTINGS — opens the scrollable calibration how-to
+// overlay (mirrors the WiFi/Recovery info buttons).
+Button btnCalInfo(200, 4, 32, 30, "i", 0x0A28, COLOR_TEAL, 2, true);
 
 // --- CAL_RUN buttons reorganized to make room for REVIEW ---
 // Top row unchanged: CAPTURE&SAVE + GO BACK at y=190 h=65
 Button btnCapSave(20, 190, 95, 65);
 Button btnGoBackPt(125, 190, 95, 65, "GO BACK", TFT_BLACK, TFT_WHITE, 1, true);
-// Bottom row reworked: REVIEW + CANCEL side-by-side at y=265 h=40
-Button btnReviewPts(20, 265, 95, 40, "REVIEW", COLOR_BLUEGREEN, TFT_WHITE, 1, true);
-Button btnCancelPt(125, 265, 95, 40, "CANCEL", COLOR_MAROON, TFT_WHITE, 1, true);
+// Bottom row: REVIEW + FINISH + CANCEL, three across at y=265 h=40. FINISH
+// (btnFinalize, below) computes the fit early from however many points are
+// captured so far (>= MIN_CALIB_POINTS), so the bellows range and step count
+// are entirely up to the user — no need to pre-pick a point count.
+Button btnReviewPts(5, 265, 70, 40, "REVIEW", COLOR_BLUEGREEN, TFT_WHITE, 1, true);
+Button btnCancelPt(165, 265, 70, 40, "CANCEL", COLOR_MAROON, TFT_WHITE, 1, true);
+// Shared by the CAL_RUN and CAL_REVIEW bottom rows (identical geometry on both).
+Button btnFinalize(85, 265, 70, 40, "FINISH", COLOR_DARKGREEN, TFT_WHITE, 1, true);
 
 Button btnYesDel(20, 160, 200, 50, "YES, DELETE", COLOR_MAROON, TFT_WHITE, 1, false);
 Button btnNoKeep(20, 230, 200, 50, "NO, KEEP GOING", COLOR_DARKGREEN, TFT_WHITE, 1, false);
@@ -709,7 +717,12 @@ Button btnObj20x(X_POS_20X, Y_POS, BOX_SIZE, BOX_SIZE, "20x", MUTED_20X, TFT_WHI
 // matching the tiny built-in 6x8 font used by "TOF int".
 // x=155, y=2, w=44, h=40 leaves a 7px gap before the gear's left cog (~x=206).
 Button btnFovInfo(152, 2, 44, 40);   // label drawn manually
-Button btnInfoBack(60, 270, 120, 40, "GRAPH", TFT_BLACK, 0xF81F, 1, true);
+// CALIB INFO bottom row: GRAPH (left) + POINTS (right). POINTS opens the
+// read-only calibration-point list (CAL_REVIEW with calReviewReadOnly).
+Button btnInfoBack(15, 270, 100, 40, "GRAPH", TFT_BLACK, 0xF81F, 1, true);
+Button btnInfoPoints(125, 270, 100, 40, "POINTS", TFT_BLACK, COLOR_BLUEGREEN, 1, true);
+// Centered BACK for the read-only point list (drawn only when calReviewReadOnly).
+Button btnPointsBack(60, 265, 120, 40, "BACK", TFT_BLACK, TFT_WHITE, 1, true);
 Button btnInfoClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true); // X close calib info
 Button btnInfoGraph(170, 4, 62, 26, "GRAPH", TFT_BLACK, 0xF81F, 1, true); // top-right of calib info
 Button btnGraphBack(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);  // X close, top-right
@@ -768,8 +781,8 @@ Button btnInfoTextClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 // --- CAL_REVIEW screen buttons ---
 Button btnReviewUp(195, 45, 35, 40, "UP", COLOR_BLUEGREEN, TFT_WHITE, 1, true);
 Button btnReviewDown(195, 195, 35, 40, "DN", COLOR_BLUEGREEN, TFT_WHITE, 1, true);
-Button btnRetake(10, 265, 105, 40, "RETAKE", 0x001F, TFT_WHITE, 1, true);
-Button btnReviewBack(125, 265, 105, 40, "GO BACK", TFT_BLACK, TFT_WHITE, 1, true);
+Button btnRetake(5, 265, 70, 40, "RETAKE", 0x001F, TFT_WHITE, 1, true);
+Button btnReviewBack(165, 265, 70, 40, "BACK", TFT_BLACK, TFT_WHITE, 1, true);
 
 // --- IR_CONTROL screen (patched3) — MJKZZ NEC remote buttons ---
 Button btnIrStart  ( 20,  55, 200, 40, "START",         COLOR_DARKGREEN, TFT_WHITE, 1, true);
@@ -890,7 +903,8 @@ enum DisplayMode {
   VIB_SETTLE,         // V12: motor-step settle-time analysis
   VIB_SIGNATURES,     // V12: reference-spectrum library / compare
   WIFI_TIPS,          // V12.3: scrollable WiFi security-tips overlay (from WIFI_INFO)
-  RECOVERY_HELP       // V12.3: scrollable USB-recovery help overlay (from ABOUT)
+  RECOVERY_HELP,      // V12.3: scrollable USB-recovery help overlay (from ABOUT)
+  CALIB_HELP          // scrollable calibration how-to overlay (from CAL_SETTINGS)
 };
 DisplayMode currentMode = MAIN;
 DisplayMode preSleepMode = MAIN;
@@ -899,6 +913,10 @@ int calibSelection = 0;
 // V17: review screen state
 int reviewSelected = -1;
 int reviewScrollOffset = 0;
+// When true, CAL_REVIEW is a read-only viewer opened from the CALIB INFO screen
+// (no active calibration session): RETAKE/FINISH are hidden and BACK returns to
+// CALIB INFO instead of resuming capture.
+bool calReviewReadOnly = false;
 const int REVIEW_VISIBLE_ROWS = 6;
 const int REVIEW_ROW_HEIGHT = 26;
 const int REVIEW_LIST_TOP = 45;
@@ -908,6 +926,11 @@ std::atomic<uint32_t> sensorHealth{0};
 std::atomic<uint32_t> sensorAmbient{0};   // V17b: ambient Mcps * 1000 (24 bits)
 std::atomic<uint32_t> sensorErrInt{1};    // 2σ FOV error bound × 100 (centimillimeters); written by updateDisplay()
 std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 (tenths of mm); written by updateDisplay()
+// Distance EMA in tenths of a mm (round(emaDistance*10)), written by sensorTask
+// alongside sensorState. sensorState carries whole-mm, which quantises the
+// calibration capture to 1 mm; the calibration sampler averages THIS instead so
+// capture points keep sub-mm resolution. Bit 31 = valid (mirrors sensorState).
+std::atomic<uint32_t> sensorDistTenths{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
 
 // V12: vibration-monitor cross-core scalars. vibTask (Core 0) writes them;
@@ -2002,6 +2025,7 @@ void drawLeftBoxedText(const char* txt, int x, int y, uint16_t bgCol);
 void drawCaptureSaveButton(Button& btn, uint16_t boxCol, uint16_t textCol);
 void centerStaticText(const char* txt, int y, uint8_t size);
 void finalizeCalibration();
+void finalizeEarly();
 void resetToFactory();
 void updateDisplay();
 void drawGearIcon(int cx, int cy, uint16_t color, uint16_t bgCol);
@@ -3383,6 +3407,25 @@ static const InfoBlock RECOVERY_HELP_CONTENT[] = {
   {"The ESP32-S3 usually enters flash mode by itself. If no port appears: hold BOOT, briefly tap RESET, release BOOT, then click Recovery Flash again.", INFO_BODY},
 };
 
+static const InfoBlock CALIB_HELP_CONTENT[] = {
+  {"What calibration does", INFO_HEAD},
+  {"AutoFOV reads the distance to your subject and converts it to a field-of-view width. Calibration fits that distance-to-FOV curve to YOUR bellows and camera by recording a few known points.", INFO_BODY},
+  {"You'll need", INFO_HEAD},
+  {"A reference of known width in the frame - a stage micrometer or ruler - so you can count how many pixels it spans in a photo at each step.", INFO_BODY},
+  {"The three settings", INFO_HEAD},
+  {"Photo Width - your camera's image width in pixels (e.g. 6000 for a 24MP sensor).", INFO_BODY},
+  {"Demarc Dist - the real width, in mm, of the reference feature you count pixels across.", INFO_BODY},
+  {"Cal Points - a TARGET number of steps. You no longer have to hit it exactly (see below).", INFO_BODY},
+  {"How to calibrate", INFO_HEAD},
+  {"1. Set Photo Width and Demarc Dist, then tap START CAL.", INFO_BODY},
+  {"2. At each bellows distance: take a photo, count the pixels across your reference, type that number, and CAPTURE & SAVE.", INFO_BODY},
+  {"3. Move the bellows and repeat across its full range. About 10 mm steps work well.", INFO_BODY},
+  {"Stop whenever you like", INFO_HEAD},
+  {"You don't need to pre-figure how many steps fit your bellows. Capture points at whatever spacing you manage, then tap FINISH to compute the fit from exactly the points you took.", INFO_BODY},
+  {"Tips", INFO_HEAD},
+  {"Use at least 3 points; 5 or more spread across your whole focus range gives a tighter, more trustworthy fit. REVIEW lets you check or RETAKE any point before you finish.", INFO_BODY},
+};
+
 // Flattened wrapped lines for the active overlay (built by buildInfoLines).
 #define INFO_MAX_LINES 80
 static String      infoLines[INFO_MAX_LINES];
@@ -3582,6 +3625,10 @@ void openInfoScreen(DisplayMode mode) {
     infoTitle = "RECOVERY FLASH"; infoTitleCol = COLOR_TEAL;
     buildInfoLines(RECOVERY_HELP_CONTENT,
                    sizeof(RECOVERY_HELP_CONTENT) / sizeof(RECOVERY_HELP_CONTENT[0]));
+  } else if (mode == CALIB_HELP) {
+    infoTitle = "CALIBRATION"; infoTitleCol = COLOR_TEAL;
+    buildInfoLines(CALIB_HELP_CONTENT,
+                   sizeof(CALIB_HELP_CONTENT) / sizeof(CALIB_HELP_CONTENT[0]));
   } else {
     infoTitle = "SECURITY TIPS"; infoTitleCol = COLOR_TEAL;
     buildInfoLines(WIFI_TIPS_CONTENT,
@@ -3656,7 +3703,7 @@ void redrawCurrentScreen() {
   infoScrollReset();
   // Release the ~334 KB overlay canvas whenever we're not (re)drawing an overlay
   // — e.g. when the web navigates away, which doesn't hit the X-close path.
-  if (currentMode != WIFI_TIPS && currentMode != RECOVERY_HELP) freeInfoCanvas();
+  if (currentMode != WIFI_TIPS && currentMode != RECOVERY_HELP && currentMode != CALIB_HELP) freeInfoCanvas();
   switch (currentMode) {
     case MAIN:               drawMainScreen(); break;
     case APP_SETTINGS:       drawAppSettingsUI(); break;
@@ -3682,6 +3729,7 @@ void redrawCurrentScreen() {
     case VIB_SIGNATURES:     drawVibSignaturesUI(); break;
     case WIFI_TIPS:          drawInfoTextScreen(); break;
     case RECOVERY_HELP:      drawInfoTextScreen(); break;
+    case CALIB_HELP:         drawInfoTextScreen(); break;
     case CAL_SAMPLING:       /* skip — sampling actively owns the screen */ break;
     default:                 drawMainScreen(); break;
   }
@@ -3819,8 +3867,14 @@ void sensorTask(void *pvParameters) {
           uint32_t distPayload = (uint32_t)round(emaDistance) & 0x7FFFFFFF;
           uint32_t statePayload = (1UL << 31) | distPayload;
           sensorState.store(statePayload, std::memory_order_release);
+          // Sub-mm companion for the calibration sampler: tenths of a mm, valid
+          // bit set. Capped at 30 bits (~10 cm worth of tenths headroom over the
+          // sensor's range) so the valid bit never collides with the payload.
+          uint32_t tenths = (uint32_t)roundf(emaDistance * 10.0f) & 0x7FFFFFFF;
+          sensorDistTenths.store((1UL << 31) | tenths, std::memory_order_release);
         } else {
-          sensorState.store(0, std::memory_order_release); 
+          sensorState.store(0, std::memory_order_release);
+          sensorDistTenths.store(0, std::memory_order_release);
         }
       } else {
         xSemaphoreGive(i2cMutex); 
@@ -4667,7 +4721,7 @@ void wakeScreen() {
     isScreenDim = false;
     analogWrite(LITE_PIN, currentBrightness);
     infoScrollReset();   // V12.3: clear any HW scroll before repaint (overlay re-enables it)
-    if (preSleepMode != WIFI_TIPS && preSleepMode != RECOVERY_HELP) freeInfoCanvas();
+    if (preSleepMode != WIFI_TIPS && preSleepMode != RECOVERY_HELP && preSleepMode != CALIB_HELP) freeInfoCanvas();
     switch (preSleepMode) {
       case MAIN:         drawMainScreen(); break;
       case APP_SETTINGS: drawAppSettingsUI(); break;
@@ -4693,6 +4747,7 @@ void wakeScreen() {
       case VIB_SIGNATURES:     drawVibSignaturesUI(); break;
       case WIFI_TIPS:          drawInfoTextScreen(); break;
       case RECOVERY_HELP:      drawInfoTextScreen(); break;
+      case CALIB_HELP:         drawInfoTextScreen(); break;
       default:           drawMainScreen(); break;
     }
     currentMode = preSleepMode;
@@ -4824,11 +4879,14 @@ void loop() {
 
   if (currentMode == CAL_SAMPLING) {
     if ((unsigned long)(millis() - samplingStartTime) < 2000) {
-      if (rangeValid) { samplingSum += currentDist; samplingCount++; }
+      // Average the sub-mm (tenths-of-a-mm) distance, not the whole-mm currentDist,
+      // so a captured point keeps fractional resolution instead of snapping to 1 mm.
+      uint32_t t = sensorDistTenths.load(std::memory_order_acquire);
+      if (t >> 31) { samplingSum += (long)(t & 0x7FFFFFFF); samplingCount++; }
     } else {
       if (samplingCount > 0) {
         tft.fillRect(0, 305, 240, 15, THEME_BG);
-        distPoints[currentCalIndex] = (float)samplingSum / samplingCount;
+        distPoints[currentCalIndex] = (float)samplingSum / samplingCount / 10.0f;  // tenths → mm
         fovPoints[currentCalIndex] = (demarcationDist / (float)tempPixels) * sensorWidthPixels;
 
         // V17: branch on retake mode vs normal sequential capture
@@ -4979,7 +5037,7 @@ void loop() {
         }
         // V12.3: finger lifted — end any info-overlay drag so the next press
         // starts a fresh 1:1 baseline instead of jumping.
-        if (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP) infoDragActive = false;
+        if (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP || currentMode == CALIB_HELP) infoDragActive = false;
         activelyTouching = false;
         adjFingerLifted = true;   // tell adj logic the finger genuinely lifted
       }
@@ -5009,7 +5067,7 @@ void loop() {
     // V12.3: info-overlay body drag wants the same fast sampling as sliders so
     // the text tracks the finger smoothly. It is NOT isSlider (which routes to
     // the inline brightness/tint handlers) — it falls through to the switch.
-    bool isInfoDrag = (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP) && p.y >= INFO_VP_TOP;
+    bool isInfoDrag = (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP || currentMode == CALIB_HELP) && p.y >= INFO_VP_TOP;
     int debounce = (isSlider || isInfoDrag) ? 20 : 150;
 
     // ── Menu-transition guard ───────────────────────────────────────────────
@@ -5100,6 +5158,7 @@ void loop() {
           case VIB_SIGNATURES:     handleVibSignaturesTouch(p); break;
           case WIFI_TIPS:          handleInfoTextTouch(p); break;
           case RECOVERY_HELP:      handleInfoTextTouch(p); break;
+          case CALIB_HELP:         handleInfoTextTouch(p); break;
           default: break;
         }
       }
@@ -5259,6 +5318,10 @@ void handleAppSettingsTouch(TS_Point p) {
 }
 
 void handleCalSettingsTouch(TS_Point p, int adj) {
+  if (btnCalInfo.contains(p.x, p.y)) {
+    openInfoScreen(CALIB_HELP);
+    return;
+  }
   bool selChanged = false;
   if (p.y > 45 && p.y < 80) { calibSelection = 0; selChanged = true; }
   else if (p.y > 80 && p.y < 120) { calibSelection = 1; selChanged = true; }
@@ -5283,11 +5346,12 @@ void handleCalSettingsTouch(TS_Point p, int adj) {
     refreshCalSettingsValues(false);
   }
   
-  if (btnStartCal.contains(p.x, p.y)) { 
+  if (btnStartCal.contains(p.x, p.y)) {
     currentMode = CAL_RUN;
     currentCalIndex = 0;
     pointsCaptured = 0;          // V17: fresh calibration starts with no captured points
     isRetakeMode = false;        // V17
+    calReviewReadOnly = false;   // editable review for this session (clears the viewer flag)
     tempPixels = Config::DEFAULT_TEMP_PIXELS;
     drawPointEntryUI(); 
   }
@@ -5337,6 +5401,12 @@ void handleCalRunTouch(TS_Point p, int adj) {
       reviewScrollOffset = 0;
       currentMode = CAL_REVIEW;
       drawCalReviewUI();
+    }
+  }
+  // FINISH — finalize early once enough points exist for a valid fit.
+  else if (btnFinalize.contains(p.x, p.y)) {
+    if (pointsCaptured >= Config::MIN_CALIB_POINTS && !isRetakeMode) {
+      finalizeEarly();
     }
   }
   else if (btnCancelPt.contains(p.x, p.y)) {
@@ -5433,10 +5503,46 @@ void handleFovInfoTouch(TS_Point p) {
     }
     currentMode = CAL_GRAPH; drawCalGraphUI(); return;
   }
+  // POINTS button — open the read-only point list. Seed the factory points so
+  // the list is populated on the factory default. Unlike GRAPH, we leave nPoints
+  // (the Cal Points target) alone — viewing the list shouldn't change a setting.
+  if (btnInfoPoints.contains(p.x, p.y)) {
+    if (!isCustomCalib) {
+      pointsCaptured = FACTORY_N;
+      for (int i = 0; i < FACTORY_N; i++) {
+        distPoints[i] = FACTORY_DIST[i];
+        fovPoints[i]  = FACTORY_FOV[i];
+      }
+    }
+    calReviewReadOnly = true;
+    reviewSelected = -1;
+    reviewScrollOffset = 0;
+    currentMode = CAL_REVIEW; drawCalReviewUI(); return;
+  }
 }
 
 // V17: CAL_REVIEW touch handler
 void handleCalReviewTouch(TS_Point p) {
+  // Read-only viewer (opened from CALIB INFO): scroll + BACK only. No row
+  // selection, retake, or finalize — there is no active calibration session.
+  if (calReviewReadOnly) {
+    if (btnReviewUp.contains(p.x, p.y)) {
+      if (reviewScrollOffset > 0) { reviewScrollOffset--; drawCalReviewUI(); }
+      return;
+    }
+    if (btnReviewDown.contains(p.x, p.y)) {
+      int maxOffset = pointsCaptured - REVIEW_VISIBLE_ROWS;
+      if (maxOffset < 0) maxOffset = 0;
+      if (reviewScrollOffset < maxOffset) { reviewScrollOffset++; drawCalReviewUI(); }
+      return;
+    }
+    if (btnPointsBack.contains(p.x, p.y)) {
+      calReviewReadOnly = false;
+      currentMode = FOV_INFO; drawFovInfoUI();
+    }
+    return;
+  }
+
   // Scroll buttons
   if (btnReviewUp.contains(p.x, p.y)) {
     if (reviewScrollOffset > 0) {
@@ -5476,6 +5582,14 @@ void handleCalReviewTouch(TS_Point p) {
       tempPixels = Config::DEFAULT_TEMP_PIXELS;
       currentMode = CAL_RUN;
       drawPointEntryUI();
+    }
+    return;
+  }
+  // FINISH — compute the fit now from the captured points.
+  if (btnFinalize.contains(p.x, p.y)) {
+    if (pointsCaptured >= Config::MIN_CALIB_POINTS) {
+      reviewSelected = -1;
+      finalizeEarly();
     }
     return;
   }
@@ -5652,6 +5766,21 @@ void finalizeCalibration() {
   isCustomCalib = !matchesDefault;
   computeCalStats();            // refresh prediction-interval stats from the new fit
   drawSuccessScreen();
+}
+
+// FINISH button (CAL_RUN + CAL_REVIEW): finalize with the points captured so
+// far instead of waiting to reach the Cal Points target. The least-squares fit
+// in finalizeCalibration() is generic, so any count >= MIN_CALIB_POINTS is a
+// valid calibration — the user can stop wherever their bellows range ends.
+// Pinning nPoints to the captured count keeps the stored metadata and the
+// CAL_GRAPH plot consistent with the points actually used.
+void finalizeEarly() {
+  if (pointsCaptured < Config::MIN_CALIB_POINTS) return;
+  nPoints = pointsCaptured;
+  isRetakeMode = false;
+  lastCalibName[0] = '\0';      // device cal → generic success (no profile name)
+  currentMode = CAL_RUN;        // finalizeCalibration() repaints into CAL_SUCCESS
+  finalizeCalibration();
 }
 
 void drawMainScreen() {
@@ -5874,8 +6003,9 @@ void drawOldBrightnessBar() {
 
 void drawCalSettingsUI() {
   tft.fillScreen(THEME_BG);
-  drawLeftBoxedText("CALIBRATOR", 5, 5, COLOR_DARKBLUE); 
-  refreshCalSettingsValues(true); 
+  drawLeftBoxedText("CALIBRATOR", 5, 5, COLOR_DARKBLUE);
+  btnCalInfo.draw(tft);
+  refreshCalSettingsValues(true);
   drawAdjButtons(165); 
   
   btnStartCal.draw(tft);
@@ -5915,6 +6045,11 @@ void drawPointEntryUI() {
   btnReviewPts.draw(tft, nullptr,
                     reviewEnabled ? COLOR_BLUEGREEN : COLOR_DARKGREY,
                     reviewEnabled ? TFT_WHITE : COLOR_LIGHTGREY);
+  // FINISH — finalize early; lit once enough points exist for a valid fit.
+  bool finishEnabled = (pointsCaptured >= Config::MIN_CALIB_POINTS) && !isRetakeMode;
+  btnFinalize.draw(tft, nullptr,
+                   finishEnabled ? COLOR_DARKGREEN : COLOR_DARKGREY,
+                   finishEnabled ? TFT_WHITE : COLOR_LIGHTGREY);
   btnCancelPt.draw(tft);
 }
 
@@ -6246,17 +6381,19 @@ void drawFovInfoUI() {
   tft.setCursor(225 - w - x1, 250);
   tft.print(buf);
 
-  btnInfoClose.draw(tft);  // X close top-right
-  btnInfoBack.draw(tft);   // GRAPH button at bottom
+  btnInfoClose.draw(tft);   // X close top-right
+  btnInfoBack.draw(tft);    // GRAPH button (bottom-left)
+  btnInfoPoints.draw(tft);  // POINTS button (bottom-right) → read-only point list
 }
 
 // V17: calibration point review/edit screen
 void drawCalReviewUI() {
   tft.fillScreen(THEME_BG);
 
-  // Title with point count
+  // Title with point count (read-only viewer vs editable review)
   char titleBuf[24];
-  snprintf(titleBuf, sizeof(titleBuf), "REVIEW (%d pts)", pointsCaptured);
+  if (calReviewReadOnly) snprintf(titleBuf, sizeof(titleBuf), "POINTS (%d)", pointsCaptured);
+  else                   snprintf(titleBuf, sizeof(titleBuf), "REVIEW (%d pts)", pointsCaptured);
   drawLeftBoxedText(titleBuf, 5, 5, COLOR_DARKBLUE);
 
   setSmoothFont(1);
@@ -6272,7 +6409,7 @@ void drawCalReviewUI() {
     for (int r = 0; r < rowsToShow; r++) {
       int idx = reviewScrollOffset + r;
       int rowY = REVIEW_LIST_TOP + r * REVIEW_ROW_HEIGHT;
-      bool selected = (idx == reviewSelected);
+      bool selected = (!calReviewReadOnly && idx == reviewSelected);
 
       uint16_t bgCol = selected ? COLOR_DARKBLUE : THEME_BG;
       uint16_t fgCol = selected ? COLOR_GREENYELLOW : themedText(TFT_WHITE);
@@ -6280,11 +6417,11 @@ void drawCalReviewUI() {
       // Row background — leave gap on right for scroll buttons (x=195+)
       tft.fillRect(5, rowY, 185, REVIEW_ROW_HEIGHT - 2, bgCol);
 
-      // Row text: "Pt N: D=DDDDmm  F=X.XX"
+      // Row text: "Pt N: D=DD.Dmm  F=X.XX" — 0.1 mm now that capture is sub-mm.
       char rowBuf[40];
-      snprintf(rowBuf, sizeof(rowBuf), "Pt%d: D=%dmm F=%.2f",
+      snprintf(rowBuf, sizeof(rowBuf), "Pt%d: D=%.1fmm F=%.2f",
                idx + 1,
-               (int)roundf(distPoints[idx]),
+               distPoints[idx],
                fovPoints[idx]);
       tft.setTextColor(fgCol);
       tft.setCursor(10, rowY + 18);
@@ -6303,7 +6440,10 @@ void drawCalReviewUI() {
 
     // Hint text below list, above buttons
     tft.setTextColor(themedText(COLOR_LIGHTGREY));
-    if (reviewSelected >= 0) {
+    if (calReviewReadOnly) {
+      centerStaticText(isCustomCalib ? "Current calibration points"
+                                     : "Factory default points", 245, 1);
+    } else if (reviewSelected >= 0) {
       char hintBuf[40];  // room for "Selected pt NN — tap RETAKE" (em-dash is 3 bytes UTF-8)
       snprintf(hintBuf, sizeof(hintBuf), "Selected pt %d — tap RETAKE", reviewSelected + 1);
       centerStaticText(hintBuf, 245, 1);
@@ -6312,12 +6452,22 @@ void drawCalReviewUI() {
     }
   }
 
-  // Action buttons
-  bool retakeEnabled = (reviewSelected >= 0);
-  btnRetake.draw(tft, nullptr,
-                 retakeEnabled ? 0x001F : COLOR_DARKGREY,
-                 retakeEnabled ? TFT_WHITE : COLOR_LIGHTGREY);
-  btnReviewBack.draw(tft);
+  // Action buttons. Read-only viewer (from CALIB INFO) shows just BACK; the
+  // editable review shows RETAKE / FINISH / BACK.
+  if (calReviewReadOnly) {
+    btnPointsBack.draw(tft);
+  } else {
+    bool retakeEnabled = (reviewSelected >= 0);
+    btnRetake.draw(tft, nullptr,
+                   retakeEnabled ? 0x001F : COLOR_DARKGREY,
+                   retakeEnabled ? TFT_WHITE : COLOR_LIGHTGREY);
+    // FINISH — finalize the calibration from the captured points (>= 3).
+    bool finishEnabled = (pointsCaptured >= Config::MIN_CALIB_POINTS);
+    btnFinalize.draw(tft, nullptr,
+                     finishEnabled ? COLOR_DARKGREEN : COLOR_DARKGREY,
+                     finishEnabled ? TFT_WHITE : COLOR_LIGHTGREY);
+    btnReviewBack.draw(tft);
+  }
 }
 
 void refreshCalSettingsValues(bool force) {

@@ -792,12 +792,19 @@
                         <span style="color:#00FF00; font-size:10px;">●</span><span style="color: var(--text-disabled); font-size:8px;"> ≤RMSE</span><br>
                         <span style="color:#FF6600; font-size:10px;">●</span><span style="color: var(--text-disabled); font-size:8px;"> &gt;RMSE</span>
                     </div>
+                    <div style="margin-top:6px; font-size:7px; color:#5a5a5a;">tap a point</div>
                 </div>
                 <div id="graph-n" class="gfx-text" style="right:14px; top:286px; font-size:8px; color:#404040;"></div>
                 <!-- Toggle FOV-vs-distance (curve) ⇄ Pixels-vs-distance (the straight
                      line that's actually fit, where R²/m/b read literally). -->
                 <div id="calgraph-mode" class="gfx-btn" style="left:6px; top:299px; width:128px; height:17px;
                      background:#143a3a; border:1px solid #2a5e58; font-size:9px;" onclick="toggleCalGraphMode()">VIEW: FOV vs DIST</div>
+                <!-- Tap-a-point readout. Positioned over the graph by drawCalGraph
+                     when state.calGraphSel is set; tapping empty space hides it. -->
+                <div id="calgraph-tip" style="position:absolute; display:none; pointer-events:none;
+                     background:rgba(8,8,8,0.92); border:1px solid #2a5e58; border-radius:3px;
+                     padding:3px 5px; font-size:8px; line-height:1.4; color:#cfcfcf;
+                     white-space:nowrap; z-index:5;"></div>
             </div>
 
             <!-- ===================== TOF SENSOR INFO ===================== -->
@@ -2202,6 +2209,7 @@
         // Calibration fit results (filled from device telemetry)
         fovSlope: null, fovIntercept: null, calibError: null, calibR2: null,
         calGraphMode: 'fov',   // cal-graph view: 'fov' (curve) or 'px' (linear fit)
+        calGraphSel: null,     // index of the cal-graph point tapped for its readout (null = none)
         // Sensor live readings
         sensorSignal: null, sensorAmbient: null, sensorStatusCode: null,
         // Memory (filled from device telemetry)
@@ -2285,7 +2293,7 @@
         if (id === 'screen-autoremote')  ntfyScreenInit();
         if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
         if (id === 'screen-fovinfo')     updateFovInfoUI();
-        if (id === 'screen-calgraph')    { updateFovInfoUI(); drawCalGraph(); }
+        if (id === 'screen-calgraph')    { state.calGraphSel = null; updateFovInfoUI(); drawCalGraph(); }
         if (id === 'screen-memory')      updateMemoryUI();
         if (id === 'screen-about')       updateAboutUI();
         if (id === 'screen-vibration')   vibEnter();
@@ -5396,9 +5404,77 @@
         drawCalGraph();
     }
 
+    // Plot transform stashed by drawCalGraph so the tap handler hit-tests points
+    // against exactly what was rendered (mode/padding/DPR folded in).
+    let calGraphPlot = null;
+    let calGraphTapBound = false;
+
+    function bindCalGraphTap() {
+        if (calGraphTapBound) return;
+        const canvas = document.getElementById('cal-canvas');
+        if (!canvas) return;
+        canvas.style.cursor = 'pointer';
+        canvas.addEventListener('click', calGraphTap);
+        calGraphTapBound = true;
+    }
+
+    // Tap a point to reveal its metrics; tap empty space to dismiss.
+    function calGraphTap(e) {
+        if (!calGraphPlot) return;
+        const canvas = document.getElementById('cal-canvas');
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX);
+        const cy = (e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY);
+        // Map the tap into the canvas's logical 400×482 drawing space.
+        const lx = (cx - rect.left) / rect.width  * 400;
+        const ly = (cy - rect.top)  / rect.height * 482;
+        let best = -1, bestD = 1e9;
+        calGraphPlot.pts.forEach((pt, i) => {
+            const dx = calGraphPlot.toX(pt.dist) - lx;
+            const dy = calGraphPlot.toY(calGraphPlot.yOf(pt)) - ly;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = i; }
+        });
+        // Hit radius ~16 logical px (≈8 CSS px). Miss → clear selection.
+        state.calGraphSel = (best >= 0 && bestD <= 16 * 16) ? best : null;
+        drawCalGraph();
+    }
+
+    // Fill + position the tap-readout tooltip for the selected point index.
+    function updateCalGraphTip(sel) {
+        const tip = document.getElementById('calgraph-tip');
+        if (!tip || !calGraphPlot) return;
+        const pt = (sel != null) ? calGraphPlot.pts[sel] : null;
+        if (!pt) { tip.style.display = 'none'; return; }
+        const resid = pt.fov - calGraphPlot.fovPred(pt.dist);   // FOV-mm residual
+        const out   = Math.abs(resid) > calGraphPlot.rmse;
+        const pxCnt = (calGraphPlot.kPx > 0 && pt.fov > 0) ? calGraphPlot.kPx / pt.fov : 0;
+        tip.innerHTML =
+            '<b style="color:#7fd8ff">Point ' + (sel + 1) + '</b><br>' +
+            'dist: ' + pt.dist.toFixed(1) + ' mm<br>' +
+            'FOV: '  + pt.fov.toFixed(3) + ' mm<br>' +
+            'pixels: ' + pxCnt.toFixed(0) + '<br>' +
+            'resid: ' + (resid >= 0 ? '+' : '') + resid.toFixed(3) + ' mm ' +
+            (out ? '<span style="color:#FF6600">&#9888; outlier</span>'
+                 : '<span style="color:#00DD00">&#10003;</span>');
+        // Logical point → CSS position within #screen-calgraph (plot-area at
+        // left:25,top:40; canvas logical 400×482 shown at 200×241 → half scale).
+        const sx = 25 + calGraphPlot.toX(pt.dist) / 2;
+        const sy = 40 + calGraphPlot.toY(calGraphPlot.yOf(pt)) / 2;
+        tip.style.display = 'block';
+        const w = tip.offsetWidth, h = tip.offsetHeight;
+        // Centered below the point (clear of the top-right legend); flips above
+        // if it would run off the bottom. Clamped to the screen width (240).
+        let left = sx - w / 2; if (left + w > 238) left = 238 - w; if (left < 2) left = 2;
+        let top  = sy + 12;    if (top + h > 300) top = sy - h - 8; if (top < 2) top = 2;
+        tip.style.left = left + 'px';
+        tip.style.top  = top  + 'px';
+    }
+
     function drawCalGraph() {
         const canvas = document.getElementById('cal-canvas');
         if (!canvas) return;
+        bindCalGraphTap();
         const ctx = canvas.getContext('2d');
         // Logical drawing space: 400×482 (matches the 200×241 CSS size × the
         // outer device-frame's scale(2.0)). All sizes below stay in this
@@ -5525,7 +5601,9 @@
         ctx.restore();
 
         // ── Data points (outlier status is FOV-residual based, view-independent) ──
-        pts.forEach(pt => {
+        const sel = (state.calGraphSel != null && state.calGraphSel >= 0 &&
+                     state.calGraphSel < pts.length) ? state.calGraphSel : null;
+        pts.forEach((pt, i) => {
             const outlier = Math.abs(pt.fov - fovPred(pt.dist)) > rmse;
             const px = toX(pt.dist), py = toY(yOf(pt));
             ctx.fillStyle   = outlier ? '#FF6600' : '#00DD00';
@@ -5533,7 +5611,15 @@
             ctx.lineWidth   = 1;
             ctx.beginPath(); ctx.arc(px, py, 5, 0, 2 * Math.PI);
             ctx.fill(); ctx.stroke();
+            if (i === sel) {   // cyan selection ring
+                ctx.strokeStyle = '#00E5FF'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(px, py, 9, 0, 2 * Math.PI); ctx.stroke();
+            }
         });
+
+        // Stash the transform for the tap handler, then (re)position the readout.
+        calGraphPlot = { pts, toX, toY, yOf, fovPred, rmse, mode, kPx };
+        updateCalGraphTip(sel);
 
         // ── n= annotation ──
         const nEl = document.getElementById('graph-n');
