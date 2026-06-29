@@ -2338,19 +2338,19 @@
 
     // ─────────────────────────────────────────────────────────────────────────
     // FACTORY CALIBRATION CONSTANTS (V12.3 pixel-space; must match firmware Config)
-    // DEFAULT_CTRL_X = 6.3725 px/mm, DEFAULT_CTRL_Y = 1227.140 px,
-    // DEFAULT_CALIB_ERROR = 0.0049 mm, pixel-fit R² = 0.9997
+    // DEFAULT_CTRL_X = 8.40325 px/mm, DEFAULT_CTRL_Y = 1652.202 px,
+    // DEFAULT_CALIB_ERROR = 0.0060 mm, pixel-fit R² = 0.9991
     // ─────────────────────────────────────────────────────────────────────────
-    const FACTORY_DIST = [22,33,42,52,62,73,83,91,102,112,121,132,144];
-    const FACTORY_FOV  = [2.0486,1.9307,1.8597,1.7846,1.7122,1.6493,1.5872,
-                          1.5398,1.4809,1.4343,1.3899,1.3469,1.3009];
+    const FACTORY_DIST = [22,32,42,52,62,72,82,92,102,112,122,132,142,157];
+    const FACTORY_FOV  = [1.5341,1.4434,1.3883,1.3315,1.2788,1.2323,1.1856,
+                          1.1491,1.1058,1.0720,1.0385,1.0075,0.9744,0.9452];
     const FACTORY_POINTS = FACTORY_DIST.map((d, i) => ({ dist: d, fov: FACTORY_FOV[i] }));
 
     // Pre-load factory defaults into state so FOV info and graph show real data immediately
-    state.fovSlope     =  6.3725;     // pixel-space: px/mm
-    state.fovIntercept =  1227.140;   // pixel-space: px at dist 0
-    state.calibError   =  0.0049;
-    state.calibR2      =  0.9997;
+    state.fovSlope     =  8.40325;    // pixel-space: px/mm
+    state.fovIntercept =  1652.202;   // pixel-space: px at dist 0
+    state.calibError   =  0.0060;
+    state.calibR2      =  0.9991;
     state.calGraphPoints = FACTORY_POINTS.slice(); // copy — overwritten when device sends custom
 
     const STEP_TABLE = [
@@ -5653,9 +5653,9 @@
         ctx.clearRect(0, 0, CW, CH);
 
         const pts   = state.calGraphPoints || FACTORY_POINTS;
-        const slope = state.fovSlope     ?? 6.3725;
-        const intc  = state.fovIntercept ?? 1227.140;
-        const rmse  = state.calibError   ?? 0.0146;
+        const slope = state.fovSlope     ?? 8.40325;
+        const intc  = state.fovIntercept ?? 1652.202;
+        const rmse  = state.calibError   ?? 0.0060;
         // Pixel-space cal: pixels = slope*dist + intc; FOV = kPx/pixels (curve).
         const kPx   = (state.demarcDist || 0.4) * (state.photoWidth || 6960);
         const fovPred = d => { const px = slope * d + intc; return px > 1 ? kPx / px : 0; };

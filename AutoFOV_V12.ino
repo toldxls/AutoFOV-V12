@@ -69,10 +69,13 @@ namespace Config {
   // FOV = demarcation * sensorWidth / pixels. Pixels are linear in distance, so
   // this straight-line fit is accurate (FOV-vs-distance is the resulting 1/x
   // curve). Defaults are the least-squares pixel-space fit of the reference
-  // dataset below (FACTORY_DIST/FACTORY_FOV), R²≈0.9997.
-  constexpr float DEFAULT_CTRL_X = 6.3725f;       // px per mm (pixel slope)
-  constexpr float DEFAULT_CTRL_Y = 1227.140f;     // px at distance 0 (pixel intercept)
-  constexpr float DEFAULT_CALIB_ERROR = 0.0049f;  // calibration RMSE in FOV mm
+  // dataset below (FACTORY_DIST/FACTORY_FOV), R²≈0.9991.
+  // 12.3: re-derived from a 14-point photo-measured set (22–157 mm, 0.4 mm
+  // demarcation). The prior 6.3725/1227.14 fit was a 0.3 mm-demarcation dataset
+  // labelled 0.4 mm, so the factory default read ~33% high; this corrects it.
+  constexpr float DEFAULT_CTRL_X = 8.40325f;      // px per mm (pixel slope)
+  constexpr float DEFAULT_CTRL_Y = 1652.202f;     // px at distance 0 (pixel intercept)
+  constexpr float DEFAULT_CALIB_ERROR = 0.0060f;  // calibration RMSE in FOV mm
   constexpr float DEFAULT_SENSOR_WIDTH_PX = 6960.0f;
   constexpr float DEFAULT_DEMARCATION_MM = 0.4f;
   constexpr int   DEFAULT_TEMP_PIXELS = 1800;
@@ -98,18 +101,19 @@ const float STEP_TABLE[] = {
 };
 const int STEP_TABLE_LEN = 23;
 
-// Factory reference calibration (13 points) used for the graph/seed when no
+// Factory reference calibration (14 points) used for the graph/seed when no
 // custom calibration has been run. Stored as (distance mm, FOV mm); FOV here is
 // 0.4*6960/pixels from the measured pixel counts. DEFAULT_CTRL_X/Y above are the
 // pixel-space least-squares fit of these points.
-const int   FACTORY_N = 13;
-const float FACTORY_DIST[13] = {
-  22.0f, 33.0f, 42.0f, 52.0f, 62.0f, 73.0f, 83.0f,
-  91.0f, 102.0f, 112.0f, 121.0f, 132.0f, 144.0f
+// 12.3: photo-measured set (auto tick detection + deskew), 0.4 mm demarcation.
+const int   FACTORY_N = 14;
+const float FACTORY_DIST[14] = {
+  22.0f, 32.0f, 42.0f, 52.0f, 62.0f, 72.0f, 82.0f,
+  92.0f, 102.0f, 112.0f, 122.0f, 132.0f, 142.0f, 157.0f
 };
-const float FACTORY_FOV[13] = {
-  2.0486f, 1.9307f, 1.8597f, 1.7846f, 1.7122f, 1.6493f, 1.5872f,
-  1.5398f, 1.4809f, 1.4343f, 1.3899f, 1.3469f, 1.3009f
+const float FACTORY_FOV[14] = {
+  1.5341f, 1.4434f, 1.3883f, 1.3315f, 1.2788f, 1.2323f, 1.1856f,
+  1.1491f, 1.1058f, 1.0720f, 1.0385f, 1.0075f, 0.9744f, 0.9452f
 };
 
 int stackStepIndex = 2;
@@ -871,7 +875,7 @@ int pointsCaptured = 0;        // V17: tracks how many calibration slots hold va
 bool isRetakeMode = false;     // V17: true when CAL_RUN was entered to retake a single existing point
 float CTRLX = Config::DEFAULT_CTRL_X, CTRLY = Config::DEFAULT_CTRL_Y;
 float CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; 
-float CALIB_R2 = 0.994f;      // V17: factory-default R² (0.994 empirically verified)
+float CALIB_R2 = 0.9991f;      // V17: factory-default R² (0.994 empirically verified)
 // V12.3: cached pixel-space fit statistics for the distance-dependent prediction
 // interval (recomputed from the cal points on load/finalize — no new persisted
 // fields). gCalSpx = pixel residual SD, gCalXbar = mean cal distance,
@@ -4544,7 +4548,7 @@ void setup() {
     if (settings.calibR2 > 0.0f && settings.calibR2 <= 1.0f && fabsf(settings.calibR2 - 1.0f) > 1e-4f) {
       CALIB_R2 = settings.calibR2;
     } else {
-      CALIB_R2 = 0.994f;  // safe default
+      CALIB_R2 = 0.9991f;  // safe default
       settings.calibR2 = CALIB_R2;
     }
 
@@ -4559,7 +4563,7 @@ void setup() {
         fabsf(CTRLX - Config::DEFAULT_CTRL_X) < 0.02f &&
         fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 3.0f) {
       CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
-      CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
+      CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9991f;
       isCustomCalib = false;
     }
 
@@ -4611,7 +4615,7 @@ void setup() {
     settings.ledEnabled = 1;
     settings.ledDuty = TRIGGER_LED_DUTY;
     settings._pad = 0;
-    settings.calibR2 = 0.994f;
+    settings.calibR2 = 0.9991f;
     settings.calNPoints = 0;
     settings.calPointsCaptured = 0;
     currentBrightness = Config::DEFAULT_BRIGHTNESS;
@@ -4638,7 +4642,7 @@ void setup() {
     // out of sync with FACTORY_DIST/FACTORY_FOV — the cause of a fit line that
     // didn't match the plotted points.
     CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
-    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9997f;
+    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9991f;
     nPoints = FACTORY_N;
     for (int i = 0; i < FACTORY_N; i++) {
       distPoints[i] = FACTORY_DIST[i];
@@ -5742,7 +5746,7 @@ void finalizeCalibration() {
       fabsf(CTRLY - Config::DEFAULT_CTRL_Y) < 3.0f;
   if (matchesDefault) {
     CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
-    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.994f;
+    CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; CALIB_R2 = 0.9991f;
   }
 
   settings.magic = CALIB_MAGIC; settings.ctrlX = CTRLX; settings.ctrlY = CTRLY;
@@ -6650,7 +6654,7 @@ void resetToFactory() {
   sensorWidthPixels = Config::DEFAULT_SENSOR_WIDTH_PX; demarcationDist = Config::DEFAULT_DEMARCATION_MM;
   nPoints = 10;  // sensible default; user can adjust between MIN_CALIB_POINTS and MAX_CALIB_POINTS
   CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; isCustomCalib = false;
-  CALIB_R2 = 0.994f;           // factory-default R² (matches boot-load fallback)
+  CALIB_R2 = 0.9991f;           // factory-default R² (matches boot-load fallback)
   pointsCaptured = 0;          // V17: clear captured points
   isRetakeMode = false;
   

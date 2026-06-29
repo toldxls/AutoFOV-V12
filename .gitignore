@@ -12,3 +12,6 @@ build/
 *.DNG
 *.tif
 *.tiff
+
+# Calibration photo sets (large JPEG folders) — keep the JSON library, not the shots
+calibrations/*/

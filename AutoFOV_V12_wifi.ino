@@ -2059,7 +2059,7 @@ static void handleWifiCommand(const char* key, const char* val) {
         CTRLX        = Config::DEFAULT_CTRL_X;
         CTRLY        = Config::DEFAULT_CTRL_Y;
         CALIB_ERROR  = Config::DEFAULT_CALIB_ERROR;
-        CALIB_R2     = 0.994f;
+        CALIB_R2     = 0.9991f;
         isCustomCalib = false;
         // Persist the reset
         settings.magic      = CALIB_MAGIC;
@@ -2390,7 +2390,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["isCustomCalib"] = isCustomCalib ? 1 : 0;
     doc["fovSlope"]      = roundf(CTRLX * 1e6f) / 1e6f;   // 6 dp — slope is ~0.000xxx
     doc["fovIntercept"]  = roundf(CTRLY * 1000.0f) / 1000.0f;
-    // 5 dp: a near-perfect pixel-space fit (R²≈0.9997, RMSE≈0.0049) must not get
+    // 5 dp: a near-perfect pixel-space fit (R²≈0.9991, RMSE≈0.0060) must not get
     // rounded to 1.000 / 0.005 over the wire — that defeated the web's 4-dp display.
     doc["calibError"]    = roundf(CALIB_ERROR * 100000.0f) / 100000.0f;
     doc["calibR2"]       = roundf(CALIB_R2 * 100000.0f) / 100000.0f;
