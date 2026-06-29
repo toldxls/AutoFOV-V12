@@ -755,9 +755,12 @@
                 <div class="gfx-text" style="left: 20px; top: 200px; color: var(--text-disabled); font-size: 12px;">Photo Width:</div>
                 <div id="fovinfo-photowidth" class="gfx-text" style="right: 15px; top: 200px; color: var(--text-primary); font-size: 12px;">—</div>
 
-                <div class="gfx-btn" style="left: 60px; top: 270px; width: 120px; height: 40px;
+                <div class="gfx-btn" style="left: 20px; top: 270px; width: 95px; height: 40px;
                      background: #000; border: 1px solid #787878; color: #FFF;"
                      onclick="switchScreen('screen-calgraph')">GRAPH</div>
+                <div class="gfx-btn" style="left: 125px; top: 270px; width: 95px; height: 40px;
+                     background: #000; border: 1px solid #2a7a6a; color: #3ddb7a;"
+                     onclick="openCalPoints()">POINTS</div>
             </div>
 
             <!-- ===================== CAL GRAPH ===================== -->
@@ -766,7 +769,11 @@
                 <!-- Y-axis label rotated. left:-8 hugs the screen's left edge
                      so the rotated text sits just left of the canvas y-tick
                      column without a wasted gutter. -->
-                <div id="calgraph-ylabel" class="gfx-text" style="left:-8px; top:150px; color: var(--accent-red-dark); font-size:9px;
+                <!-- Fixed-width, centered box so the label's horizontal position
+                     is independent of text length — "Pixels" lands in the same
+                     spot as "FOV (mm)" instead of drifting left (rotation pivots
+                     on the box center). Width = the "FOV (mm)" width (42px). -->
+                <div id="calgraph-ylabel" class="gfx-text" style="left:-8px; top:150px; width:42px; text-align:center; color: var(--accent-red-dark); font-size:9px;
                      transform:rotate(-90deg); transform-origin:center center; white-space:nowrap;">FOV (mm)</div>
                 <!-- X-axis label — top tightened so it sits just under the
                      x-tick numbers instead of with a visible gap below them. -->
@@ -792,7 +799,7 @@
                         <span style="color:#00FF00; font-size:10px;">●</span><span style="color: var(--text-disabled); font-size:8px;"> ≤RMSE</span><br>
                         <span style="color:#FF6600; font-size:10px;">●</span><span style="color: var(--text-disabled); font-size:8px;"> &gt;RMSE</span>
                     </div>
-                    <div style="margin-top:6px; font-size:7px; color:#5a5a5a;">tap a point</div>
+                    <div style="margin-top:6px; font-size:7px; color:#5a5a5a;">⠿ drag · tap a pt</div>
                 </div>
                 <div id="graph-n" class="gfx-text" style="right:14px; top:286px; font-size:8px; color:#404040;"></div>
                 <!-- Toggle FOV-vs-distance (curve) ⇄ Pixels-vs-distance (the straight
@@ -1629,6 +1636,55 @@
                 </div>
                 <input type="file" id="calio-file-input" accept=".json,application/json"
                        style="display:none;" onchange="calioFileChosen(this)">
+            </div>
+
+            <!-- ===== CALIBRATION POINTS overlay =====
+                 The current calibration's point table (DIST / FOV / PIXELS). On a
+                 factory device this is the hard-coded 13-point reference; on a
+                 custom cal it's the captured points. Read from the live state, so
+                 it works without a device round-trip; .txt export pulls full
+                 precision from /calib. -->
+            <div id="calpoints" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.97); z-index:190;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
+                     text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
+                     letter-spacing:0.6px; border-bottom:1px solid #1c3a4a;">
+                    <span id="calpoints-title">CALIBRATION POINTS</span>
+                    <div class="gfx-btn" onclick="closeCalPoints()"
+                         style="top:3px; left:205px; width:30px; height:26px;
+                                background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 10px;">
+                    <div style="display:flex; gap:6px; margin-bottom:7px;">
+                        <div id="calpt-cur" class="gfx-btn" onclick="calPointsToggle('current')"
+                             style="position:relative; left:0; top:0; flex:1 1 0; height:24px; font-size:10px;
+                                    background:#0d2535; border:1px solid #2a5a7a;">CURRENT</div>
+                        <div id="calpt-fac" class="gfx-btn" onclick="calPointsToggle('factory')"
+                             style="position:relative; left:0; top:0; flex:1 1 0; height:24px; font-size:10px;
+                                    background:#0d2535; border:1px solid #2a5a7a;">FACTORY</div>
+                    </div>
+                    <div id="calpoints-sub" style="color:var(--text-disabled); font-size:9px;
+                         line-height:1.4; margin-bottom:7px;">—</div>
+                    <table style="width:100%; border-collapse:collapse; font-size:10px;">
+                        <thead><tr style="color:#5ad6ff; border-bottom:1px solid #1c3a4a;">
+                            <th style="text-align:left;  padding:2px 0;">#</th>
+                            <th style="text-align:right; padding:2px 4px;">DIST</th>
+                            <th style="text-align:right; padding:2px 4px;">FOV</th>
+                            <th style="text-align:right; padding:2px 0;">PIXELS</th>
+                        </tr></thead>
+                        <tbody id="calpoints-body"></tbody>
+                    </table>
+                </div>
+                <div style="flex:0 0 auto; padding:8px 10px 10px; border-top:1px solid #1c3a4a;">
+                    <div class="gfx-btn" onclick="calPointsExportTxt()"
+                         style="position:relative; left:0; top:0; width:100%; height:32px;
+                                background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;">
+                        &#11015; EXPORT .TXT</div>
+                    <div id="calpoints-status" style="margin-top:7px; font-size:9px;
+                         line-height:1.4; color:var(--text-disabled); min-height:13px;
+                         word-break:break-word;"></div>
+                </div>
             </div>
 
         </div><!-- end ili9341-display -->
@@ -5418,6 +5474,45 @@
         calGraphTapBound = true;
     }
 
+    // Drag the legend anywhere over the plot (it can obscure the line, e.g. in
+    // PIXELS mode). Position persists in localStorage. Accounts for the device
+    // frame's 2× CSS scale by dividing pointer deltas by the measured scale.
+    let legendDragBound = false;
+    function bindLegendDrag() {
+        if (legendDragBound) return;
+        const box = document.getElementById('legend-box');
+        if (!box) return;
+        legendDragBound = true;
+        box.style.cursor = 'move';
+        box.style.touchAction = 'none';
+        try {
+            const s = localStorage.getItem('afCalLegendPos');
+            if (s) { const p = JSON.parse(s); box.style.left = p.l + 'px'; box.style.top = p.t + 'px'; }
+        } catch (e) {}
+        let drag = null;
+        box.addEventListener('pointerdown', e => {
+            const scale = box.getBoundingClientRect().width / box.offsetWidth || 1;
+            drag = { x: e.clientX, y: e.clientY, l: box.offsetLeft, t: box.offsetTop, scale };
+            try { box.setPointerCapture(e.pointerId); } catch (e2) {}
+            e.preventDefault();
+        });
+        box.addEventListener('pointermove', e => {
+            if (!drag) return;
+            let l = drag.l + (e.clientX - drag.x) / drag.scale;
+            let t = drag.t + (e.clientY - drag.y) / drag.scale;
+            l = Math.max(0,  Math.min(240 - box.offsetWidth,  l));
+            t = Math.max(40, Math.min(300 - box.offsetHeight, t));
+            box.style.left = l + 'px'; box.style.top = t + 'px';
+        });
+        const end = () => {
+            if (!drag) return; drag = null;
+            try { localStorage.setItem('afCalLegendPos',
+                JSON.stringify({ l: box.offsetLeft, t: box.offsetTop })); } catch (e) {}
+        };
+        box.addEventListener('pointerup', end);
+        box.addEventListener('pointercancel', end);
+    }
+
     // Tap a point to reveal its metrics; tap empty space to dismiss.
     function calGraphTap(e) {
         if (!calGraphPlot) return;
@@ -5475,6 +5570,7 @@
         const canvas = document.getElementById('cal-canvas');
         if (!canvas) return;
         bindCalGraphTap();
+        bindLegendDrag();
         const ctx = canvas.getContext('2d');
         // Logical drawing space: 400×482 (matches the 200×241 CSS size × the
         // outer device-frame's scale(2.0)). All sizes below stay in this
@@ -5765,11 +5861,96 @@
     }
     function calioDownload(obj, filename) {
         const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+        downloadBlob(blob, filename);
+    }
+    function downloadBlob(blob, filename) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = filename;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // ── Calibration point list (CALIB INFO → POINTS) ─────────────────────────
+    // Two views: CURRENT (the live calibration — the factory 13 when no custom
+    // cal is loaded) and FACTORY (always the hard-coded reference). FACTORY
+    // pixels use the reference's own scale (0.40 mm × 6960 px) since FACTORY_FOV
+    // was derived from those; CURRENT uses the device's actual settings.
+    function openCalPoints() {
+        renderCalPoints(state.isCustomCalib ? 'current' : 'factory');
+        document.getElementById('calpoints-status').textContent = '';
+        document.getElementById('calpoints').style.display = 'flex';
+    }
+    let calPointsView = 'factory';   // which view the .txt export should match
+    function calPointsToggle(which) { renderCalPoints(which); }
+    function renderCalPoints(which) {
+        calPointsView = which;
+        const factory = (which === 'factory');
+        const pts = factory ? FACTORY_POINTS : (state.calGraphPoints || []);
+        const kPx = factory ? (0.40 * 6960)
+                            : ((state.demarcDist || 0.4) * (state.photoWidth || 6960));
+        document.getElementById('calpoints-title').textContent =
+            'CALIBRATION POINTS (' + pts.length + ')';
+        document.getElementById('calpoints-sub').textContent = factory
+            ? 'Factory default reference — hard-coded ' + pts.length + ' points.'
+            : (state.isCustomCalib ? 'Current custom calibration.'
+                                   : 'Current = factory default (no custom cal loaded).');
+        // Toggle button highlight.
+        const cur = document.getElementById('calpt-cur'), fac = document.getElementById('calpt-fac');
+        cur.style.background = factory ? '#0d2535' : '#14506a';
+        fac.style.background = factory ? '#14506a' : '#0d2535';
+        const body = document.getElementById('calpoints-body');
+        body.innerHTML = pts.map((p, i) => {
+            const px = (kPx > 0 && p.fov > 0) ? (kPx / p.fov) : 0;
+            return '<tr style="border-bottom:1px solid #141414;">' +
+                   '<td style="padding:2px 0; color:var(--text-disabled);">' + (i + 1) + '</td>' +
+                   '<td style="padding:2px 4px; text-align:right;">' + p.dist.toFixed(1) + '</td>' +
+                   '<td style="padding:2px 4px; text-align:right;">' + p.fov.toFixed(3) + '</td>' +
+                   '<td style="padding:2px 0; text-align:right;">' + px.toFixed(0) + '</td>' +
+                   '</tr>';
+        }).join('') || '<tr><td colspan="4" style="padding:6px 0; color:var(--text-disabled);">No points</td></tr>';
+    }
+    function closeCalPoints() { document.getElementById('calpoints').style.display = 'none'; }
+
+    // Export DIST / FOV / PIXELS as a plain .txt, matching the shown view. The
+    // FACTORY view is built client-side from the hard-coded reference; CURRENT
+    // pulls full precision from the device (/calib).
+    function calPointsTxt(header, pts, kPx, fit) {
+        const pad = (s, n) => String(s).padStart(n);
+        let txt = 'AutoFOV calibration points\r\n' + header;
+        if (fit && fit.slope != null) txt += 'fit         : pixels = ' + fit.slope.toFixed(5) +
+            ' * dist + ' + fit.intercept.toFixed(3) + '\r\n';
+        if (fit && fit.r2 != null)    txt += 'R^2         : ' + fit.r2.toFixed(4) +
+            '   RMSE: ' + (fit.err != null ? fit.err.toFixed(4) : '—') + ' mm\r\n';
+        txt += '\r\n' + pad('DIST(mm)', 9) + pad('FOV(mm)', 11) + pad('PIXELS', 10) + '\r\n';
+        pts.forEach(p => {
+            const px = (kPx > 0 && p.fov > 0) ? (kPx / p.fov) : 0;
+            txt += pad(p.dist.toFixed(1), 9) + pad(p.fov.toFixed(4), 11) + pad(px.toFixed(1), 10) + '\r\n';
+        });
+        return txt;
+    }
+    async function calPointsExportTxt() {
+        const st = document.getElementById('calpoints-status');
+        const setSt = (m, c) => { st.textContent = m; st.style.color = c || 'var(--text-disabled)'; };
+        try {
+            let txt, name;
+            if (calPointsView === 'factory') {
+                txt = calPointsTxt('source      : factory default reference\r\n',
+                                   FACTORY_POINTS, 0.40 * 6960, null);
+                name = 'autofov-factory.txt';
+            } else {
+                setSt('Reading calibration…');
+                const cal = await calioGetCalib();
+                const header = 'custom      : ' + (cal.isCustom ? 'yes' : 'no (factory default)') + '\r\n' +
+                               'photo width : ' + cal.calWidth + ' px\r\n' +
+                               'demarc dist : ' + cal.demarcDist + ' mm\r\n';
+                txt = calPointsTxt(header, cal.points || [],
+                                   (cal.calWidth || 0) * (cal.demarcDist || 0), cal.fit || {});
+                name = 'autofov-calibration.txt';
+            }
+            downloadBlob(new Blob([txt], { type: 'text/plain' }), name);
+            setSt('Exported ' + name + ' ✓', '#3ddb7a');
+        } catch (e) { setSt('Export failed: ' + e.message, '#ff6a6a'); }
     }
     // POST a calibration to the device (it re-fits + saves + pushes fresh state).
     async function calioApply(cal) {
