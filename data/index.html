@@ -940,7 +940,9 @@
                     <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 7px; font-size: 20px; color: var(--accent-green); font-weight: bold;">1920 px</div>
                 </div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 86px; font-size: 10px; color: var(--text-disabled);">take photo, input pixel # and capture</div>
+                <div class="gfx-btn" style="left: 20px; top: 84px; width: 200px; height: 19px;
+                     background: #08140f; border: 1px solid #2a7a6a; color: #7fd8c0; font-size: 10px;"
+                     onclick="openCalPhoto()" title="Measure the pixel count from a micrometer photo">&#128247; MEASURE FROM PHOTO</div>
 
                 <div class="adj-row" style="top: 104px;">
                     <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">◄◄</div>
@@ -1685,6 +1687,57 @@
                     <div id="calpoints-status" style="margin-top:7px; font-size:9px;
                          line-height:1.4; color:var(--text-disabled); min-height:13px;
                          word-break:break-word;"></div>
+                </div>
+            </div>
+
+            <!-- ===== MEASURE FROM PHOTO overlay =====
+                 Drop a JPEG of the stage micrometer; detect the periodic ticks,
+                 measure the pixels spanning the demarcation window, and auto-fill
+                 the capture screen's pixel count. Runs entirely in the browser. -->
+            <div id="calphoto" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:8px 0 7px;
+                     text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
+                     letter-spacing:0.4px; border-bottom:1px solid #1c3a4a;">
+                    &#128247; MEASURE FROM PHOTO
+                    <div class="gfx-btn" onclick="closeCalPhoto()"
+                         style="top:2px; left:206px; width:30px; height:24px;
+                                background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 8px;">
+                    <div id="calphoto-drop" onclick="document.getElementById('calphoto-file').click()"
+                         style="border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
+                                padding:12px 8px; text-align:center; color:#7fd8c0; font-size:10px;
+                                line-height:1.5; cursor:pointer;">
+                        Drop micrometer photo here<br><span style="color:#5a8;">or tap to choose a .jpg</span>
+                    </div>
+                    <input type="file" id="calphoto-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                           style="display:none;" onchange="calPhotoChosen(this)">
+                    <div style="display:flex; gap:8px; margin-top:8px; font-size:10px; align-items:center;">
+                        <span style="color:var(--text-disabled);">Tick pitch</span>
+                        <input id="calphoto-pitch" type="number" step="0.001" min="0.0001" value="0.01"
+                               onchange="calPhotoPitchSave()"
+                               style="width:62px; background:#0d2535; border:1px solid #2a5a7a; color:#fff;
+                                      font:11px monospace; padding:2px 4px; border-radius:3px;">
+                        <span style="color:var(--text-disabled);">mm &nbsp; span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm</span>
+                    </div>
+                    <canvas id="calphoto-prev" width="220" height="116"
+                            style="display:none; width:220px; height:116px; margin-top:8px;
+                                   background:#000; border:1px solid #222;"></canvas>
+                    <div id="calphoto-prevcap" style="display:none; font-size:8px; color:#667;
+                         margin-top:2px; line-height:1.3;">zoom of sharpest region · contrast profile below ·
+                         <span style="color:#fb0;">|</span> = detected centroid</div>
+                    <div id="calphoto-result" style="margin-top:7px; font-size:11px; line-height:1.5;
+                         color:var(--text-disabled); min-height:30px;"></div>
+                    <div id="calphoto-warn" style="margin-top:4px; font-size:9px; line-height:1.4;
+                         color:#fa6;"></div>
+                </div>
+                <div style="flex:0 0 auto; padding:7px 10px 9px; border-top:1px solid #1c3a4a;">
+                    <div id="calphoto-use" class="gfx-btn" onclick="calPhotoUse()"
+                         style="position:relative; left:0; top:0; width:100%; height:34px;
+                                background:#143a14; border:1px solid #2a7a2a; color:#7fff7f;
+                                font-size:12px; opacity:0.4; pointer-events:none;">USE MEASUREMENT</div>
                 </div>
             </div>
 
@@ -5971,6 +6024,247 @@
             setSt('Exported ' + name + ' ✓', '#3ddb7a');
         } catch (e) { setSt('Export failed: ' + e.message, '#ff6a6a'); }
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // MEASURE FROM PHOTO — auto pixel count from a stage-micrometer JPEG.
+    //   Detect the periodic ticks, fit position-vs-index, and report the pixels
+    //   spanning the demarcation window. Validated against real micrometer shots.
+    // ─────────────────────────────────────────────────────────────────────────
+    function _micBox(arr, r){            // centred box average (baseline)
+        const c = new Float32Array(arr.length + 1);
+        for (let i = 0; i < arr.length; i++) c[i+1] = c[i] + arr[i];
+        const o = new Float32Array(arr.length);
+        for (let i = 0; i < arr.length; i++){ const a = Math.max(0,i-r), b = Math.min(arr.length-1,i+r); o[i] = (c[b+1]-c[a])/(b-a+1); }
+        return o;
+    }
+    function _micMedSpacing(xs){ const d=[]; for (let i=1;i<xs.length;i++) d.push(xs[i]-xs[i-1]); d.sort((a,b)=>a-b); return d.length? d[d.length>>1] : 0; }
+
+    // Detect ticks in a 1-D projection: peaks → sub-pixel centroids → robust
+    // position-vs-index fit. Returns the fitted pitch, centroids, rms, count.
+    function _micFitTicks(P, intervals){
+        const n=P.length, base=_micBox(P,80), prom=new Float32Array(n); let pmx=0;
+        for (let x=0;x<n;x++){ prom[x]=Math.max(0,P[x]-base[x]); if(prom[x]>pmx)pmx=prom[x]; }
+        if (pmx<=0) return null;
+        let bl=20, bc=-1; const maxLag=Math.min(500,n-2);
+        for (let lag=8; lag<=maxLag; lag++){ let c=0; for (let x=0;x+lag<n;x++) c+=prom[x]*prom[x+lag]; if (c>bc){ bc=c; bl=lag; } }
+        let pitch=bl; const minSep=Math.max(3,Math.round(pitch*0.55)), thr=pmx*0.22, pk=[];
+        for (let x=1;x<n-1;x++) if (prom[x]>thr && prom[x]>=prom[x-1] && prom[x]>=prom[x+1]){
+            if (pk.length && x-pk[pk.length-1].x<minSep){ if(prom[x]>pk[pk.length-1].prom) pk[pk.length-1]={x,prom:prom[x]}; }
+            else pk.push({x,prom:prom[x]});
+        }
+        const hw=Math.max(2,Math.round(pitch*0.4));
+        for (const p of pk){ let sw=0,swx=0; for(let x=Math.max(0,p.x-hw);x<=Math.min(n-1,p.x+hw);x++){const w=prom[x];sw+=w;swx+=w*x;} p.xs=sw>0?swx/sw:p.x; }
+        let pm=0; for (const p of pk) if(p.prom>pm) pm=p.prom;
+        let kept=pk.filter(p=>p.prom>=0.45*pm).map(p=>p.xs).sort((a,b)=>a-b);
+        if (kept.length<intervals+1) kept=pk.map(p=>p.xs).sort((a,b)=>a-b);
+        if (kept.length<3) return null;
+        pitch=_micMedSpacing(kept)||pitch;
+        const idx=[0]; for(let i=1;i<kept.length;i++) idx.push(idx[i-1]+Math.max(1,Math.round((kept[i]-kept[i-1])/pitch)));
+        const fit=(xa,ia)=>{ const m=xa.length; let sx=0,si=0,sii=0,sxi=0;
+            for(let k=0;k<m;k++){sx+=xa[k];si+=ia[k];sii+=ia[k]*ia[k];sxi+=xa[k]*ia[k];}
+            const den=m*sii-si*si; const a=den?(m*sxi-si*sx)/den:pitch; return {a,b:(sx-a*si)/m}; };
+        let f=fit(kept,idx); const xs2=[],id2=[];
+        for(let i=0;i<kept.length;i++){const id=Math.round((kept[i]-f.b)/f.a); if(Math.abs(kept[i]-(f.a*id+f.b))<f.a*0.4){xs2.push(kept[i]);id2.push(id);}}
+        if (xs2.length<3) return null;
+        f=fit(xs2,id2); let sse=0; for(let i=0;i<xs2.length;i++){const r=xs2[i]-(f.a*id2[i]+f.b);sse+=r*r;}
+        return { pitch:f.a, rms:Math.sqrt(sse/xs2.length), ticks:xs2, n:xs2.length, peaks:pk.length };
+    }
+
+    // grayscale darkness (255=darkest) + the tick band rows (where most ticks are)
+    function _micGrayBand(imageData){
+        const W=imageData.width, H=imageData.height, d=imageData.data;
+        const g=new Float32Array(W*H);
+        for (let i=0,p=0;i<W*H;i++,p+=4) g[i]=255-(0.299*d[p]+0.587*d[p+1]+0.114*d[p+2]);
+        let mean=0; for(let i=0;i<g.length;i++) mean+=g[i]; mean/=g.length;
+        let vv=0; for(let i=0;i<g.length;i++){const e=g[i]-mean;vv+=e*e;}
+        const Tdark=mean+3*Math.sqrt(vv/g.length);
+        const rc=new Int32Array(H);
+        for(let y=0;y<H;y++){let c=0;const o=y*W;for(let x=0;x<W;x++)if(g[o+x]>Tdark)c++;rc[y]=c;}
+        let yM=0; for(let y=0;y<H;y++) if(rc[y]>rc[yM]) yM=y;
+        const bt=rc[yM]*0.6; let y0=yM,y1=yM;
+        while(y0>0&&rc[y0-1]>bt)y0--; while(y1<H-1&&rc[y1+1]>bt)y1++;
+        return { g, W, H, y0, y1, rc, peak: rc[yM] };
+    }
+
+    // Estimate the tick tilt (degrees from vertical) via a shear sweep: the shear
+    // that lines the ticks up gives the sharpest peaks. Uses the FULL height of the
+    // tall ticks (a long lever arm → fine angle) and parabolic interpolation for
+    // sub-step precision. The caller rotates by this so ticks become vertical.
+    function estimateTickAngle(imageData){
+        const gb=_micGrayBand(imageData); const {g,W,H,rc,peak}=gb;
+        // widen the band to the full vertical extent of strong ticks (lower
+        // threshold) so the angle is measured over the longest available lines
+        let yM=0; for(let y=0;y<H;y++) if(rc[y]>rc[yM]) yM=y;
+        const t=peak*0.2; let y0=yM,y1=yM;
+        while(y0>0&&rc[y0-1]>t)y0--; while(y1<H-1&&rc[y1+1]>t)y1++;
+        if (y1-y0 < 6) return 0;
+        const yc=(y0+y1)/2, wx=Math.round(W*0.25), ww=Math.round(W*0.5);
+        const project = (s)=>{ const P=new Float32Array(ww);
+            for(let y=y0;y<=y1;y+=2){ const dyc=(y-yc)*s, row=y*W;
+                for(let u=0;u<ww;u++){ let x=Math.round(wx+u+dyc); if(x<0)x=0; else if(x>=W)x=W-1; P[u]+=g[row+x]; } }
+            return P; };
+        const score = (s)=>{ const P=project(s), bb=_micBox(P,40); let e=0;
+            for(let u=0;u<ww;u++){ const pr=P[u]-bb[u]; if(pr>0)e+=pr*pr; } return e; };
+        let bestS=0,bestSc=-1;
+        for(let s=-0.30;s<=0.301;s+=0.02){ const sc=score(s); if(sc>bestSc){bestSc=sc;bestS=s;} }
+        for(const step of [0.004,0.001]){ const b=bestS;
+            for(let s=b-step*5;s<=b+step*5+1e-9;s+=step){ const sc=score(s); if(sc>bestSc){bestSc=sc;bestS=s;} } }
+        // parabolic refine around the peak for sub-step (sub-0.05°) precision
+        const h=0.0005, sm=score(bestS-h), sp=score(bestS+h), den=sm-2*bestSc+sp;
+        if (den < 0){ const off=0.5*(sm-sp)/den; if (Math.abs(off) < 1.5) bestS += off*h; }
+        return Math.atan(bestS)*180/Math.PI;
+    }
+
+    // Measure on an already-deskewed image (ticks vertical): pick the sharpest
+    // window (handles a tilted slide whose focus only covers part of the field),
+    // project columns, and fit the tick grid.
+    function analyzeMicrometer(imageData, opts){
+        const intervals = Math.round(opts.spanMm / opts.pitchMm);
+        if (!(intervals >= 2)) return { error: 'bad pitch/span' };
+        const gb=_micGrayBand(imageData); const {g,W,H,y0,y1}=gb;
+        if (y1-y0 < 2) return { error: 'no tick band found' };
+        const colSum=(wx,ww)=>{ const P=new Float32Array(ww);
+            for(let y=y0;y<=y1;y++){ const row=y*W; for(let u=0;u<ww;u++) P[u]+=g[row+wx+u]; } return P; };
+        // coarse full-width projection → pitch estimate + per-column focus
+        const P0=colSum(0,W), b0=_micBox(P0,80), prom0=new Float32Array(W); let pmx0=0;
+        for(let x=0;x<W;x++){ prom0[x]=Math.max(0,P0[x]-b0[x]); if(prom0[x]>pmx0)pmx0=prom0[x]; }
+        if (pmx0<=0) return { error: 'no ticks detected' };
+        let bl=20,bc=-1; for(let lag=8;lag<=500;lag++){ let c=0; for(let x=0;x+lag<W;x++)c+=prom0[x]*prom0[x+lag]; if(c>bc){bc=c;bl=lag;} }
+        const coarsePitch=bl;
+        const focE=new Float32Array(W); for(let x=0;x<W;x++) focE[x]=prom0[x]*prom0[x];
+        const focS=_micBox(focE, Math.max(4,Math.round(coarsePitch)));
+        const winW=Math.min(W, Math.max(intervals*coarsePitch*1.3, coarsePitch*8)), wwI=Math.round(winW);
+        const pfx=new Float32Array(W+1); for(let x=0;x<W;x++) pfx[x+1]=pfx[x]+focS[x];
+        let bestWx=0,bestF=-1;
+        for(let wx=0; wx+wwI<=W; wx+=Math.max(1,Math.round(coarsePitch*0.5))){ const f=pfx[wx+wwI]-pfx[wx]; if(f>bestF){bestF=f;bestWx=wx;} }
+        const wx=bestWx, ww=wwI;
+        const P=colSum(wx,ww), fit=_micFitTicks(P,intervals);
+        if (!fit) return { error: 'tick fit failed' };
+        const scale=(opts.imageW||W)/W, minorPitch=fit.pitch*scale;
+        return { pixelsSpan: minorPitch*intervals, minorPitch, nTicks: fit.n, totalPk: fit.peaks,
+                 rms: fit.rms*scale, errFrac: fit.rms/Math.abs(fit.pitch), angleDeg: 0,
+                 win:{ wx, ww, y0, y1, yc:(y0+y1)/2, shear:0, pitchWork: fit.pitch },
+                 prof: P, ticksU: fit.ticks };
+    }
+
+    // ── modal driver ──
+    let _calPhotoPx = null, _calPhotoDropBound = false;
+    function calPhotoPitchSave(){ try { localStorage.setItem('afMicPitch', document.getElementById('calphoto-pitch').value); } catch(e){} }
+    function openCalPhoto(){
+        const m = document.getElementById('calphoto');
+        document.getElementById('calphoto-span').textContent = (state.demarcDist||0.4).toFixed(2);
+        try { const s=localStorage.getItem('afMicPitch'); if (s) document.getElementById('calphoto-pitch').value=s; } catch(e){}
+        document.getElementById('calphoto-result').textContent = '';
+        document.getElementById('calphoto-warn').textContent = '';
+        document.getElementById('calphoto-prev').style.display = 'none';
+        document.getElementById('calphoto-prevcap').style.display = 'none';
+        const use = document.getElementById('calphoto-use'); use.style.opacity='0.4'; use.style.pointerEvents='none';
+        _calPhotoPx = null;
+        if (!_calPhotoDropBound){
+            const dz = document.getElementById('calphoto-drop');
+            const stop = e => { e.preventDefault(); e.stopPropagation(); };
+            dz.addEventListener('dragover', e=>{ stop(e); dz.style.background='#0f241a'; });
+            dz.addEventListener('dragleave', e=>{ stop(e); dz.style.background='#08140f'; });
+            dz.addEventListener('drop', e=>{ stop(e); dz.style.background='#08140f';
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) calPhotoHandleFile(e.dataTransfer.files[0]); });
+            _calPhotoDropBound = true;
+        }
+        m.style.display = 'flex';
+    }
+    function closeCalPhoto(){ document.getElementById('calphoto').style.display = 'none'; }
+    function calPhotoChosen(input){ if (input.files && input.files[0]) calPhotoHandleFile(input.files[0]); input.value=''; }
+
+    function calPhotoHandleFile(file){
+        const res = document.getElementById('calphoto-result'), warn = document.getElementById('calphoto-warn');
+        warn.textContent=''; res.style.color='var(--text-disabled)'; res.textContent = 'Reading ' + file.name + '…';
+        const pitchMm = parseFloat(document.getElementById('calphoto-pitch').value) || 0.01;
+        const spanMm  = state.demarcDist || 0.4;
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onerror = ()=>{ URL.revokeObjectURL(url); res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
+        img.onload = ()=>{
+            try {
+                const NW = img.naturalWidth, NH = img.naturalHeight;
+                const cw = Math.min(NW, 4000), ch = Math.round(NH*cw/NW);
+                const cv = document.createElement('canvas'); cv.width=cw; cv.height=ch;
+                const cx = cv.getContext('2d', { willReadFrequently:true }); cx.drawImage(img,0,0,cw,ch);
+                const photoW = state.photoWidth || NW;
+                // Deskew first: estimate the tick tilt and, if significant, rotate the
+                // working image so ticks are vertical — then the straight vertical
+                // analysis is exact regardless of stage tilt.
+                // Always pin to zero rotation — even a tiny tilt is corrected, for a
+                // consistent baseline (matters for later high-resolution analysis).
+                const angle = estimateTickAngle(cx.getImageData(0,0,cw,ch));
+                let srcCv = cv;
+                if (Math.abs(angle) > 0.005){
+                    const rc = document.createElement('canvas'); rc.width=cw; rc.height=ch;
+                    const rx = rc.getContext('2d', { willReadFrequently:true });
+                    rx.fillStyle = '#bcbfb9'; rx.fillRect(0,0,cw,ch);
+                    rx.translate(cw/2, ch/2); rx.rotate(angle*Math.PI/180); rx.drawImage(cv,-cw/2,-ch/2);
+                    srcCv = rc;
+                }
+                const r = analyzeMicrometer(srcCv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cw,ch),
+                                            { pitchMm, spanMm, imageW: photoW });
+                if (r.error){ res.style.color='#ff6a6a'; res.textContent='Analysis failed: ' + r.error; URL.revokeObjectURL(url); return; }
+                r.angleDeg = angle;
+                _calPhotoPx = Math.round(r.pixelsSpan);
+                const errPct = r.errFrac*100, good = errPct < 5;
+                const tilt = Math.abs(angle) >= 0.02 ? ' · deskewed ' + angle.toFixed(2) + '°' : '';
+                res.style.color='var(--text-primary)';
+                res.innerHTML = '<b style="color:#7fff7f; font-size:14px;">' + _calPhotoPx + ' px</b> per ' + spanMm.toFixed(2) + ' mm<br>' +
+                    '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks · err ' +
+                    '<span style="color:' + (good?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
+                    ' · FOV ' + (spanMm*photoW/r.pixelsSpan).toFixed(3) + ' mm' + tilt + '</span>';
+                drawCalPhotoPreview(srcCv, r);
+                if (NW !== photoW)
+                    warn.textContent = '⚠ Photo is ' + NW + ' px wide but Photo Width is set to ' + photoW +
+                        '. Set Photo Width to your camera\'s full width on the CALIBRATOR screen for best accuracy.';
+                const use = document.getElementById('calphoto-use');
+                use.textContent = 'USE ' + _calPhotoPx + ' px';
+                use.style.opacity='1'; use.style.pointerEvents='auto';
+            } catch(e){ res.style.color='#ff6a6a'; res.textContent='Analysis error: ' + e.message; }
+            URL.revokeObjectURL(url);
+        };
+        img.src = url;
+    }
+    // Preview: a legible zoom of the sharpest region (from the DESKEWED working
+    // image, so ticks are vertical) plus the contrast profile beneath it. Orange
+    // marks show where each detected centroid landed on the demarcation peaks.
+    function drawCalPhotoPreview(srcCanvas, r){
+        const pv = document.getElementById('calphoto-prev'), cap = document.getElementById('calphoto-prevcap');
+        pv.style.display='block'; if (cap) cap.style.display='block';
+        const px = pv.getContext('2d'), PW=pv.width, PH=pv.height;
+        px.clearRect(0,0,PW,PH);
+        const win=r.win, prof=r.prof, ww=win.ww;
+        const pw=win.pitchWork||10, ticks=r.ticksU||[];
+        const uc = ticks.length ? ticks[Math.floor(ticks.length/2)] : ww/2;
+        const half=Math.min(ww/2, pw*8);
+        const u0=Math.max(0, Math.min(ww-2*half, uc-half)), u1=Math.min(ww, u0+2*half), uw=u1-u0||1;
+        const stripH=46, profY=stripH+3, profH=PH-profY;
+        // 1) zoomed crop of the deskewed sub-window (ticks vertical)
+        const sy=Math.max(0, win.y0-(win.y1-win.y0)*0.25), shN=Math.min(srcCanvas.height-sy,(win.y1-win.y0)*1.5);
+        px.drawImage(srcCanvas, win.wx+u0, sy, uw, shN, 0,0,PW,stripH);
+        // 2) contrast profile over the sub-window
+        let pmin=1e9,pmax=-1e9; for(let u=u0|0;u<u1;u++){ if(prof[u]<pmin)pmin=prof[u]; if(prof[u]>pmax)pmax=prof[u]; }
+        px.fillStyle='#060f0d'; px.fillRect(0,profY,PW,profH);
+        px.strokeStyle='#5ad6ff'; px.lineWidth=1; px.beginPath(); const rng=(pmax-pmin)||1; let first=true;
+        for(let u=u0|0;u<u1;u++){ const xx=(u-u0)/uw*PW, yy=profY+profH-1-(prof[u]-pmin)/rng*(profH-3); if(first){px.moveTo(xx,yy);first=false;}else px.lineTo(xx,yy); }
+        px.stroke();
+        // 3) centroids (vertical, since deskewed): edge ticks on image + line on profile
+        px.strokeStyle='rgba(255,176,0,0.9)'; px.lineWidth=1;
+        for(const u of ticks){ if(u<u0||u>u1) continue; const xx=(u-u0)/uw*PW;
+            px.beginPath(); px.moveTo(xx,0); px.lineTo(xx,4); px.moveTo(xx,stripH-4); px.lineTo(xx,stripH); px.stroke();
+            px.beginPath(); px.moveTo(xx,profY); px.lineTo(xx,PH); px.stroke(); }
+    }
+
+    function calPhotoUse(){
+        if (_calPhotoPx == null) return;
+        state.calRunPx = _calPhotoPx;
+        const el = document.getElementById('calrun-pixels'); if (el) el.textContent = _calPhotoPx + ' px';
+        closeCalPhoto();
+        const st = document.getElementById('calrun-status');
+        if (st){ st.style.color='var(--accent-green)'; st.textContent = 'Pixels set from photo — review, then CAPTURE & SAVE.'; }
+    }
+
     // POST a calibration to the device (it re-fits + saves + pushes fresh state).
     async function calioApply(cal) {
         const r = await calioAuthedFetch('/calib', {

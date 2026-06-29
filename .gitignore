@@ -2,3 +2,13 @@
 CLAUDE.md
 .claude/
 build/
+
+# Camera RAW / large test images — never commit (calibration uses JPEG)
+*.CR3
+*.CR2
+*.ARW
+*.NEF
+*.RAF
+*.DNG
+*.tif
+*.tiff
