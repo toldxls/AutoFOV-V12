@@ -89,9 +89,13 @@ cp web/recovery.html "$WT/index.html"   # served at the Pages site root
 : > "$WT/.nojekyll"   # serve files verbatim — no Jekyll processing
 
 # V12.3: publish the owner-curated calibration library (dashboard CAL I/O →
-# LOAD FROM GITHUB reads calibrations/index.json). The worktree was cleared
-# above, so copy the canonical copy from main on every release.
-[ -d calibrations ] && cp -r calibrations "$WT/calibrations"
+# LOAD FROM GITHUB reads calibrations/index.json). Copy ONLY the top-level
+# library files (*.json, README) — NOT photo subfolders that may live under
+# calibrations/ locally as test backups (gitignored on main; would otherwise
+# bloat gh-pages by hundreds of MB).
+[ -d calibrations ] && mkdir -p "$WT/calibrations" && \
+  find calibrations -maxdepth 1 -type f \( -name '*.json' -o -name '*.md' \) \
+    -exec cp {} "$WT/calibrations/" \;
 
 cat > "$WT/manifest.json" <<EOF
 { "version": "$VERSION", "sha256": "$SHA", "bin": "firmware.bin" }
