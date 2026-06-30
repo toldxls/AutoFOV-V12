@@ -6037,6 +6037,19 @@
         return o;
     }
     function _micMedSpacing(xs){ const d=[]; for (let i=1;i<xs.length;i++) d.push(xs[i]-xs[i-1]); d.sort((a,b)=>a-b); return d.length? d[d.length>>1] : 0; }
+    // Fundamental tick pitch via autocorrelation of a prominence profile, with a
+    // de-harmonic step: if an integer divisor of the global-max lag also has strong
+    // autocorrelation, that smaller lag IS the fundamental. Guards against locking
+    // onto a 2×/5×/10× multiple when tall/medium ticks dominate (a clean lock on the
+    // wrong tier would otherwise read as a low-error, "good" measurement).
+    function _micPitchAC(prom, n){
+        const maxLag=Math.min(500, n-2); if (maxLag<8) return Math.max(8,maxLag);
+        const A=new Float32Array(maxLag+1); let bl=20, bc=-1;
+        for (let lag=8; lag<=maxLag; lag++){ let c=0; for (let x=0;x+lag<n;x++) c+=prom[x]*prom[x+lag]; A[lag]=c; if (c>bc){ bc=c; bl=lag; } }
+        let best=bl;
+        for (let k=2;k<=10;k++){ const L=Math.round(bl/k); if (L>=8 && A[L]>=0.72*bc && L<best) best=L; }
+        return best;
+    }
 
     // Detect ticks in a 1-D projection: peaks → sub-pixel centroids → robust
     // position-vs-index fit. Returns the fitted pitch, centroids, rms, count.
@@ -6044,9 +6057,7 @@
         const n=P.length, base=_micBox(P,80), prom=new Float32Array(n); let pmx=0;
         for (let x=0;x<n;x++){ prom[x]=Math.max(0,P[x]-base[x]); if(prom[x]>pmx)pmx=prom[x]; }
         if (pmx<=0) return null;
-        let bl=20, bc=-1; const maxLag=Math.min(500,n-2);
-        for (let lag=8; lag<=maxLag; lag++){ let c=0; for (let x=0;x+lag<n;x++) c+=prom[x]*prom[x+lag]; if (c>bc){ bc=c; bl=lag; } }
-        let pitch=bl; const minSep=Math.max(3,Math.round(pitch*0.55)), thr=pmx*0.22, pk=[];
+        let pitch=_micPitchAC(prom, n); const minSep=Math.max(3,Math.round(pitch*0.55)), thr=pmx*0.22, pk=[];
         for (let x=1;x<n-1;x++) if (prom[x]>thr && prom[x]>=prom[x-1] && prom[x]>=prom[x+1]){
             if (pk.length && x-pk[pk.length-1].x<minSep){ if(prom[x]>pk[pk.length-1].prom) pk[pk.length-1]={x,prom:prom[x]}; }
             else pk.push({x,prom:prom[x]});
@@ -6104,7 +6115,9 @@
             return P; };
         const score = (s)=>{ const P=project(s), bb=_micBox(P,40); let e=0;
             for(let u=0;u<ww;u++){ const pr=P[u]-bb[u]; if(pr>0)e+=pr*pr; } return e; };
-        let bestS=0,bestSc=-1;
+        // Seed at no-rotation so a flat/weak score surface (faint ticks) defaults to
+        // 0° instead of latching onto the sweep's lower bound (−16.7°).
+        let bestS=0,bestSc=score(0);
         for(let s=-0.30;s<=0.301;s+=0.02){ const sc=score(s); if(sc>bestSc){bestSc=sc;bestS=s;} }
         for(const step of [0.004,0.001]){ const b=bestS;
             for(let s=b-step*5;s<=b+step*5+1e-9;s+=step){ const sc=score(s); if(sc>bestSc){bestSc=sc;bestS=s;} } }
@@ -6128,8 +6141,7 @@
         const P0=colSum(0,W), b0=_micBox(P0,80), prom0=new Float32Array(W); let pmx0=0;
         for(let x=0;x<W;x++){ prom0[x]=Math.max(0,P0[x]-b0[x]); if(prom0[x]>pmx0)pmx0=prom0[x]; }
         if (pmx0<=0) return { error: 'no ticks detected' };
-        let bl=20,bc=-1; for(let lag=8;lag<=500;lag++){ let c=0; for(let x=0;x+lag<W;x++)c+=prom0[x]*prom0[x+lag]; if(c>bc){bc=c;bl=lag;} }
-        const coarsePitch=bl;
+        const coarsePitch=_micPitchAC(prom0, W);
         const focE=new Float32Array(W); for(let x=0;x<W;x++) focE[x]=prom0[x]*prom0[x];
         const focS=_micBox(focE, Math.max(4,Math.round(coarsePitch)));
         const winW=Math.min(W, Math.max(intervals*coarsePitch*1.3, coarsePitch*8)), wwI=Math.round(winW);
@@ -6140,25 +6152,35 @@
         const P=colSum(wx,ww), fit=_micFitTicks(P,intervals);
         if (!fit) return { error: 'tick fit failed' };
         const scale=(opts.imageW||W)/W, minorPitch=fit.pitch*scale;
-        return { pixelsSpan: minorPitch*intervals, minorPitch, nTicks: fit.n, totalPk: fit.peaks,
+        // exact span (spanMm/pitchMm need not be a whole number of ticks)
+        return { pixelsSpan: minorPitch*(opts.spanMm/opts.pitchMm), minorPitch, intervals,
+                 nTicks: fit.n, totalPk: fit.peaks,
                  rms: fit.rms*scale, errFrac: fit.rms/Math.abs(fit.pitch), angleDeg: 0,
                  win:{ wx, ww, y0, y1, yc:(y0+y1)/2, shear:0, pitchWork: fit.pitch },
                  prof: P, ticksU: fit.ticks };
     }
 
     // ── modal driver ──
-    let _calPhotoPx = null, _calPhotoDropBound = false;
-    function calPhotoPitchSave(){ try { localStorage.setItem('afMicPitch', document.getElementById('calphoto-pitch').value); } catch(e){} }
+    let _calPhotoPx = null, _calPhotoDropBound = false, _calPhotoGen = 0;
+    function _calPhotoResetUse(){
+        const u = document.getElementById('calphoto-use');
+        u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT';
+        _calPhotoPx = null;
+        document.getElementById('calphoto-prev').style.display='none';
+        document.getElementById('calphoto-prevcap').style.display='none';
+    }
+    function calPhotoPitchSave(){
+        const p = parseFloat(document.getElementById('calphoto-pitch').value);
+        if (isFinite(p) && p > 0) { try { localStorage.setItem('afMicPitch', String(p)); } catch(e){} }
+    }
     function openCalPhoto(){
         const m = document.getElementById('calphoto');
         document.getElementById('calphoto-span').textContent = (state.demarcDist||0.4).toFixed(2);
         try { const s=localStorage.getItem('afMicPitch'); if (s) document.getElementById('calphoto-pitch').value=s; } catch(e){}
         document.getElementById('calphoto-result').textContent = '';
         document.getElementById('calphoto-warn').textContent = '';
-        document.getElementById('calphoto-prev').style.display = 'none';
-        document.getElementById('calphoto-prevcap').style.display = 'none';
-        const use = document.getElementById('calphoto-use'); use.style.opacity='0.4'; use.style.pointerEvents='none';
-        _calPhotoPx = null;
+        _calPhotoGen++;                 // orphan any in-flight decode from a prior session
+        _calPhotoResetUse();
         if (!_calPhotoDropBound){
             const dz = document.getElementById('calphoto-drop');
             const stop = e => { e.preventDefault(); e.stopPropagation(); };
@@ -6175,13 +6197,17 @@
 
     function calPhotoHandleFile(file){
         const res = document.getElementById('calphoto-result'), warn = document.getElementById('calphoto-warn');
-        warn.textContent=''; res.style.color='var(--text-disabled)'; res.textContent = 'Reading ' + file.name + '…';
-        const pitchMm = parseFloat(document.getElementById('calphoto-pitch').value) || 0.01;
-        const spanMm  = state.demarcDist || 0.4;
+        const myGen = ++_calPhotoGen;        // newest request wins; older loads become orphans
+        warn.textContent=''; warn.style.color='#fa6'; res.style.color='var(--text-disabled)'; res.textContent = 'Reading ' + file.name + '…';
+        _calPhotoResetUse();                 // never leave a stale enabled USE while loading
+        const pp = parseFloat(document.getElementById('calphoto-pitch').value);
+        const pitchMm = (isFinite(pp) && pp > 0) ? pp : 0.01;
+        const spanMm  = (state.demarcDist > 0) ? state.demarcDist : 0.4;
         const url = URL.createObjectURL(file);
         const img = new Image();
-        img.onerror = ()=>{ URL.revokeObjectURL(url); res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
+        img.onerror = ()=>{ URL.revokeObjectURL(url); if (myGen!==_calPhotoGen) return; res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
         img.onload = ()=>{
+            if (myGen!==_calPhotoGen){ URL.revokeObjectURL(url); return; }
             try {
                 const NW = img.naturalWidth, NH = img.naturalHeight;
                 const cw = Math.min(NW, 4000), ch = Math.round(NH*cw/NW);
@@ -6206,21 +6232,36 @@
                                             { pitchMm, spanMm, imageW: photoW });
                 if (r.error){ res.style.color='#ff6a6a'; res.textContent='Analysis failed: ' + r.error; URL.revokeObjectURL(url); return; }
                 r.angleDeg = angle;
-                _calPhotoPx = Math.round(r.pixelsSpan);
-                const errPct = r.errFrac*100, good = errPct < 5;
+                const px = Math.round(r.pixelsSpan);
+                const errPct = r.errFrac*100;
+                // Sanity gate: a wrong-tier/harmonic lock, a wrong Tick pitch, or a
+                // non-micrometer photo all surface as far-too-few ticks for the declared
+                // span (or a high spacing error). Block USE so a silently-wrong count
+                // can't be captured; the preview still shows so the user sees why.
+                const tooFew = r.nTicks < r.intervals * 0.8;
+                const bad = tooFew || errPct > 8;
                 const tilt = Math.abs(angle) >= 0.02 ? ' · deskewed ' + angle.toFixed(2) + '°' : '';
                 res.style.color='var(--text-primary)';
-                res.innerHTML = '<b style="color:#7fff7f; font-size:14px;">' + _calPhotoPx + ' px</b> per ' + spanMm.toFixed(2) + ' mm<br>' +
-                    '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks · err ' +
-                    '<span style="color:' + (good?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
-                    ' · FOV ' + (spanMm*photoW/r.pixelsSpan).toFixed(3) + ' mm' + tilt + '</span>';
+                res.innerHTML = '<b style="color:' + (bad?'#fa6':'#7fff7f') + '; font-size:14px;">' + px + ' px</b> per ' + spanMm.toFixed(2) + ' mm<br>' +
+                    '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
+                    '<span style="color:' + (errPct<5?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
+                    ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt + '</span>';
                 drawCalPhotoPreview(srcCv, r);
-                if (NW !== photoW)
-                    warn.textContent = '⚠ Photo is ' + NW + ' px wide but Photo Width is set to ' + photoW +
-                        '. Set Photo Width to your camera\'s full width on the CALIBRATOR screen for best accuracy.';
-                const use = document.getElementById('calphoto-use');
-                use.textContent = 'USE ' + _calPhotoPx + ' px';
-                use.style.opacity='1'; use.style.pointerEvents='auto';
+                if (bad){
+                    warn.style.color='#ff6a6a';
+                    warn.textContent = tooFew
+                        ? '⚠ Only ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — check the Tick pitch, or use a clearer/closer photo. Not measured.'
+                        : '⚠ High spacing error — check focus and that the slide is flat. Not measured.';
+                    const u = document.getElementById('calphoto-use');
+                    u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
+                } else {
+                    _calPhotoPx = px;
+                    if (NW !== photoW)
+                        warn.textContent = 'ℹ Photo is ' + NW + ' px wide vs Photo Width ' + photoW +
+                            '. A downscaled full frame is fine; a CROPPED photo would mis-scale — use the full camera frame.';
+                    const use = document.getElementById('calphoto-use');
+                    use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
+                }
             } catch(e){ res.style.color='#ff6a6a'; res.textContent='Analysis error: ' + e.message; }
             URL.revokeObjectURL(url);
         };
@@ -6258,12 +6299,17 @@
 
     function calPhotoUse(){
         if (_calPhotoPx == null) return;
-        state.calRunPx = _calPhotoPx;
-        const el = document.getElementById('calrun-pixels'); if (el) el.textContent = _calPhotoPx + ' px';
+        const px = Math.max(1, _calPhotoPx);          // device rejects < 1
+        state.calRunPx = px;
+        const el = document.getElementById('calrun-pixels'); if (el) el.textContent = px + ' px';
         closeCalPhoto();
         const st = document.getElementById('calrun-status');
         if (st){ st.style.color='var(--accent-green)'; st.textContent = 'Pixels set from photo — review, then CAPTURE & SAVE.'; }
     }
+    // Prevent a missed drop (anywhere outside the drop zone) from navigating the
+    // tab to the file and unloading the app. The drop zone's own handler still runs.
+    window.addEventListener('dragover', e=>e.preventDefault());
+    window.addEventListener('drop',     e=>e.preventDefault());
 
     // POST a calibration to the device (it re-fits + saves + pushes fresh state).
     async function calioApply(cal) {
