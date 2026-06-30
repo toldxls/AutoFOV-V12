@@ -5695,7 +5695,12 @@
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, CW, CH);
 
-        const pts   = state.calGraphPoints || FACTORY_POINTS;
+        // Fall back to factory when the set is missing OR empty/too-short — an empty
+        // array is truthy, so a bare `|| FACTORY_POINTS` let `[]` through and the
+        // graph rendered "No data" (e.g. a custom calib whose points the device
+        // didn't persist, so it sends calGraphPoints:[]).
+        const pts   = (Array.isArray(state.calGraphPoints) && state.calGraphPoints.length >= 2)
+                          ? state.calGraphPoints : FACTORY_POINTS;
         const slope = state.fovSlope     ?? 8.40325;
         const intc  = state.fovIntercept ?? 1652.202;
         const rmse  = state.calibError   ?? 0.0060;
@@ -7968,24 +7973,31 @@
         }
         // ── Cal graph points (device sends full array after custom calibration) ──
         if (data.calGraphPoints !== undefined) {
-            state.calGraphPoints = data.calGraphPoints;
-            // Device is the source of truth for the point set — mirror it into the
-            // review list so the web can't drift out of sync (was: web 11 / dev 13).
-            // The device stores only dist+fov, so reverse the pixel count from the
-            // FOV formula (fov = demarc/px * sensorWidth -> px = demarc*sensorWidth/fov).
-            // Skipped while a capture is in flight (incremental calPointResult owns
-            // it) and for the factory-default set (not a user calibration).
-            if (!_pendingCalCapture && state.isCustomCalib) {
-                const dw = state.demarcDist, sw = state.photoWidth;
-                state.capturedPoints = data.calGraphPoints.map((p, i) => ({
-                    idx: i + 1,
-                    px: (p.fov > 0 && dw && sw) ? Math.round(dw * sw / p.fov) : 0,
-                    dist: p.dist, fov: p.fov
-                }));
-                state.calPointsCaptured = data.calGraphPoints.length;
-                if (state.screen === 'screen-calreview') renderCalReview();
+            // Only accept a usable scatter set (>=2 points). An empty/short array —
+            // e.g. a custom calib whose points the device never persisted, so it
+            // sends pointsCaptured=0 -> [] — must NOT clobber the factory preload or
+            // a set the user imported this session, or the graph drops to "No data".
+            const gp = Array.isArray(data.calGraphPoints) ? data.calGraphPoints : [];
+            if (gp.length >= 2) {
+                state.calGraphPoints = gp;
+                // Device is the source of truth for the point set — mirror it into the
+                // review list so the web can't drift out of sync (was: web 11 / dev 13).
+                // The device stores only dist+fov, so reverse the pixel count from the
+                // FOV formula (fov = demarc/px * sensorWidth -> px = demarc*sensorWidth/fov).
+                // Skipped while a capture is in flight (incremental calPointResult owns
+                // it) and for the factory-default set (not a user calibration).
+                if (!_pendingCalCapture && state.isCustomCalib) {
+                    const dw = state.demarcDist, sw = state.photoWidth;
+                    state.capturedPoints = gp.map((p, i) => ({
+                        idx: i + 1,
+                        px: (p.fov > 0 && dw && sw) ? Math.round(dw * sw / p.fov) : 0,
+                        dist: p.dist, fov: p.fov
+                    }));
+                    state.calPointsCaptured = gp.length;
+                    if (state.screen === 'screen-calreview') renderCalReview();
+                }
+                if (state.screen === 'screen-calgraph') drawCalGraph();
             }
-            if (state.screen === 'screen-calgraph') drawCalGraph();
         }
 
         // ── Cal point result (device echoes captured dist+fov) ──
