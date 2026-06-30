@@ -6415,7 +6415,7 @@
         const ctx=cv.getContext('2d'); ctx.clearRect(0,0,PW,PH);
         return { ctx, PW, PH, S:PH/designH };
     }
-    function _ctrDrawTarget(meanPct, sePct){
+    function _ctrDrawTarget(meanPct, sePct, col){
         const { ctx, PW, PH, S }=_ctrHiDPI(document.getElementById('centering-target'),108);
         const cx=PW/2, cy=PH/2, R=Math.min(PW,PH)*0.40, sc=R/3;   // px per 1% of half-field
         ctx.strokeStyle='#1e3a32'; ctx.lineWidth=Math.max(1,S);
@@ -6424,11 +6424,11 @@
         for (let k=1;k<=3;k++) ctx.fillText(k+'%', cx+R*k/3+2*S, cy-4*S);
         ctx.strokeStyle='#d04040'; ctx.lineWidth=Math.max(1,S);
         ctx.beginPath(); ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy); ctx.moveTo(cx,cy-R); ctx.lineTo(cx,cy+R); ctx.stroke();
-        const ox=cx+meanPct*sc, band=Math.abs(sePct)*sc;
-        ctx.fillStyle='rgba(61,219,122,0.18)'; ctx.fillRect(ox-band,cy-R,2*band,2*R);
-        ctx.strokeStyle='#3ddb7a'; ctx.lineWidth=Math.max(1.5,1.6*S);
+        const ox=cx+meanPct*sc, band=Math.abs(2*sePct)*sc;          // ±2σ (95%) band
+        ctx.save(); ctx.globalAlpha=0.16; ctx.fillStyle=col; ctx.fillRect(ox-band,cy-R,2*band,2*R); ctx.restore();
+        ctx.strokeStyle=col; ctx.lineWidth=Math.max(1.5,1.6*S);
         ctx.beginPath(); ctx.moveTo(ox,cy-R); ctx.lineTo(ox,cy+R); ctx.stroke();
-        ctx.fillStyle='#3ddb7a'; ctx.beginPath(); ctx.arc(ox,cy,Math.max(2,2.4*S),0,2*Math.PI); ctx.fill();
+        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(ox,cy,Math.max(2,2.4*S),0,2*Math.PI); ctx.fill();
         ctx.fillStyle='#7fd8c0'; ctx.font=Math.round(8.5*S)+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
         ctx.fillText('optical centre — L/R only (vertical pending)', cx, PH-2*S);
     }
@@ -6463,7 +6463,7 @@
         const dz=document.getElementById('centering-drop');
         dz.style.padding='5px 8px'; dz.style.fontSize='9px'; dz.style.lineHeight='1.3';
         dz.innerHTML='Analyzing the set…';
-        const offs=[], pts=[]; let edgeSum=0, edgeMax=0, edgeN=0, used=0;
+        const offs=[], pts=[]; let edgeSum=0, edgeMax=0, edgeN=0, used=0, umpxMin=Infinity, umpxMax=0;
         for (let i=0;i<list.length;i++){
             res.innerHTML='Analyzing '+(i+1)+' / '+list.length+'…';
             await new Promise(r=>setTimeout(r,0));                 // let the UI paint between frames
@@ -6476,7 +6476,11 @@
             // neutral-point offset (% of half-field); reject wild extrapolations from a
             // weak-slope frame whose zero-crossing lands far outside the frame.
             const off=(fR.slope!==0)?(-fR.intc/fR.slope - sw.cx)/(sw.W/2)*100:1e9;
-            if (Math.abs(dl-dr)>0.8 && Math.abs(off)<50) offs.push(off);
+            if (Math.abs(dl-dr)>0.8 && Math.abs(off)<50){
+                offs.push(off);
+                if (sw.umpx<umpxMin) umpxMin=sw.umpx;   // track magnification spread of the
+                if (sw.umpx>umpxMax) umpxMax=sw.umpx;    // frames that actually drive the centre
+            }
             for (let k=0;k<sw.xs.length;k++){ const f=(sw.xs[k]-sw.cx)/(sw.W/2), dRum=sw.dR[k]*sw.umpx;
                 pts.push({ f, dR:dRum, dB:sw.dB[k]*sw.umpx });
                 if (Math.abs(f)>0.8){ edgeSum+=Math.abs(dRum); edgeMax=Math.max(edgeMax,Math.abs(dRum)); edgeN++; } }
@@ -6486,14 +6490,27 @@
             res.innerHTML='Could not get a reliable signal.<br><span style="color:var(--text-disabled);">Use the full uncropped micrometer .jpg series.</span>'; return; }
         const n=offs.length, mean=offs.reduce((a,b)=>a+b,0)/n;
         const sd=Math.sqrt(offs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1)), se=sd/Math.sqrt(n);
-        const centered=!(Math.abs(mean)>2.5*se && Math.abs(mean)>1.0);
         const edgeAvg=edgeN?edgeSum/edgeN:0;
-        _ctrDrawTarget(mean,se); _ctrDrawMag(pts);
+        // Monotonic 3-state verdict. The OFFSET MAGNITUDE alone decides centred-vs-off
+        // (a bigger offset can never read "more centred"); the error bar / sweep
+        // coverage can only downgrade confidence to INCONCLUSIVE, never flip it.
+        // A definitive call needs a real magnification sweep — the per-frame neutral
+        // point is a fragile extrapolation that drifts with magnification, so only a
+        // balanced sweep averages that bias out (a one-sided subset reads ±several %).
+        const TOL=1.0, d=Math.abs(mean);
+        const magRange=(umpxMin>0 && umpxMin<umpxMax)?umpxMax/umpxMin:1;
+        const reliable=(n>=6 && magRange>=1.4);
+        let col, lbl, note;
+        if (!reliable){ col='#fd5'; lbl='INCONCLUSIVE'; note=' — need a fuller magnification sweep'; }
+        else if (d<=TOL){ col='#7fff7f'; lbl='WELL-CENTERED ✓'; note=''; }
+        else if (d>2*se){ col='#fa6'; lbl='OFF-AXIS ⚠'; note=' — optical axis offset'; }
+        else { col='#fd5'; lbl='INCONCLUSIVE'; note=' — not resolved from noise'; }
+        _ctrDrawTarget(mean,se,col); _ctrDrawMag(pts);
         res.style.color='var(--text-primary)';
         res.innerHTML =
-            '<b style="color:'+(centered?'#7fff7f':'#fa6')+';">'+(centered?'WELL-CENTERED ✓':'OFF-AXIS ⚠')+'</b>'+
+            '<b style="color:'+col+';">'+lbl+'</b>'+
             '<span style="font-size:9.5px; color:var(--text-disabled); line-height:1.35;"> (L/R)<br>'+
-            'centre '+mean.toFixed(2)+'% ± '+se.toFixed(2)+'% of half-field'+(centered?'':' — off-axis')+' · CA '+
+            'centre '+mean.toFixed(2)+'% ± '+se.toFixed(2)+'% of half-field'+note+' · CA '+
             edgeAvg.toFixed(2)+'/'+edgeMax.toFixed(2)+' µm avg/max · '+used+' frames<br>'+
             '&#8635; reshoot vertical for the top/bottom axis</span>';
         dz.innerHTML='&#10003; '+used+' frames · tap to load a different set';
