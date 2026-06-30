@@ -890,6 +890,10 @@
             <!-- ===================== CALIBRATOR SETTINGS ===================== -->
             <div id="screen-calsettings" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 105px;">CALIBRATOR</div>
+                <!-- How-to overlay (mirrors the device's CALIBRATOR "i" button). -->
+                <div class="gfx-btn" style="left: 116px; top: 5px; width: 26px; height: 26px;
+                     background:#0a2838; border:1px solid #2a7a9a; color:#5ad6ff; font-size:14px; font-weight:bold;"
+                     onclick="openCalHelp()" title="How to calibrate">i</div>
                 <!-- V12.3: backup / restore / share calibration (firmware /calib endpoints) -->
                 <div class="gfx-btn" style="left: 148px; top: 5px; width: 87px; height: 26px;
                      background:#0a3344; border:1px solid #2a7a9a; font-size:10px;"
@@ -940,35 +944,35 @@
                     <div id="calrun-pixels" class="gfx-text" style="width: 200px; text-align: center; top: 7px; font-size: 20px; color: var(--accent-green); font-weight: bold;">1920 px</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 20px; top: 84px; width: 200px; height: 19px;
-                     background: #08140f; border: 1px solid #2a7a6a; color: #7fd8c0; font-size: 10px;"
+                <div class="gfx-btn" style="left: 20px; top: 90px; width: 200px; height: 24px;
+                     background: #08140f; border: 1px solid #2a7a6a; color: #7fd8c0; font-size: 11px;"
                      onclick="openCalPhoto()" title="Measure the pixel count from a micrometer photo">&#128247; MEASURE FROM PHOTO</div>
 
-                <div class="adj-row" style="top: 104px;">
+                <div class="adj-row" style="top: 122px;">
                     <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">◄◄</div>
                     <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCalRun(-1)">◄</div>
                     <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCalRun(1)">►</div>
                     <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCalRun(2)">►►</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 10px; top: 150px; width: 220px; height: 32px;
+                <div class="gfx-btn" style="left: 10px; top: 168px; width: 220px; height: 32px;
                      background: #ADFF2F; color: #000; font-size: 13px;" onclick="calCaptureSave()">CAPTURE &amp; SAVE</div>
 
                 <!-- Mini scatter+regression (hidden until ≥3 points). Lets the user
                      spot outliers in real-time instead of waiting for finalize. -->
-                <div id="calrun-mini-wrap" style="position: absolute; left: 8px; top: 188px; width: 224px; height: 62px; display: none;">
+                <div id="calrun-mini-wrap" style="position: absolute; left: 8px; top: 206px; width: 224px; height: 62px; display: none;">
                     <canvas id="calrun-mini-graph" width="224" height="62" style="display: block; background: #050505;"></canvas>
                     <div id="calrun-mini-resid" class="gfx-text" style="right: 4px; top: 2px; font-size: 9px; color: var(--text-muted);"></div>
                 </div>
 
-                <div class="gfx-btn" style="left: 5px; top: 256px; width: 72px; height: 32px;
+                <div class="gfx-btn" style="left: 5px; top: 272px; width: 72px; height: 32px;
                      background: #000; border: 1px solid #787878; font-size: 11px;" onclick="calGoBack()">BACK</div>
-                <div id="btn-review" class="gfx-btn" style="left: 82px; top: 256px; width: 72px; height: 32px;
+                <div id="btn-review" class="gfx-btn" style="left: 82px; top: 272px; width: 72px; height: 32px;
                      background: #101010; color: #787878; font-size: 11px;" onclick="calReview()">REVIEW</div>
-                <div class="gfx-btn" style="left: 159px; top: 256px; width: 76px; height: 32px;
+                <div class="gfx-btn" style="left: 159px; top: 272px; width: 76px; height: 32px;
                      background: #780000; font-size: 11px;" onclick="calCancel()">CANCEL</div>
 
-                <div id="calrun-status" class="gfx-text" style="left: 5px; top: 295px; color: var(--accent-green); font-size: 10px;"></div>
+                <div id="calrun-status" class="gfx-text" style="left: 5px; top: 308px; color: var(--accent-green); font-size: 10px;"></div>
             </div>
 
             <!-- ===================== BRIGHTNESS SETTINGS ===================== -->
@@ -1738,6 +1742,45 @@
                          style="position:relative; left:0; top:0; width:100%; height:34px;
                                 background:#143a14; border:1px solid #2a7a2a; color:#7fff7f;
                                 font-size:12px; opacity:0.4; pointer-events:none;">USE MEASUREMENT</div>
+                </div>
+            </div>
+
+            <!-- ===== CALIBRATION HOW-TO overlay (CALIBRATOR "i" button) ===== -->
+            <div id="calhelp" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px; text-align:center;
+                     color:#5ad6ff; font-size:12px; font-weight:bold; letter-spacing:0.5px;
+                     border-bottom:1px solid #1c3a4a;">HOW TO CALIBRATE
+                    <div class="gfx-btn" onclick="closeCalHelp()" style="top:3px; left:205px; width:30px;
+                         height:26px; background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:9px 12px 12px; font-size:10px;
+                     line-height:1.5; color:var(--text-disabled);">
+                    <div style="color:#5ad6ff; font-weight:bold;">What it does</div>
+                    AutoFOV reads the distance to your subject and converts it to a field-of-view width.
+                    Calibration fits that distance→FOV curve to YOUR bellows and camera from a few points.
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">You'll need</div>
+                    A stage micrometer (a ruler of known scale) in the frame, so the pixel width of a known
+                    distance can be measured at each step.
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">The three settings</div>
+                    <b>Photo Width</b> — your camera's image width in px (e.g. 6960).<br>
+                    <b>Demarc Dist</b> — the real width (mm) you measure pixels across (default 0.40).<br>
+                    <b>Cal Points</b> — a TARGET step count; you don't have to hit it exactly.
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Steps</div>
+                    1. Set Photo Width &amp; Demarc Dist, then <b>START CAL</b>.<br>
+                    2. At each bellows distance, fill in the pixel count — either type it, or tap
+                    <b>&#128247; MEASURE FROM PHOTO</b> and drop a micrometer JPEG to measure it automatically.<br>
+                    3. Tap <b>CAPTURE &amp; SAVE</b> (pairs your pixels with the live ToF distance).<br>
+                    4. Move the bellows ~10 mm and repeat across its full range.
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Measure from photo</div>
+                    Drop a JPEG of the micrometer; it finds the ticks, deskews any tilt, and fills the pixel
+                    field. It refuses to apply a result it can't trust (too few ticks / high error) — retake
+                    or check the Tick pitch if so. Shoot JPEG (or RAW+JPEG); a full uncropped frame.
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Stop anytime · review</div>
+                    Capture points at whatever spacing you manage, then <b>FINISH</b> to fit from exactly the
+                    points you took. Use 3+ (5+ across the whole range is better). <b>REVIEW</b> lets you check
+                    or RETAKE any point. <b>CAL I/O</b> backs up / restores / shares a calibration.
                 </div>
             </div>
 
@@ -5900,6 +5943,8 @@
     // is owner-curated: SAVE downloads a named file to commit; LOAD reads the
     // published calibrations/ folder. Imports re-fit on the device.
     // ─────────────────────────────────────────────────────────────────────────
+    function openCalHelp()  { document.getElementById('calhelp').style.display = 'flex'; }
+    function closeCalHelp() { document.getElementById('calhelp').style.display = 'none'; }
     function calioOpen()  { document.getElementById('calio').style.display = 'flex'; calioStatus(''); }
     function calioClose() {
         document.getElementById('calio').style.display = 'none';

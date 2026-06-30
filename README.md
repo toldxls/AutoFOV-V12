@@ -4,10 +4,12 @@ AutoFOV is a specialized photomicroscopy field-of-view (FOV) calculator and auto
 
 V12 adds a full real-time vibration monitoring and analysis system using the onboard LSM6DSOX IMU, with per-axis FFT spectral analysis, a settle-time estimator, and a high-resolution web analyzer panel.
 
+V12.3 adds **photo-assisted calibration** — drop a stage-micrometer JPEG on the web dashboard and it measures the pixel count across the demarcation window automatically (periodic tick detection, sub-pixel centroids, and image deskew), then auto-fills the calibration point. Calibrations can also be exported/imported and shared as `.json`/`.txt`.
+
 ## Features
 
 * **Real-Time FOV Calculation:** Uses a VL53L4CX ToF sensor to measure distance and computes FOV for 5×, 10×, and 20× objectives.
-* **Custom Calibration:** Calibrate the device to your specific optical setup using a scaled micrometer. Calculates standard error (RMSE) and R² of the calibration fit.
+* **Custom Calibration:** Calibrate the device to your specific optical setup using a stage micrometer. Count the pixels by hand, or — on the web dashboard — drop a micrometer JPEG and **Measure from Photo** finds the periodic ticks, deskews any stage tilt, and fills the pixel count automatically (refusing any result it can't trust). Calculates standard error (RMSE) and R² of the fit, and points can be exported/imported as `.json`/`.txt`.
 * **Stack Calculator:** Automatically calculates image overlap % and total depth from step size, and required image count based on objective NA and depth of field.
 * **Stack-Complete Notifications:** Pushes a `stackDone` WebSocket event to every connected dashboard (browser Notification + audible alert beeps) and, optionally, an ntfy.sh push so a phone away from the bench can hear the stack finish. A dashboard toast also offers a one-click **Save PNG** summary card with run stats, vibration RMS, and per-axis estimated pixel blur.
 * **Web Dashboard & Telemetry:** Connects to WiFi to provide a ~30 Hz live data stream (distance, FOV, ToF signal rate, vibration) and full remote control of settings.
@@ -139,10 +141,30 @@ Access via **SETTINGS → VIBRATION** on the device or web dashboard. The state 
 
 ### Calibration
 
-1. Tap **CALIBRATE** on the main screen.
-2. Set photo width (pixels) and demarcation distance (default 0.4 mm).
-3. Capture 3–20 points at varying distances.
-4. The device fits a linear regression and saves slope, intercept, R², and RMSE to NVS.
+Calibration fits the distance→FOV curve to your bellows/camera from a few points
+across the focus range. (Both the device and the dashboard CALIBRATOR page have an
+**i** button with in-app help.)
+
+1. **CALIBRATE** on the main screen (or the dashboard's CALIBRATOR page).
+2. Set **Photo Width** (your camera's pixel width, e.g. 6960) and **Demarc Dist** —
+   the real width in mm you measure pixels across (default 0.4 mm).
+3. **START CAL**, then at each bellows distance fill in the pixel count spanning the
+   demarcation on a stage-micrometer shot: type it, or on the dashboard tap
+   **📷 MEASURE FROM PHOTO** and drop a micrometer JPEG to measure it automatically.
+   **CAPTURE & SAVE** pairs that pixel count with the live ToF distance.
+4. Move the bellows (~10 mm) and repeat across the range. Stop anytime and **FINISH**
+   (3–20 points); **REVIEW** to check or RETAKE a point.
+5. The device fits a pixel-space linear regression (`pixels = slope·dist + intercept`)
+   and saves slope, intercept, R², and RMSE to NVS.
+
+**Measure from Photo (dashboard).** Decodes a JPEG, detects the periodic micrometer
+ticks, deskews any stage tilt, measures the pixels across the demarcation window, and
+auto-fills the pixel field — pairing with the device's live ToF reading at capture.
+It refuses to apply a measurement it can't trust (too few ticks for the declared span,
+or high spacing error). JPEG only (browsers can't decode RAW): shoot JPEG or RAW+JPEG,
+a full **uncropped** frame; export RAW→JPEG first if needed. The dashboard
+**CALIBRATION POINTS** view lists the active/factory points and exports them as `.txt`,
+and **CAL I/O** backs up, restores, or shares a calibration via `.json`/`.txt`.
 
 ## License
 
