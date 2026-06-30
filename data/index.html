@@ -6318,17 +6318,19 @@
     function drawCalPhotoPreview(srcCanvas, r, spanMm){
         const pv = document.getElementById('calphoto-prev'), cap = document.getElementById('calphoto-prevcap');
         pv.style.display='block';
-        if (cap){ cap.style.display='block';
-            cap.innerHTML = (spanMm||0.4).toFixed(2) + ' mm measured span · contrast profile below · ' +
-                '<span style="color:#fb0;">|</span> = tick centroid'; }
         const px = pv.getContext('2d'), PW=pv.width, PH=pv.height;
         px.clearRect(0,0,PW,PH);
         const win=r.win, prof=r.prof, ww=win.ww;
         const pw=win.pitchWork||10, ticks=r.ticksU||[];
         const uc = ticks.length ? ticks[Math.floor(ticks.length/2)] : ww/2;
-        // Show the FULL measured span (intervals tick-gaps), centred — the
-        // inspection covers the whole 0.4 mm that was measured, not a sub-zoom.
-        const half=Math.min(ww/2, (r.intervals||40)*pw/2);
+        // Show ~20 ticks from the middle of the measured region — the full span is
+        // too dense to read; this is a legible window onto it (not the whole span).
+        const showT = Math.min(20, r.intervals||40);
+        const half = Math.min(ww/2, showT*pw/2);
+        if (cap){ cap.style.display='block';
+            const shownMm = (spanMm||0.4)*showT/(r.intervals||40);
+            cap.innerHTML = shownMm.toFixed(2) + ' mm of ' + (spanMm||0.4).toFixed(2) +
+                ' mm span · contrast profile · <span style="color:#fb0;">|</span> = centroid'; }
         const u0=Math.max(0, Math.min(ww-2*half, uc-half)), u1=Math.min(ww, u0+2*half), uw=u1-u0||1;
         const stripH=46, profY=stripH+3, profH=PH-profY;
         // 1) zoomed crop of the deskewed sub-window (ticks vertical)
