@@ -6291,7 +6291,7 @@
                     '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
                     '<span style="color:' + (errPct<5?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
                     ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt + '</span>';
-                drawCalPhotoPreview(srcCv, r);
+                drawCalPhotoPreview(srcCv, r, spanMm);
                 if (bad){
                     warn.style.color='#ff6a6a';
                     warn.textContent = tooFew
@@ -6315,15 +6315,20 @@
     // Preview: a legible zoom of the sharpest region (from the DESKEWED working
     // image, so ticks are vertical) plus the contrast profile beneath it. Orange
     // marks show where each detected centroid landed on the demarcation peaks.
-    function drawCalPhotoPreview(srcCanvas, r){
+    function drawCalPhotoPreview(srcCanvas, r, spanMm){
         const pv = document.getElementById('calphoto-prev'), cap = document.getElementById('calphoto-prevcap');
-        pv.style.display='block'; if (cap) cap.style.display='block';
+        pv.style.display='block';
+        if (cap){ cap.style.display='block';
+            cap.innerHTML = (spanMm||0.4).toFixed(2) + ' mm measured span · contrast profile below · ' +
+                '<span style="color:#fb0;">|</span> = tick centroid'; }
         const px = pv.getContext('2d'), PW=pv.width, PH=pv.height;
         px.clearRect(0,0,PW,PH);
         const win=r.win, prof=r.prof, ww=win.ww;
         const pw=win.pitchWork||10, ticks=r.ticksU||[];
         const uc = ticks.length ? ticks[Math.floor(ticks.length/2)] : ww/2;
-        const half=Math.min(ww/2, pw*8);
+        // Show the FULL measured span (intervals tick-gaps), centred — the
+        // inspection covers the whole 0.4 mm that was measured, not a sub-zoom.
+        const half=Math.min(ww/2, (r.intervals||40)*pw/2);
         const u0=Math.max(0, Math.min(ww-2*half, uc-half)), u1=Math.min(ww, u0+2*half), uw=u1-u0||1;
         const stripH=46, profY=stripH+3, profH=PH-profY;
         // 1) zoomed crop of the deskewed sub-window (ticks vertical)
