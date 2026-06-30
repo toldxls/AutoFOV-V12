@@ -6292,7 +6292,7 @@
     // projection cross-correlation across the field → R/G neutral point vs the
     // frame centre) and the bullseye + line-plot render land next; the method is
     // validated on the existing micrometer set.
-    let _centeringDropBound = false;
+    let _centeringDropBound = false, _ctrGen = 0;
     function openCentering(){
         const m = document.getElementById('centering');
         if (!_centeringDropBound){
@@ -6303,9 +6303,18 @@
                 if (e.dataTransfer && e.dataTransfer.files.length) centeringHandleFiles(e.dataTransfer.files);});
             _centeringDropBound = true;
         }
+        _ctrGen++;                                   // invalidate any stale in-flight run
+        const res=document.getElementById('centering-result'), dz=document.getElementById('centering-drop');
+        res.style.color='var(--text-disabled)';
+        res.innerHTML='Drop your micrometer <b>.jpg</b> series to check <b>left/right</b> lens centering — it '+
+            'measures the R/G lateral-CA neutral point vs the frame centre.';
+        dz.style.padding='9px 8px'; dz.style.fontSize='10px'; dz.style.lineHeight='1.4';
+        dz.innerHTML='Drop the calibration set<br><span style="color:#5a8;">(the .jpg micrometer series)</span>';
+        document.getElementById('centering-target').style.display='none';
+        document.getElementById('centering-mag').style.display='none';
         m.style.display='flex';
     }
-    function closeCentering(){ document.getElementById('centering').style.display='none'; }
+    function closeCentering(){ _ctrGen++; document.getElementById('centering').style.display='none'; }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
     // Analysis ported from the validated ca_align.py prototype. The micrometer
     // ticks are vertical edges spanning the field; per-channel column projections
@@ -6339,7 +6348,7 @@
         const W=pG.length; let mean=0; for (let i=0;i<W;i++) mean+=pG[i]; mean/=W;
         const a=new Float64Array(W); for (let i=0;i<W;i++) a[i]=pG[i]-mean;
         const lo=30, hi=Math.min(160,W-1); let best=lo, bv=-1e300;
-        for (let L=lo;L<hi;L++){ let s=0; for (let i=0;i<W-L;i++) s+=a[i]*a[i+L]; if (s>bv){ bv=s; best=L; } }
+        for (let L=lo;L<hi;L++){ let s=0; for (let i=0;i<W-L;i++) s+=a[i]*a[i+L]; s/=(W-L); if (s>bv){ bv=s; best=L; } }
         return best;
     }
     function _ctrSubpix(a, b, maxlag){           // shift of a rel. to b (+ = a right), parabolic refine
@@ -6446,6 +6455,7 @@
     }
     async function centeringHandleFiles(files){
         const res=document.getElementById('centering-result');
+        const myGen=++_ctrGen;                       // newest run wins; stale runs bail after each await
         const list=[...files].filter(f=>/\.(jpe?g|png)$/i.test(f.name)||/^image\//.test(f.type));
         if (list.length<2){ res.style.color='#ff6a6a';
             res.textContent='Drop the whole micrometer .jpg series (2+ frames) — the centering test needs the magnification sweep.'; return; }
@@ -6458,15 +6468,20 @@
             res.innerHTML='Analyzing '+(i+1)+' / '+list.length+'…';
             await new Promise(r=>setTimeout(r,0));                 // let the UI paint between frames
             let sw=null; try { sw=await _ctrDecode(list[i]); } catch(e){ sw=null; }
+            if (myGen!==_ctrGen) return;             // a newer run started, or the modal closed
             if (!sw || sw.xs.length<4) continue;
             used++;
             const fR=_ctrFit(sw.xs,sw.dR), last=sw.xs.length-1;
             const dl=fR.slope*sw.xs[0]+fR.intc, dr=fR.slope*sw.xs[last]+fR.intc;
-            if (Math.abs(dl-dr)>0.8 && fR.slope!==0) offs.push((-fR.intc/fR.slope - sw.cx)/(sw.W/2)*100);
+            // neutral-point offset (% of half-field); reject wild extrapolations from a
+            // weak-slope frame whose zero-crossing lands far outside the frame.
+            const off=(fR.slope!==0)?(-fR.intc/fR.slope - sw.cx)/(sw.W/2)*100:1e9;
+            if (Math.abs(dl-dr)>0.8 && Math.abs(off)<50) offs.push(off);
             for (let k=0;k<sw.xs.length;k++){ const f=(sw.xs[k]-sw.cx)/(sw.W/2), dRum=sw.dR[k]*sw.umpx;
                 pts.push({ f, dR:dRum, dB:sw.dB[k]*sw.umpx });
                 if (Math.abs(f)>0.8){ edgeSum+=Math.abs(dRum); edgeMax=Math.max(edgeMax,Math.abs(dRum)); edgeN++; } }
         }
+        if (myGen!==_ctrGen) return;                 // superseded while finishing
         if (offs.length<2){ res.style.color='#ff6a6a'; dz.innerHTML='Drop the .jpg series';
             res.innerHTML='Could not get a reliable signal.<br><span style="color:var(--text-disabled);">Use the full uncropped micrometer .jpg series.</span>'; return; }
         const n=offs.length, mean=offs.reduce((a,b)=>a+b,0)/n;
