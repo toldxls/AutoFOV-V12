@@ -2421,6 +2421,11 @@
         <b>MTF50</b> — perceived-sharpness benchmark. <b>MTF10</b> — practical
         resolution limit (&asymp;Rayleigh 9% contrast); min sep &micro;m = 1000/MTF10.
         <b>MTF5</b> — approximate by-eye extinction (&asymp;5% contrast, invisible below).
+        The measured noise floor (read beyond the objective&rsquo;s cutoff, where true
+        MTF is zero) is power-subtracted before the markers are placed — without it
+        MTF10/MTF5 read the noise as resolution. In-camera JPEG sharpening can still
+        inflate the tail: for honest numbers shoot RAW&rarr;unsharpened TIFF or set
+        sharpening to 0.
         <b>equiv NA</b> — the diffraction-limited NA whose ideal curve best fits the
         measurement (green dashed): the system &ldquo;performs like&rdquo; this NA. It
         is a lower bound on the true aperture (aberrations/defocus lower it) and is
@@ -7131,6 +7136,26 @@
         const mr=_mtfCombine(found);
         const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
         const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
+        // noise-floor correction: beyond the objective's diffraction cutoff the true
+        // MTF must be zero, so the measured level there IS the noise floor (|DFT| of
+        // a noisy LSF is positively biased). Power-subtract it so the tail markers
+        // (MTF10/MTF5) don't read the floor as resolution.
+        let floor=0;
+        {
+            const objNAf=NA_TABLE[state.obj]||NA, cutF=2*objNAf/0.55*1000;
+            if(umpx>0){
+                const tail=[];
+                for(let i=0;i<mr.mtf.length;i++)
+                    if(mr.freqs[i]/umpx*1000 > cutF) tail.push(mr.mtf[i]);
+                if(tail.length>=5){ tail.sort((a,b)=>a-b); floor=tail[tail.length>>1]; }
+                if(floor>0.25) floor=0;          // garbage tail — don't "correct" with it
+            }
+            if(floor>0){
+                const f2=floor*floor;
+                for(let i=1;i<mr.mtf.length;i++)
+                    mr.mtf[i]=Math.sqrt(Math.max(0, mr.mtf[i]*mr.mtf[i]-f2));
+            }
+        }
         const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1)),
               f05=lp(_mtfAt(mr.freqs,mr.mtf,0.05));
         const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
@@ -7164,7 +7189,8 @@
             (isFinite(naEq)?' · <b style="color:#59c9a5;">equiv NA '+naEq.toFixed(2)+'</b>':'')+')<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · min sep ~'+(isFinite(f10)?(1000/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
-            mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)'+warn+'</span>';
+            mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)'+
+            (floor>0?' · noise floor '+floor.toFixed(3)+' subtracted':'')+warn+'</span>';
         if(umpx>0) _mtfDrawPlot(_mtfLast);
     }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
