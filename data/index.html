@@ -934,8 +934,10 @@
                      onclick="startCal()">START CAL</div>
                 <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 208px; width: 105px; height: 46px; background: #780000;"
                      onclick="resetAll()">RESET ALL</div>
-                <div class="gfx-btn flat" style="left: 10px; top: 260px; width: 220px; height: 26px; font-size: 12px;"
-                     onclick="openCentering()" title="Check left/right lens centering from a calibration set">&#9678; LENS CENTERING</div>
+                <div class="gfx-btn flat" style="left: 10px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
+                     onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTERING</div>
+                <div class="gfx-btn flat" style="left: 125px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
+                     onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot">MTF</div>
                 <div class="gfx-btn" style="left: 60px; top: 291px; width: 120px; height: 25px; background: #FF0000;"
                      onclick="switchScreen('screen-main')">CANCEL</div>
             </div>
@@ -1823,6 +1825,56 @@
                                    background:#000; border:1px solid #222;"></canvas>
                     <canvas id="centering-mag" width="220" height="64"
                             style="display:none; width:220px; height:64px; margin-top:5px;
+                                   background:#000; border:1px solid #222;"></canvas>
+                </div>
+            </div>
+
+            <!-- ===== MTF / RESOLUTION overlay (slanted-edge from a USAF target shot) ===== -->
+            <div id="mtf" style="display:none; position:absolute; top:0; left:0;
+                 width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
+                 flex-direction:column;">
+                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px; text-align:center;
+                     color:#3ddb7a; font-size:12px; font-weight:bold; letter-spacing:0.5px;
+                     border-bottom:1px solid #1c4a3a;">MTF / RESOLUTION
+                    <div class="gfx-btn" onclick="closeMtf()" style="top:3px; left:205px; width:30px;
+                         height:26px; background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 8px;">
+                    <div style="display:flex; gap:5px; align-items:center; font-size:9px; color:var(--text-disabled); margin-bottom:6px;">
+                        <span>Grp</span><input id="mtf-group" type="number" min="0" max="9" value="4"
+                              style="width:32px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
+                        <span>Elem</span><input id="mtf-elem" type="number" min="1" max="6" value="2"
+                              style="width:32px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
+                        <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29"
+                              style="width:44px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
+                    </div>
+                    <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()"
+                         style="border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
+                                padding:11px 8px; text-align:center; color:#7fd8c0; font-size:10px;
+                                line-height:1.4; cursor:pointer;">
+                        Drop a crop of the element<br><span style="color:#5a8;">(element filling the frame, best focus)</span>
+                    </div>
+                    <input type="file" id="mtf-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                           style="display:none;" onchange="mtfChosen(this)">
+                    <div id="mtf-prevwrap" style="display:none; position:relative; margin-top:6px; width:220px; height:150px;">
+                        <canvas id="mtf-prev" width="220" height="150"
+                                style="width:220px; height:150px; background:#000; border:1px solid #222; display:block;"></canvas>
+                        <div id="mtf-roi" style="position:absolute; border:1.5px solid #3ddb7a;
+                             background:rgba(61,219,122,0.12); box-sizing:border-box; cursor:move; touch-action:none;">
+                            <div id="mtf-roi-h" style="position:absolute; right:-5px; bottom:-5px; width:12px; height:12px;
+                                 background:#3ddb7a; border-radius:2px; cursor:nwse-resize; touch-action:none;"></div>
+                        </div>
+                    </div>
+                    <div id="mtf-hint" style="display:none; font-size:9px; color:#7a958c; margin-top:2px;">
+                        drag the box onto a clean bar edge (~5° slanted), then MEASURE</div>
+                    <div class="gfx-btn flat" id="mtf-run" onclick="mtfMeasure()"
+                         style="display:none; position:relative; left:auto; top:auto; width:100%; height:26px; margin-top:6px; font-size:11px;">MEASURE</div>
+                    <div id="mtf-result" style="margin-top:7px; font-size:11px; line-height:1.45;
+                         color:var(--text-disabled); min-height:28px;">
+                        Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.
+                    </div>
+                    <canvas id="mtf-plot" width="220" height="150"
+                            style="display:none; width:220px; height:150px; margin-top:6px;
                                    background:#000; border:1px solid #222;"></canvas>
                 </div>
             </div>
@@ -6315,6 +6367,225 @@
         m.style.display='flex';
     }
     function closeCentering(){ _ctrGen++; document.getElementById('centering').style.display='none'; }
+
+    // ── MTF / RESOLUTION (slanted-edge, from a USAF target shot) ──
+    // Step 1: modal + decode + draggable/resizable auto-suggested ROI. The
+    // analysis (JS port of the validated slanted-edge prototype) + the MTF curve
+    // plot land next.  ROI coords are in preview-canvas pixels.
+    let _mtfGen=0, _mtfImg=null, _mtfDropBound=false, _mtfRoi={x:0,y:0,w:0,h:0}, _mtfFit=null, _mtfLast=null;
+    const _MTF_LUT=(()=>{ const t=new Float64Array(256); for(let i=0;i<256;i++){ const v=i/255; t[i]=v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); } return t; })();
+    function openMtf(){
+        const m=document.getElementById('mtf');
+        if (!_mtfDropBound){
+            const dz=document.getElementById('mtf-drop');
+            dz.addEventListener('dragover', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#0d2a1e';});
+            dz.addEventListener('dragleave',e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';});
+            dz.addEventListener('drop', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';
+                if (e.dataTransfer && e.dataTransfer.files.length) mtfHandleFile(e.dataTransfer.files[0]);});
+            _mtfBindRoi();
+            _mtfDropBound=true;
+        }
+        _mtfGen++;
+        document.getElementById('mtf-prevwrap').style.display='none';
+        document.getElementById('mtf-run').style.display='none';
+        document.getElementById('mtf-hint').style.display='none';
+        document.getElementById('mtf-plot').style.display='none';
+        const res=document.getElementById('mtf-result'); res.style.color='var(--text-disabled)';
+        res.innerHTML='Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.';
+        m.style.display='flex';
+    }
+    function closeMtf(){ _mtfGen++; document.getElementById('mtf').style.display='none'; }
+    function mtfChosen(input){ if (input.files && input.files[0]) mtfHandleFile(input.files[0]); input.value=''; }
+    function _mtfSetRoi(x,y,w,h){
+        const cv=document.getElementById('mtf-prev');
+        w=Math.max(24,Math.min(w,cv.width)); h=Math.max(24,Math.min(h,cv.height));
+        x=Math.max(0,Math.min(x,cv.width-w)); y=Math.max(0,Math.min(y,cv.height-h));
+        _mtfRoi={x,y,w,h};
+        const el=document.getElementById('mtf-roi');
+        el.style.left=x+'px'; el.style.top=y+'px'; el.style.width=w+'px'; el.style.height=h+'px';
+    }
+    function _mtfBindRoi(){
+        const el=document.getElementById('mtf-roi'), hd=document.getElementById('mtf-roi-h'),
+              wrap=document.getElementById('mtf-prevwrap'), cv=document.getElementById('mtf-prev');
+        const local=e=>{ const r=wrap.getBoundingClientRect();
+            return { x:(e.clientX-r.left)*cv.width/r.width, y:(e.clientY-r.top)*cv.height/r.height }; };
+        let mode=null, off={x:0,y:0};
+        el.addEventListener('pointerdown', e=>{ if(e.target===hd) return; e.preventDefault();
+            el.setPointerCapture(e.pointerId); mode='move'; const p=local(e); off={x:p.x-_mtfRoi.x,y:p.y-_mtfRoi.y}; });
+        hd.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation();
+            hd.setPointerCapture(e.pointerId); mode='resize'; });
+        const onmove=e=>{ if(!mode) return; const p=local(e);
+            if (mode==='move') _mtfSetRoi(p.x-off.x, p.y-off.y, _mtfRoi.w, _mtfRoi.h);
+            else _mtfSetRoi(_mtfRoi.x, _mtfRoi.y, p.x-_mtfRoi.x, p.y-_mtfRoi.y); };
+        el.addEventListener('pointermove', onmove); hd.addEventListener('pointermove', onmove);
+        el.addEventListener('pointerup', ()=>mode=null); hd.addEventListener('pointerup', ()=>mode=null);
+    }
+    function mtfHandleFile(file){
+        const myGen=++_mtfGen, res=document.getElementById('mtf-result');
+        res.style.color='var(--text-primary)'; res.textContent='Reading '+file.name+'…';
+        const url=URL.createObjectURL(file), img=new Image();
+        img.onerror=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
+            res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
+        img.onload=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
+            _mtfImg=img;
+            const cv=document.getElementById('mtf-prev'), cx=cv.getContext('2d'), cw=cv.width, ch=cv.height;
+            const s=Math.min(cw/img.naturalWidth, ch/img.naturalHeight);
+            const dw=img.naturalWidth*s, dh=img.naturalHeight*s, ox=(cw-dw)/2, oy=(ch-dh)/2;
+            cx.fillStyle='#000'; cx.fillRect(0,0,cw,ch); cx.drawImage(img,ox,oy,dw,dh);
+            _mtfFit={s,ox,oy};
+            document.getElementById('mtf-prevwrap').style.display='block';
+            document.getElementById('mtf-run').style.display='block';
+            document.getElementById('mtf-hint').style.display='block';
+            _mtfSetRoi(cw*0.42, ch*0.22, cw*0.16, ch*0.55);   // auto-suggested portrait box (edge-detect next)
+            res.style.color='var(--text-primary)'; res.textContent='Drag the box onto a clean bar edge, then MEASURE.';
+        };
+        img.src=url;
+    }
+    // ---- slanted-edge math (ported from the validated mtf_prototype.py) ----
+    function _mtfFitLine(rows, ex){
+        let n=rows.length, sx=0,sy=0,sxx=0,sxy=0;
+        for(const r of rows){ sx+=r; sy+=ex[r]; sxx+=r*r; sxy+=r*ex[r]; }
+        const den=n*sxx-sx*sx, a=den?(n*sxy-sx*sy)/den:0; return {a, b:(sy-a*sx)/n};
+    }
+    function _mtfAt(freqs, mtf, level){
+        for(let i=1;i<mtf.length;i++) if(mtf[i]<=level && mtf[i-1]>=level){
+            const t=(mtf[i-1]-level)/(mtf[i-1]-mtf[i]+1e-12); return freqs[i-1]+t*(freqs[i]-freqs[i-1]); }
+        return NaN;
+    }
+    function _mtfEsf(roi,W,H,a,b,keep,os){        // project kept rows -> oversampled ESF
+        const rows=[]; for(let r=0;r<H;r++) if(keep[r]) rows.push(r);
+        let dmin=Infinity, dmax=-Infinity;
+        for(const r of rows){ const base=a*r+b, d0=-base, d1=(W-1)-base;
+            if(d0<dmin)dmin=d0; if(d0>dmax)dmax=d0; if(d1<dmin)dmin=d1; if(d1>dmax)dmax=d1; }
+        const binw=1/os, nb=Math.floor((dmax-dmin)/binw)+1;
+        const s=new Float64Array(nb), c=new Float64Array(nb);
+        for(const r of rows){ const base=a*r+b, ro=r*W;
+            for(let col=0;col<W;col++){ let idx=Math.floor((col-base-dmin)/binw); if(idx<0)idx=0; else if(idx>=nb)idx=nb-1; s[idx]+=roi[ro+col]; c[idx]++; } }
+        const gi=[],gv=[]; for(let i=0;i<nb;i++) if(c[i]>0){ gi.push(i); gv.push(s[i]/c[i]); }
+        const esf=new Float64Array(nb); let k=0;
+        for(let i=0;i<nb;i++){ if(i<=gi[0]) esf[i]=gv[0]; else if(i>=gi[gi.length-1]) esf[i]=gv[gv.length-1];
+            else { while(k<gi.length-1 && gi[k+1]<i) k++; const t=(i-gi[k])/(gi[k+1]-gi[k]); esf[i]=gv[k]+(gv[k+1]-gv[k])*t; } }
+        return {esf,nb,binw,dmin};
+    }
+    function _mtfSlantedEdge(roi,W,H,os){
+        os=os||4;
+        const ex=new Float64Array(H), peakg=new Float64Array(H);
+        for(let r=0;r<H;r++){ ex[r]=NaN; const ro=r*W; let maxv=0,maxi=0;
+            for(let col=0;col<W-1;col++){ const g=Math.abs(roi[ro+col+1]-roi[ro+col]); if(g>maxv){maxv=g;maxi=col;} }
+            peakg[r]=maxv; const lo=Math.max(0,maxi-8), hi=Math.min(W-1,maxi+9); let sw=0,swx=0;
+            for(let col=lo;col<hi;col++){ const g=Math.abs(roi[ro+col+1]-roi[ro+col]); sw+=g; swx+=g*(col+0.5); }
+            if(sw>0) ex[r]=swx/sw; }
+        let pgmax=0; for(let r=0;r<H;r++) if(peakg[r]>pgmax) pgmax=peakg[r];
+        const valid=[]; for(let r=0;r<H;r++) if(peakg[r]>0.3*pgmax && isFinite(ex[r])) valid.push(r);
+        if(valid.length<8) throw new Error('no edge');
+        let keepArr=valid, a=0, b=0;
+        for(let it=0;it<3;it++){ const f=_mtfFitLine(keepArr,ex); a=f.a; b=f.b;
+            if(it<2){ let s=0; for(const r of valid){ const rr=ex[r]-(a*r+b); s+=rr*rr; } const sd=Math.sqrt(s/valid.length);
+                keepArr=valid.filter(r=>Math.abs(ex[r]-(a*r+b))<2.5*sd); if(keepArr.length<8) keepArr=valid; } }
+        const angle=Math.atan(a)*180/Math.PI;
+        const keep=new Uint8Array(H); for(const r of keepArr) keep[r]=1;
+        const {esf,nb,binw,dmin}=_mtfEsf(roi,W,H,a,b,keep,os);
+        const lsf=new Float64Array(nb);
+        lsf[0]=esf[1]-esf[0]; lsf[nb-1]=esf[nb-1]-esf[nb-2];
+        for(let i=1;i<nb-1;i++) lsf[i]=(esf[i+1]-esf[i-1])/2;
+        let pk=Math.round(-dmin/binw); if(pk<1)pk=1; if(pk>nb-2)pk=nb-2;
+        const hw=Math.min(pk,nb-1-pk);
+        for(let i=0;i<nb;i++){ const j=i-(pk-hw); lsf[i]*=(j>=0 && j<=2*hw)? (0.5-0.5*Math.cos(Math.PI*j/hw)) : 0; }
+        const kmax=Math.min(nb-1, Math.ceil(0.6*nb*binw));
+        const freqs=new Float64Array(kmax+1), mtf=new Float64Array(kmax+1);
+        for(let kk=0;kk<=kmax;kk++){ let re=0,im=0; const wk=-2*Math.PI*kk/nb;
+            for(let i=0;i<nb;i++){ const ph=wk*i; re+=lsf[i]*Math.cos(ph); im+=lsf[i]*Math.sin(ph); }
+            mtf[kk]=Math.hypot(re,im); freqs[kk]=kk/(nb*binw); }
+        const m0=mtf[0]||1; for(let kk=0;kk<=kmax;kk++) mtf[kk]/=m0;
+        return {freqs,mtf,angle};
+    }
+    function _mtfBarPitch(prof, n){          // bar period (px) via autocorrelation — robust to slant smear
+        let mean=0; for(let i=0;i<n;i++) mean+=prof[i]; mean/=n;
+        const a=new Float64Array(n); for(let i=0;i<n;i++) a[i]=prof[i]-mean;
+        const minLag=Math.max(8,Math.round(n*0.02)), maxLag=Math.floor(n*0.6), ac=new Float64Array(maxLag+1);
+        for(let L=minLag;L<=maxLag;L++){ let s=0; for(let i=0;i<n-L;i++) s+=a[i]*a[i+L]; ac[L]=s/(n-L); }
+        let mx=0; for(let L=minLag;L<=maxLag;L++) if(ac[L]>mx) mx=ac[L];
+        for(let L=minLag+1;L<maxLag;L++) if(ac[L]>0.4*mx && ac[L]>=ac[L-1] && ac[L]>=ac[L+1]) return L;  // first strong peak = period
+        return 0;
+    }
+    function _mtfScaleFromBars(sx,sy,sw,sh,horizEdge){    // bar pitch (px) = one line pair
+        const img=_mtfImg; let rx,ry,rw,rh;
+        if(!horizEdge){ rw=Math.min(img.naturalWidth,Math.round(sw*6)); rx=Math.max(0,Math.round(sx+sw/2-rw/2)); rw=Math.min(rw,img.naturalWidth-rx);
+            rh=Math.min(sh,140); ry=Math.max(0,Math.round(sy+sh/2-rh/2)); rh=Math.min(rh,img.naturalHeight-ry); }
+        else { rh=Math.min(img.naturalHeight,Math.round(sh*6)); ry=Math.max(0,Math.round(sy+sh/2-rh/2)); rh=Math.min(rh,img.naturalHeight-ry);
+            rw=Math.min(sw,140); rx=Math.max(0,Math.round(sx+sw/2-rw/2)); rw=Math.min(rw,img.naturalWidth-rx); }
+        const cv=document.createElement('canvas'); cv.width=rw; cv.height=rh;
+        const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(img,rx,ry,rw,rh,0,0,rw,rh);
+        const d=c.getImageData(0,0,rw,rh).data;
+        const n=horizEdge?rh:rw, prof=new Float64Array(n);
+        for(let y=0;y<rh;y++){ const bo=y*rw*4; for(let x=0;x<rw;x++){ const p=bo+x*4, dk=255-(0.299*d[p]+0.587*d[p+1]+0.114*d[p+2]); if(horizEdge) prof[y]+=dk; else prof[x]+=dk; } }
+        return _mtfBarPitch(prof,n);
+    }
+    function _mtfDiff(f_lpmm, NA){           // diffraction-limited MTF for a given NA (lam 0.55)
+        const cutoff=2*NA/0.55*1000, u=Math.max(0,Math.min(1,f_lpmm/cutoff));
+        return { mtf:(2/Math.PI)*(Math.acos(u)-u*Math.sqrt(1-u*u)), cutoff };
+    }
+    function _mtfDrawPlot(L){
+        const cv=document.getElementById('mtf-plot');
+        const { ctx, PW, PH, S }=_ctrHiDPI(cv,150);
+        const ML=24*S, MR=6*S, MT=6*S, MB=15*S, pw=PW-ML-MR, ph=PH-MT-MB, fmax=L.cutoff*1.02;
+        const toX=f=>ML+f/fmax*pw, toY=m=>MT+ph-Math.max(0,Math.min(1,m))*ph;
+        ctx.fillStyle='#060f0d'; ctx.fillRect(ML,MT,pw,ph);
+        ctx.strokeStyle='#243a34'; ctx.lineWidth=1;
+        ctx.setLineDash([3*S,3*S]); ctx.beginPath(); ctx.moveTo(ML,toY(0.5)); ctx.lineTo(ML+pw,toY(0.5)); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle='#4a5a56'; ctx.beginPath(); ctx.moveTo(ML,MT); ctx.lineTo(ML,MT+ph); ctx.lineTo(ML+pw,MT+ph); ctx.stroke();
+        // diffraction-limited ideal
+        ctx.strokeStyle='#999'; ctx.lineWidth=Math.max(1,1.2*S); ctx.setLineDash([4*S,3*S]); ctx.beginPath();
+        for(let i=0;i<=60;i++){ const f=fmax*i/60, x=toX(f), y=toY(_mtfDiff(f,L.NA).mtf); i?ctx.lineTo(x,y):ctx.moveTo(x,y); } ctx.stroke(); ctx.setLineDash([]);
+        // measured
+        ctx.strokeStyle='#ff6a6a'; ctx.lineWidth=Math.max(1.4,1.8*S); ctx.beginPath(); let started=false;
+        for(let i=0;i<L.mtf.length;i++){ const f=L.freqs[i]/L.umpx*1000; if(f>fmax)break; const x=toX(f),y=toY(L.mtf[i]); started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true); } ctx.stroke();
+        if(isFinite(L.f50)){ ctx.strokeStyle='#ff6a6a'; ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(toX(L.f50),toY(0.5)); ctx.lineTo(toX(L.f50),toY(0)); ctx.stroke(); ctx.setLineDash([]); }
+        ctx.fillStyle='#8aa'; ctx.font=Math.round(8*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+        ctx.fillText('1',ML-2*S,toY(1)); ctx.fillText('.5',ML-2*S,toY(0.5)); ctx.fillText('0',ML-2*S,toY(0.02));
+        ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(Math.round(L.cutoff)+' lp/mm',ML+pw-14*S,MT+ph+2*S);
+        ctx.textAlign='left'; ctx.fillStyle='#ff6a6a'; ctx.fillText('measured',ML+3*S,MT+2*S);
+        ctx.fillStyle='#999'; ctx.fillText('ideal NA '+L.NA,ML+3*S,MT+2*S+10*S);
+    }
+    async function mtfMeasure(){
+        const res=document.getElementById('mtf-result');
+        if(!_mtfImg||!_mtfFit){ res.style.color='#ff6a6a'; res.textContent='Drop a shot first.'; return; }
+        const G=parseInt(document.getElementById('mtf-group').value),
+              E=parseInt(document.getElementById('mtf-elem').value),
+              NA=parseFloat(document.getElementById('mtf-na').value)||0.29;
+        if(!(G>=0)||!(E>=1)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
+        const lpmmKnown=Math.pow(2, G+(E-1)/6);
+        res.style.color='var(--text-primary)'; res.textContent='Measuring…'; await new Promise(r=>setTimeout(r,0));
+        const {s,ox,oy}=_mtfFit;
+        let sx=Math.max(0,Math.round((_mtfRoi.x-ox)/s)), sy=Math.max(0,Math.round((_mtfRoi.y-oy)/s)),
+            sw=Math.round(_mtfRoi.w/s), sh=Math.round(_mtfRoi.h/s);
+        sw=Math.min(sw,_mtfImg.naturalWidth-sx); sh=Math.min(sh,_mtfImg.naturalHeight-sy);
+        if(sw<12||sh<12){ res.style.color='#ff6a6a'; res.textContent='Box too small — enlarge it over a bar edge.'; return; }
+        const cv=document.createElement('canvas'); cv.width=sw; cv.height=sh;
+        const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(_mtfImg,sx,sy,sw,sh,0,0,sw,sh);
+        const d=cx.getImageData(0,0,sw,sh).data;
+        let roi=new Float64Array(sw*sh);
+        for(let i=0,p=0;i<sw*sh;i++,p+=4) roi[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
+        let ehx=0,ehy=0;
+        for(let y=0;y<sh;y++){ const ro=y*sw; for(let x=0;x<sw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
+        for(let y=0;y<sh-1;y++){ const ro=y*sw,r2=(y+1)*sw; for(let x=0;x<sw;x++){ const dd=roi[r2+x]-roi[ro+x]; ehy+=dd*dd; } }
+        let W=sw,H=sh,horizEdge=false,dir='horiz-MTF (vertical edge)';
+        if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)';
+            const t=new Float64Array(sw*sh); for(let y=0;y<sh;y++)for(let x=0;x<sw;x++) t[x*sh+y]=roi[y*sw+x]; roi=t; W=sh; H=sw; }
+        let mr; try{ mr=_mtfSlantedEdge(roi,W,H,4); }catch(e){ res.style.color='#ff6a6a'; res.textContent='No clean single edge in the box — place it across one bar edge.'; return; }
+        const pitch=_mtfScaleFromBars(sx,sy,sw,sh,horizEdge);
+        const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
+        const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
+        const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1));
+        const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
+        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,dir,cutoff,ideal50};
+        res.style.color='var(--text-primary)';
+        res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
+            '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
+            'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · res ~'+(isFinite(f10)?(500/f10).toFixed(2):'—')+' µm<br>'+
+            'edge '+mr.angle.toFixed(1)+'° · '+dir+' · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
+        if(umpx>0) _mtfDrawPlot(_mtfLast);
+    }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
     // Analysis ported from the validated ca_align.py prototype. The micrometer
     // ticks are vertical edges spanning the field; per-channel column projections
