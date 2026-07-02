@@ -1829,56 +1829,7 @@
                 </div>
             </div>
 
-            <!-- ===== MTF / RESOLUTION overlay (slanted-edge from a USAF target shot) ===== -->
-            <div id="mtf" style="display:none; position:absolute; top:0; left:0;
-                 width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
-                 flex-direction:column;">
-                <div style="position:relative; flex:0 0 auto; padding:9px 0 8px; text-align:center;
-                     color:#3ddb7a; font-size:12px; font-weight:bold; letter-spacing:0.5px;
-                     border-bottom:1px solid #1c4a3a;">MTF / RESOLUTION
-                    <div class="gfx-btn" onclick="closeMtf()" style="top:3px; left:205px; width:30px;
-                         height:26px; background:#404040; color:#FF0000; font-size:15px;">X</div>
-                </div>
-                <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 8px;">
-                    <div style="display:flex; gap:5px; align-items:center; font-size:9px; color:var(--text-disabled); margin-bottom:6px;">
-                        <span>Grp</span><input id="mtf-group" type="number" min="0" max="9" value="4"
-                              style="width:32px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
-                        <span>Elem</span><input id="mtf-elem" type="number" min="1" max="6" value="2"
-                              style="width:32px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
-                        <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29"
-                              style="width:44px; background:#0d2535; border:1px solid #2a5a7a; color:#fff; font:11px monospace; padding:2px 3px; border-radius:3px;">
-                    </div>
-                    <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()"
-                         style="border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
-                                padding:11px 8px; text-align:center; color:#7fd8c0; font-size:10px;
-                                line-height:1.4; cursor:pointer;">
-                        Drop a crop of the element<br><span style="color:#5a8;">(element filling the frame, best focus)</span>
-                    </div>
-                    <input type="file" id="mtf-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                           style="display:none;" onchange="mtfChosen(this)">
-                    <div id="mtf-prevwrap" style="display:none; position:relative; margin-top:6px; width:220px; height:150px;">
-                        <canvas id="mtf-prev" width="220" height="150"
-                                style="width:220px; height:150px; background:#000; border:1px solid #222; display:block;"></canvas>
-                        <div id="mtf-roi" style="position:absolute; border:1.5px solid #3ddb7a;
-                             background:rgba(61,219,122,0.12); box-sizing:border-box; cursor:move; touch-action:none;">
-                            <div id="mtf-roi-h" style="position:absolute; right:-5px; bottom:-5px; width:12px; height:12px;
-                                 background:#3ddb7a; border-radius:2px; cursor:nwse-resize; touch-action:none;"></div>
-                        </div>
-                    </div>
-                    <div id="mtf-hint" style="display:none; font-size:9px; color:#7a958c; margin-top:2px;">
-                        drag the box across one whole bar (~5° slanted) — both edges are
-                        measured &amp; averaged — or onto a single edge, then MEASURE</div>
-                    <div class="gfx-btn flat" id="mtf-run" onclick="mtfMeasure()"
-                         style="display:none; position:relative; left:auto; top:auto; width:100%; height:26px; margin-top:6px; font-size:11px;">MEASURE</div>
-                    <div id="mtf-result" style="margin-top:7px; font-size:11px; line-height:1.45;
-                         color:var(--text-disabled); min-height:28px;">
-                        Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.
-                    </div>
-                    <canvas id="mtf-plot" width="220" height="150"
-                            style="display:none; width:220px; height:150px; margin-top:6px;
-                                   background:#000; border:1px solid #222;"></canvas>
-                </div>
-            </div>
+            <!-- MTF / RESOLUTION moved to the full-viewport #mtf panel below (vib-panel pattern) -->
 
         </div><!-- end ili9341-display -->
 
@@ -2368,6 +2319,83 @@
       <div id="vibwait-body">
         <canvas id="vib-waitscreen-canvas"></canvas>
         <div class="vw-hint">resonance frequency → settle wait — the curve updates on each shutter pulse</div>
+      </div>
+    </div>
+
+
+    <!-- ===== MTF / RESOLUTION panel (slanted-edge from a USAF target shot).
+         Lives OUTSIDE #ili9341-display like #vib-panel — a full-viewport
+         high-res surface on desktop; the narrow media query reflows it to a
+         single column so phone/webview keeps the compact stacked layout. -->
+    <style>
+      #mtf { display:none; position:fixed; inset:0; z-index:400;
+        background:#06120f; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #mtf-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+        padding:9px 16px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #mtf-title { color:#3ddb7a; font-weight:bold; letter-spacing:1px; font-size:14px; }
+      #mtf-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
+        padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #mtf-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
+      #mtf-left { flex:0 0 400px; display:flex; flex-direction:column; gap:8px;
+        min-height:0; overflow-y:auto; }
+      #mtf-right { flex:1 1 auto; display:flex; flex-direction:column; gap:6px;
+        min-width:0; min-height:0; }
+      #mtf .mtf-inp { display:flex; gap:8px; align-items:center; font-size:11px;
+        color:var(--text-disabled); }
+      #mtf .mtf-inp input { background:#0d2535; border:1px solid #2a5a7a; color:#fff;
+        font:12px monospace; padding:3px 4px; border-radius:3px; }
+      #mtf-drop { border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
+        padding:14px 10px; text-align:center; color:#7fd8c0; font-size:11px;
+        line-height:1.5; cursor:pointer; }
+      #mtf-prevwrap { display:none; position:relative; width:100%; }
+      #mtf-prev { width:100%; height:auto; background:#000; border:1px solid #222; display:block; }
+      #mtf-roi { position:absolute; border:1.5px solid #3ddb7a;
+        background:rgba(61,219,122,0.12); box-sizing:border-box; cursor:move; touch-action:none; }
+      #mtf-roi-h { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px;
+        background:#3ddb7a; border-radius:2px; cursor:nwse-resize; touch-action:none; }
+      #mtf-hint { display:none; font-size:10px; color:#7a958c; }
+      #mtf-run { display:none; position:relative; left:auto; top:auto; width:100%;
+        height:30px; font-size:12px; }
+      #mtf-result { font-size:13px; line-height:1.5; color:var(--text-disabled); min-height:30px; }
+      #mtf-plot { display:none; flex:1 1 auto; width:100%; min-height:220px;
+        background:#000; border:1px solid #222; }
+      @media (max-width:760px) {
+        #mtf-body { flex-direction:column; overflow-y:auto; }
+        #mtf-left { flex:0 0 auto; overflow:visible; }
+        #mtf-right { min-height:300px; }
+      }
+    </style>
+    <div id="mtf">
+      <div id="mtf-head">
+        <div id="mtf-title">MTF / RESOLUTION</div>
+        <div id="mtf-close" onclick="closeMtf()">CLOSE &#10005;</div>
+      </div>
+      <div id="mtf-body">
+        <div id="mtf-left">
+          <div class="mtf-inp">
+            <span>Grp</span><input id="mtf-group" type="number" min="0" max="9" value="4" style="width:44px;">
+            <span>Elem</span><input id="mtf-elem" type="number" min="1" max="6" value="2" style="width:44px;">
+            <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29" style="width:56px;">
+          </div>
+          <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()">
+            Drop a crop of the element<br><span style="color:#5a8;">(element filling the frame, best focus)</span>
+          </div>
+          <input type="file" id="mtf-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                 style="display:none;" onchange="mtfChosen(this)">
+          <div id="mtf-prevwrap">
+            <canvas id="mtf-prev" width="640" height="440"></canvas>
+            <div id="mtf-roi"><div id="mtf-roi-h"></div></div>
+          </div>
+          <div id="mtf-hint">drag the box across one whole bar (~5&deg; slanted) — both edges are
+            measured &amp; averaged — or onto a single edge, then MEASURE</div>
+          <div class="gfx-btn flat" id="mtf-run" onclick="mtfMeasure()">MEASURE</div>
+        </div>
+        <div id="mtf-right">
+          <div id="mtf-result">
+            Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.
+          </div>
+          <canvas id="mtf-plot" width="220" height="150"></canvas>
+        </div>
       </div>
     </div>
 
@@ -6402,8 +6430,9 @@
         w=Math.max(24,Math.min(w,cv.width)); h=Math.max(24,Math.min(h,cv.height));
         x=Math.max(0,Math.min(x,cv.width-w)); y=Math.max(0,Math.min(y,cv.height-h));
         _mtfRoi={x,y,w,h};
-        const el=document.getElementById('mtf-roi');
-        el.style.left=x+'px'; el.style.top=y+'px'; el.style.width=w+'px'; el.style.height=h+'px';
+        const el=document.getElementById('mtf-roi');   // percent-of-canvas so the CSS-scaled preview stays aligned
+        el.style.left=(x/cv.width*100)+'%'; el.style.top=(y/cv.height*100)+'%';
+        el.style.width=(w/cv.width*100)+'%'; el.style.height=(h/cv.height*100)+'%';
     }
     function _mtfBindRoi(){
         const el=document.getElementById('mtf-roi'), hd=document.getElementById('mtf-roi-h'),
@@ -6606,25 +6635,43 @@
     }
     function _mtfDrawPlot(L){
         const cv=document.getElementById('mtf-plot');
-        const { ctx, PW, PH, S }=_ctrHiDPI(cv,150);
-        const ML=24*S, MR=6*S, MT=6*S, MB=15*S, pw=PW-ML-MR, ph=PH-MT-MB, fmax=L.cutoff*1.02;
+        const { ctx, PW, PH, S }=_ctrHiDPI(cv,300);
+        const ML=30*S, MR=10*S, MT=8*S, MB=22*S, pw=PW-ML-MR, ph=PH-MT-MB;
+        const fmax=L.objCutoff;      // x range capped at the objective's diffraction limit
         const toX=f=>ML+f/fmax*pw, toY=m=>MT+ph-Math.max(0,Math.min(1,m))*ph;
         ctx.fillStyle='#060f0d'; ctx.fillRect(ML,MT,pw,ph);
+        // x grid: minor every 100 lp/mm, major every 200 (labelled)
+        ctx.font=Math.round(9*S)+'px system-ui,sans-serif';
+        for(let f=100;f<fmax;f+=100){
+            const major=(f%200===0), x=toX(f);
+            ctx.strokeStyle=major?'#2e4a42':'#182c26'; ctx.lineWidth=major?Math.max(1,1.1*S):1;
+            ctx.beginPath(); ctx.moveTo(x,MT); ctx.lineTo(x,MT+ph); ctx.stroke();
+            if(major){ ctx.fillStyle='#8aa'; ctx.textAlign='center'; ctx.textBaseline='top';
+                ctx.fillText(f,x,MT+ph+3*S); }
+        }
         ctx.strokeStyle='#243a34'; ctx.lineWidth=1;
         ctx.setLineDash([3*S,3*S]); ctx.beginPath(); ctx.moveTo(ML,toY(0.5)); ctx.lineTo(ML+pw,toY(0.5)); ctx.stroke(); ctx.setLineDash([]);
         ctx.strokeStyle='#4a5a56'; ctx.beginPath(); ctx.moveTo(ML,MT); ctx.lineTo(ML,MT+ph); ctx.lineTo(ML+pw,MT+ph); ctx.stroke();
-        // diffraction-limited ideal
-        ctx.strokeStyle='#999'; ctx.lineWidth=Math.max(1,1.2*S); ctx.setLineDash([4*S,3*S]); ctx.beginPath();
-        for(let i=0;i<=60;i++){ const f=fmax*i/60, x=toX(f), y=toY(_mtfDiff(f,L.NA).mtf); i?ctx.lineTo(x,y):ctx.moveTo(x,y); } ctx.stroke(); ctx.setLineDash([]);
+        // diffraction-limited ideals: active objective (teal) + effective NA (grey)
+        const ideal=(NAv,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=Math.max(1,1.2*S);
+            ctx.setLineDash([4*S,3*S]); ctx.beginPath();
+            for(let i=0;i<=80;i++){ const f=fmax*i/80, x=toX(f), y=toY(_mtfDiff(f,NAv).mtf); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+            ctx.stroke(); ctx.setLineDash([]); };
+        ideal(L.objNA,'#59c9a5');
+        const showEff=Math.abs(L.NA-L.objNA)>0.001;
+        if(showEff) ideal(L.NA,'#999');
         // measured
         ctx.strokeStyle='#ff6a6a'; ctx.lineWidth=Math.max(1.4,1.8*S); ctx.beginPath(); let started=false;
         for(let i=0;i<L.mtf.length;i++){ const f=L.freqs[i]/L.umpx*1000; if(f>fmax)break; const x=toX(f),y=toY(L.mtf[i]); started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true); } ctx.stroke();
-        if(isFinite(L.f50)){ ctx.strokeStyle='#ff6a6a'; ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(toX(L.f50),toY(0.5)); ctx.lineTo(toX(L.f50),toY(0)); ctx.stroke(); ctx.setLineDash([]); }
-        ctx.fillStyle='#8aa'; ctx.font=Math.round(8*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
-        ctx.fillText('1',ML-2*S,toY(1)); ctx.fillText('.5',ML-2*S,toY(0.5)); ctx.fillText('0',ML-2*S,toY(0.02));
-        ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(Math.round(L.cutoff)+' lp/mm',ML+pw-14*S,MT+ph+2*S);
-        ctx.textAlign='left'; ctx.fillStyle='#ff6a6a'; ctx.fillText('measured',ML+3*S,MT+2*S);
-        ctx.fillStyle='#999'; ctx.fillText('ideal NA '+L.NA,ML+3*S,MT+2*S+10*S);
+        if(isFinite(L.f50) && L.f50<=fmax){ ctx.strokeStyle='#ff6a6a'; ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(toX(L.f50),toY(0.5)); ctx.lineTo(toX(L.f50),toY(0)); ctx.stroke(); ctx.setLineDash([]); }
+        ctx.fillStyle='#8aa'; ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+        ctx.fillText('1',ML-3*S,toY(1)); ctx.fillText('.5',ML-3*S,toY(0.5)); ctx.fillText('0',ML-3*S,toY(0.02));
+        // diffraction cutoff at the right edge + legend
+        ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#59c9a5';
+        ctx.fillText(Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
+        ctx.textAlign='left'; ctx.fillStyle='#ff6a6a'; ctx.fillText('measured',ML+4*S,MT+3*S);
+        ctx.fillStyle='#59c9a5'; ctx.fillText('ideal '+L.objName+' NA '+L.objNA,ML+4*S,MT+3*S+11*S);
+        if(showEff){ ctx.fillStyle='#999'; ctx.fillText('eff NA '+L.NA,ML+4*S,MT+3*S+22*S); }
     }
     async function mtfMeasure(){
         const res=document.getElementById('mtf-result');
@@ -6683,13 +6730,18 @@
         const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1));
         const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
         const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
-        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,dir,cutoff,ideal50};
+        const objNA=NA_TABLE[state.obj]||NA, objName=(OBJ_MAG[state.obj]||'?')+'x',
+              objCutoff=2*objNA/0.55*1000;
+        const warn=(isFinite(f10)&&f10>objCutoff)
+            ? '<br><span style="color:#ffb347;">&#9888; MTF10 exceeds the '+objName+' NA-'+objNA+
+              ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '';
+        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,dir,cutoff,ideal50,objNA,objName,objCutoff};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · res ~'+(isFinite(f10)?(500/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
-            mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
+            mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)'+warn+'</span>';
         if(umpx>0) _mtfDrawPlot(_mtfLast);
     }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
