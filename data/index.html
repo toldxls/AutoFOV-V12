@@ -2378,7 +2378,7 @@
       #mtf-plotwrap { display:none; flex:1 1 auto; position:relative; min-height:220px; }
       #mtf-plot { display:block; position:absolute; inset:0; width:100%; height:100%;
         background:#000; border:1px solid #222; }
-      #mtf-units { position:absolute; top:10px; left:44px; z-index:5; cursor:pointer;
+      #mtf-units { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:5; cursor:pointer;
         background:rgba(26,60,58,0.85); border:1px solid #2a5e58; border-radius:4px;
         padding:4px 10px; color:#9fe6cf; font-size:11px; font-weight:bold; user-select:none; }
       #mtf-units:hover { background:#12362b; }
@@ -2419,10 +2419,12 @@
         placement-independent.<br><br>
         <b style="color:#3ddb7a;">Reading the plot</b><br>
         <b>MTF50</b> — perceived-sharpness benchmark. <b>MTF10</b> — practical
-        resolution limit (&asymp;Rayleigh 9% contrast); res &micro;m = 500/MTF10.
+        resolution limit (&asymp;Rayleigh 9% contrast); min sep &micro;m = 1000/MTF10.
         <b>MTF5</b> — approximate by-eye extinction (&asymp;5% contrast, invisible below).
         The <b>lp/mm &harr; µm</b> button switches the axis to minimum resolvable
-        separation (500/f µm). A &#9888; warning means MTF10 exceeds the
+        separation (1000/f µm = one line-pair period &asymp; Rayleigh 0.61&lambda;/NA —
+        the same convention as objective-datasheet &ldquo;resolving power&rdquo;, e.g.
+        0.7 µm for a 20x NA 0.42). A &#9888; warning means MTF10 exceeds the
         objective&rsquo;s diffraction limit — physically impossible, so check
         Grp/Elem and the selected objective.<br><br>
         <b style="color:#3ddb7a;">Tips</b><br>
@@ -2459,7 +2461,7 @@
           <div id="mtf-plotwrap">
             <canvas id="mtf-plot" width="220" height="150"></canvas>
             <div id="mtf-legend"></div>
-            <div id="mtf-units" onclick="mtfToggleUnits()" title="Toggle x-axis: lp/mm &harr; µm (min resolvable separation = 500/f)">lp/mm</div>
+            <div id="mtf-units" onclick="mtfToggleUnits()" title="Toggle x-axis: lp/mm &harr; µm (min resolvable separation = 1000/f, the Rayleigh-style figure objective datasheets quote)">lp/mm</div>
           </div>
         </div>
       </div>
@@ -7003,7 +7005,7 @@
             ctx.strokeStyle=major?'#2e4a42':'#182c26'; ctx.lineWidth=major?Math.max(1,1.1*S):1;
             ctx.beginPath(); ctx.moveTo(x,MT); ctx.lineTo(x,MT+ph); ctx.stroke();
             if(major){ ctx.fillStyle='#8aa'; ctx.textAlign='center'; ctx.textBaseline='top';
-                ctx.fillText(_mtfUnits==='um'?(500/f).toFixed(2):f,x,MT+ph+3*S); }
+                ctx.fillText(_mtfUnits==='um'?(1000/f).toFixed(2):f,x,MT+ph+3*S); }
         }
         // y grid: minor every 0.1; the 0.5 line emphasized dashed
         for(let m=1;m<10;m++){
@@ -7036,7 +7038,7 @@
             const tw=ctx.measureText(label).width, lx=(x+4*S+tw>ML+pw)?x-4*S-tw:x+4*S;
             ctx.fillText(label,lx,y-3*S);
         };
-        const fu=f=>_mtfUnits==='um'?(500/f).toFixed(2)+'µm':Math.round(f);
+        const fu=f=>_mtfUnits==='um'?(1000/f).toFixed(2)+'µm':Math.round(f);   // 1000/f = line-pair period ≈ Rayleigh separation (datasheet convention)
         mark(L.f50,0.5,'#ff6a6a','MTF50 '+fu(L.f50));
         mark(L.f10,0.1,'#ffb347','MTF10 '+fu(L.f10));
         mark(L.f05,0.05,'#d9d9a0','MTF5 (eye) '+(isFinite(L.f05)?fu(L.f05):''));
@@ -7044,7 +7046,7 @@
         ctx.fillText('1',ML-3*S,toY(1)); ctx.fillText('.5',ML-3*S,toY(0.5)); ctx.fillText('0',ML-3*S,toY(0.02));
         // diffraction cutoff at the right edge
         ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#4da6ff';
-        ctx.fillText(_mtfUnits==='um'?(500/fmax).toFixed(2)+' µm':Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
+        ctx.fillText(_mtfUnits==='um'?(1000/fmax).toFixed(2)+' µm':Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
         // HTML legend (draggable — see _mtfBindLegend; defaults to upper right)
         document.getElementById('mtf-legend').innerHTML=
             '<div style="color:#ff6a6a;">&#9644; measured</div>'+
@@ -7138,7 +7140,7 @@
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
-            'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · res ~'+(isFinite(f10)?(500/f10).toFixed(2):'—')+' µm<br>'+
+            'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · min sep ~'+(isFinite(f10)?(1000/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
             mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)'+warn+'</span>';
         if(umpx>0) _mtfDrawPlot(_mtfLast);
