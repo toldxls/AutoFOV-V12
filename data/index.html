@@ -2379,8 +2379,8 @@
       #mtf-plot { display:block; position:absolute; inset:0; width:100%; height:100%;
         background:#000; border:1px solid #222; }
       #mtf-units { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:5; cursor:pointer;
-        background:rgba(26,60,58,0.85); border:1px solid #2a5e58; border-radius:4px;
-        padding:4px 10px; color:#9fe6cf; font-size:11px; font-weight:bold; user-select:none; }
+        background:rgba(26,60,58,0.85); border:1px solid #2a5e58; border-radius:5px;
+        padding:8px 20px; color:#9fe6cf; font-size:14px; font-weight:bold; user-select:none; }
       #mtf-units:hover { background:#12362b; }
       #mtf-legend { position:absolute; top:10px; right:14px; z-index:5;
         background:rgba(6,18,15,0.88); border:1px solid #1f3a33; border-radius:4px;
@@ -2421,6 +2421,10 @@
         <b>MTF50</b> — perceived-sharpness benchmark. <b>MTF10</b> — practical
         resolution limit (&asymp;Rayleigh 9% contrast); min sep &micro;m = 1000/MTF10.
         <b>MTF5</b> — approximate by-eye extinction (&asymp;5% contrast, invisible below).
+        <b>equiv NA</b> — the diffraction-limited NA whose ideal curve best fits the
+        measurement (green dashed): the system &ldquo;performs like&rdquo; this NA. It
+        is a lower bound on the true aperture (aberrations/defocus lower it) and is
+        the right number to type into <b>eff NA</b>.
         The <b>lp/mm &harr; µm</b> button switches the axis to minimum resolvable
         separation (1000/f µm = one line-pair period &asymp; Rayleigh 0.61&lambda;/NA —
         the same convention as objective-datasheet &ldquo;resolving power&rdquo;, e.g.
@@ -7024,6 +7028,7 @@
         ideal(L.objNA,'#4da6ff');
         const showEff=Math.abs(L.NA-L.objNA)>0.001;
         if(showEff) ideal(L.NA,'#999');
+        if(isFinite(L.naEq)) ideal(L.naEq,'#59c9a5');
         // measured
         ctx.strokeStyle='#ff6a6a'; ctx.lineWidth=Math.max(1.4,1.8*S); ctx.beginPath(); let started=false;
         for(let i=0;i<L.mtf.length;i++){ const f=L.freqs[i]/L.umpx*1000; if(f>fmax)break; const x=toX(f),y=toY(L.mtf[i]); started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true); } ctx.stroke();
@@ -7052,6 +7057,7 @@
             '<div style="color:#ff6a6a;">&#9644; measured</div>'+
             '<div style="color:#4da6ff;">&#9476; ideal '+L.objName+' NA '+L.objNA+'</div>'+
             (showEff?'<div style="color:#999;">&#9476; eff NA '+L.NA+'</div>':'')+
+            (isFinite(L.naEq)?'<div style="color:#59c9a5;">&#9476; equiv NA '+L.naEq.toFixed(2)+' (fit)</div>':'')+
             '<div style="color:#ffb347;">&#9679; MTF10 = practical limit</div>'+
             '<div style="color:#d9d9a0;">&#9679; MTF5 &asymp; eye extinction</div>';
     }
@@ -7131,15 +7137,31 @@
         const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
         const objNA=NA_TABLE[state.obj]||NA, objName=(OBJ_MAG[state.obj]||'?')+'x',
               objCutoff=2*objNA/0.55*1000;
+        // equivalent NA: the diffraction-limited NA whose ideal curve best fits the
+        // measurement over the 0.15-0.85 contrast band (below 0.15 the noise floor
+        // lifts the tail; above 0.85 the normalisation pins everything to 1)
+        let naEq=NaN;
+        if(umpx>0){
+            let bestE=Infinity;
+            for(let na=0.05;na<=0.951;na+=0.005){
+                let s2=0,n2=0;
+                for(let i=0;i<mr.mtf.length;i++){
+                    const m=mr.mtf[i]; if(m<0.15||m>0.85) continue;
+                    const d=_mtfDiff(mr.freqs[i]/umpx*1000,na).mtf-m; s2+=d*d; n2++;
+                }
+                if(n2>=5 && s2/n2<bestE){ bestE=s2/n2; naEq=na; }
+            }
+        }
         const warn=((isFinite(f10)&&f10>objCutoff)
             ? '<br><span style="color:#ffb347;">&#9888; MTF10 exceeds the '+objName+' NA-'+objNA+
               ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '')+
             (pitch>0 ? '' : '<br><span style="color:#ffb347;">&#9888; scale unavailable — needs &ge;2 clean,'+
               ' evenly-spaced bars spanning the frame, so lp/mm cannot be shown</span>');
-        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff};
+        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff,naEq};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
-            '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
+            '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal'+
+            (isFinite(naEq)?' · <b style="color:#59c9a5;">equiv NA '+naEq.toFixed(2)+'</b>':'')+')<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · min sep ~'+(isFinite(f10)?(1000/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
             mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)'+warn+'</span>';

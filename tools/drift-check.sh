@@ -89,19 +89,37 @@ if [ -z "$released" ]; then
     exit 0
 fi
 
-released_patch=${released##*.}
+rel_major=$(echo "$released" | cut -d. -f1)
+rel_minor=$(echo "$released" | cut -d. -f2)
+released_patch=$(echo "$released" | cut -d. -f3)
 
-# Guard against a malformed manifest.json (non-numeric patch). Don't error —
+# Guard against a malformed manifest.json (non-numeric fields). Don't error —
 # the script is a status check, not a validator.
-if ! [[ "$released_patch" =~ ^[0-9]+$ ]] || ! [[ "$patch" =~ ^[0-9]+$ ]]; then
+if ! [[ "$rel_major" =~ ^[0-9]+$ ]] || ! [[ "$rel_minor" =~ ^[0-9]+$ ]] \
+   || ! [[ "$released_patch" =~ ^[0-9]+$ ]] || ! [[ "$patch" =~ ^[0-9]+$ ]]; then
     [ "$QUIET" = 1 ] || echo "${YEL}gh-pages manifest version is malformed${RST}: $released"
     exit 0
 fi
 
-if [ "$released_patch" -eq "$patch" ]; then
+# Compare the FULL version tuple — comparing patch alone inverts the verdict
+# right after a minor bump (12.3.32 vs 12.4.5 must read "behind", not "ahead").
+rel_score=$(( (rel_major * 1000 + rel_minor) * 100000 + released_patch ))
+cur_score=$(( (v_major * 1000 + v_minor) * 100000 + patch ))
+
+if [ "$rel_score" -eq "$cur_score" ]; then
     [ "$QUIET" = 1 ] || echo "${GRN}gh-pages in sync${RST} — v$released"
     exit 0
-elif [ "$released_patch" -lt "$patch" ]; then
+elif [ "$rel_score" -lt "$cur_score" ]; then
+    if [ "$rel_major" -ne "$v_major" ] || [ "$rel_minor" -ne "$v_minor" ]; then
+        # Across a minor bump the patch counters aren't comparable — the commit
+        # gap can't be derived from versions alone. It's unambiguously drift.
+        echo "${YEL}gh-pages is behind main (new minor release pending)${RST}"
+        echo "${DIM}  released: v$released${RST}"
+        echo "${DIM}  current : v$current${RST}"
+        echo "${DIM}  ship:     bash tools/release.sh --yes${RST}"
+        [ "$CHECK" = 1 ] && exit 1
+        exit 0
+    fi
     gap=$((patch - released_patch))
 
     # Suppress the false positive every release naturally produces: release.sh
