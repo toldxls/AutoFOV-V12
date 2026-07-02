@@ -6467,8 +6467,11 @@
             else { while(k<gi.length-1 && gi[k+1]<i) k++; const t=(i-gi[k])/(gi[k+1]-gi[k]); esf[i]=gv[k]+(gv[k+1]-gv[k])*t; } }
         return {esf,nb,binw,dmin};
     }
-    function _mtfSlantedEdge(roi,W,H,os){
-        os=os||4;
+    function _mtfMedian(arr,from,to){
+        const t=Array.from(arr.subarray(from,to)); if(!t.length) return arr[from]||0;
+        t.sort((x,y)=>x-y); const m=t.length>>1; return (t.length&1)? t[m] : (t[m-1]+t[m])/2;
+    }
+    function _mtfEdgeCentroids(roi,W,H){     // per-row |gradient| centroid of the strongest edge
         const ex=new Float64Array(H), peakg=new Float64Array(H);
         for(let r=0;r<H;r++){ ex[r]=NaN; const ro=r*W; let maxv=0,maxi=0;
             for(let col=0;col<W-1;col++){ const g=Math.abs(roi[ro+col+1]-roi[ro+col]); if(g>maxv){maxv=g;maxi=col;} }
@@ -6477,19 +6480,55 @@
             if(sw>0) ex[r]=swx/sw; }
         let pgmax=0; for(let r=0;r<H;r++) if(peakg[r]>pgmax) pgmax=peakg[r];
         const valid=[]; for(let r=0;r<H;r++) if(peakg[r]>0.3*pgmax && isFinite(ex[r])) valid.push(r);
+        return {ex,valid};
+    }
+    function _mtfEdgeLocate(roi,W,H){        // RANSAC line through the centroids — survives boxes
+        // where the slanted edge exits through a border (contiguous pinned-row outliers)
+        const {ex,valid}=_mtfEdgeCentroids(roi,W,H);
+        const m=valid.length; if(m<8) throw new Error('no edge');
+        const K=16, anchors=[]; for(let i=0;i<K;i++) anchors.push(valid[Math.floor(i*(m-1)/(K-1))]);
+        let best=null;
+        for(let i=0;i<K;i++) for(let j=i+1;j<K;j++){
+            const r1=anchors[i], r2=anchors[j];
+            if(r2-r1 < Math.max(4,0.1*m)) continue;
+            const a=(ex[r2]-ex[r1])/(r2-r1), b=ex[r1]-a*r1;
+            const inl=valid.filter(r=>Math.abs(ex[r]-(a*r+b))<3);
+            if(!best || inl.length>best.length) best=inl;
+        }
+        if(!best || best.length<8 || best.length<0.5*m) throw new Error('no edge');
+        return _mtfFitLine(best,ex);
+    }
+    function _mtfEdgeFit(roi,W,H){           // sigma-clipped LSQ line through the edge centroids
+        const {ex,valid}=_mtfEdgeCentroids(roi,W,H);
         if(valid.length<8) throw new Error('no edge');
         let keepArr=valid, a=0, b=0;
         for(let it=0;it<3;it++){ const f=_mtfFitLine(keepArr,ex); a=f.a; b=f.b;
             if(it<2){ let s=0; for(const r of valid){ const rr=ex[r]-(a*r+b); s+=rr*rr; } const sd=Math.sqrt(s/valid.length);
                 keepArr=valid.filter(r=>Math.abs(ex[r]-(a*r+b))<2.5*sd); if(keepArr.length<8) keepArr=valid; } }
-        const angle=Math.atan(a)*180/Math.PI;
+        let s2=0; for(const r of keepArr){ const rr=ex[r]-(a*r+b); s2+=rr*rr; }
         const keep=new Uint8Array(H); for(const r of keepArr) keep[r]=1;
-        const {esf,nb,binw,dmin}=_mtfEsf(roi,W,H,a,b,keep,os);
+        return {a, b, keep, rms:Math.sqrt(s2/keepArr.length), frac:keepArr.length/H};
+    }
+    function _mtfSlantedEdge(roi,W,H,os){
+        os=os||4;
+        const ef=_mtfEdgeFit(roi,W,H);
+        if(ef.rms>2.0) throw new Error('noisy');   // edge centroids don't sit on a line -> garbage box
+        if(ef.frac<0.5) throw new Error('rows');
+        const a=ef.a, b=ef.b, angle=Math.atan(a)*180/Math.PI;
+        const {esf,nb,binw,dmin}=_mtfEsf(roi,W,H,a,b,ef.keep,os);
+        let pk=Math.round(-dmin/binw); if(pk<1)pk=1; if(pk>nb-2)pk=nb-2;
+        const hw=Math.min(pk,nb-1-pk);
+        // 10-90 rise width sets the minimum usable window — a clipped Hann inflates MTF50
+        const loM=_mtfMedian(esf,0,Math.max(pk-8*os,1)), hiM=_mtfMedian(esf,Math.min(pk+8*os,nb-1),nb);
+        const sgn=hiM>loM?1:-1, l10=loM+0.1*(hiM-loM), l90=loM+0.9*(hiM-loM);
+        let i10=pk, i90=pk;
+        while(i10>0 && sgn*(esf[i10]-l10)>0) i10--;
+        while(i90<nb-1 && sgn*(l90-esf[i90])>0) i90++;
+        const rise=Math.max(1,(i90-i10)/os);
+        if(hw < os*Math.max(24,3*rise)) throw new Error('margin');
         const lsf=new Float64Array(nb);
         lsf[0]=esf[1]-esf[0]; lsf[nb-1]=esf[nb-1]-esf[nb-2];
         for(let i=1;i<nb-1;i++) lsf[i]=(esf[i+1]-esf[i-1])/2;
-        let pk=Math.round(-dmin/binw); if(pk<1)pk=1; if(pk>nb-2)pk=nb-2;
-        const hw=Math.min(pk,nb-1-pk);
         for(let i=0;i<nb;i++){ const j=i-(pk-hw); lsf[i]*=(j>=0 && j<=2*hw)? (0.5-0.5*Math.cos(Math.PI*j/hw)) : 0; }
         const kmax=Math.min(nb-1, Math.ceil(0.6*nb*binw));
         const freqs=new Float64Array(kmax+1), mtf=new Float64Array(kmax+1);
@@ -6497,22 +6536,32 @@
             for(let i=0;i<nb;i++){ const ph=wk*i; re+=lsf[i]*Math.cos(ph); im+=lsf[i]*Math.sin(ph); }
             mtf[kk]=Math.hypot(re,im); freqs[kk]=kk/(nb*binw); }
         const m0=mtf[0]||1; for(let kk=0;kk<=kmax;kk++) mtf[kk]/=m0;
-        return {freqs,mtf,angle};
+        return {freqs,mtf,angle,rise};
     }
-    function _mtfBarPitch(prof, n){          // bar period (px) via autocorrelation — robust to slant smear
-        let mean=0; for(let i=0;i<n;i++) mean+=prof[i]; mean/=n;
-        const a=new Float64Array(n); for(let i=0;i<n;i++) a[i]=prof[i]-mean;
-        const minLag=Math.max(8,Math.round(n*0.02)), maxLag=Math.floor(n*0.6), ac=new Float64Array(maxLag+1);
-        for(let L=minLag;L<=maxLag;L++){ let s=0; for(let i=0;i<n-L;i++) s+=a[i]*a[i+L]; ac[L]=s/(n-L); }
-        let mx=0; for(let L=minLag;L<=maxLag;L++) if(ac[L]>mx) mx=ac[L];
-        for(let L=minLag+1;L<maxLag;L++) if(ac[L]>0.4*mx && ac[L]>=ac[L-1] && ac[L]>=ac[L+1]) return L;  // first strong peak = period
-        return 0;
+    function _mtfBarPitch(prof, n){          // median dark-bar centroid spacing (px) = one line pair
+        let lo=Infinity, hi=-Infinity;
+        for(let i=0;i<n;i++){ if(prof[i]<lo)lo=prof[i]; if(prof[i]>hi)hi=prof[i]; }
+        if(hi-lo<1e-9) return 0;
+        const thr=(lo+hi)/2, cents=[];
+        for(let i=0;i<n;){
+            if(prof[i]>thr){ let j=i, sw=0, swx=0;
+                while(j<n && prof[j]>thr){ const w=prof[j]-thr; sw+=w; swx+=w*j; j++; }
+                if(j-i>=8 && i>0 && j<n) cents.push(swx/sw);   // skip bars cut off by the frame border
+                i=j; }
+            else i++;
+        }
+        if(cents.length<2) return 0;
+        const d=[]; for(let k=1;k<cents.length;k++) d.push(cents[k]-cents[k-1]);
+        d.sort((x,y)=>x-y);
+        const med=(d.length&1)? d[(d.length-1)/2] : (d[d.length/2-1]+d[d.length/2])/2;
+        for(const v of d) if(Math.abs(v-med)>0.2*med) return 0;   // bars must be evenly spaced
+        return med;
     }
     function _mtfScaleFromBars(sx,sy,sw,sh,horizEdge){    // bar pitch (px) = one line pair
-        const img=_mtfImg; let rx,ry,rw,rh;
-        if(!horizEdge){ rw=Math.min(img.naturalWidth,Math.round(sw*6)); rx=Math.max(0,Math.round(sx+sw/2-rw/2)); rw=Math.min(rw,img.naturalWidth-rx);
+        const img=_mtfImg; let rx,ry,rw,rh;              // full-frame strip in the bar direction:
+        if(!horizEdge){ rx=0; rw=img.naturalWidth;        // the pitch can be larger than any user box
             rh=Math.min(sh,140); ry=Math.max(0,Math.round(sy+sh/2-rh/2)); rh=Math.min(rh,img.naturalHeight-ry); }
-        else { rh=Math.min(img.naturalHeight,Math.round(sh*6)); ry=Math.max(0,Math.round(sy+sh/2-rh/2)); rh=Math.min(rh,img.naturalHeight-ry);
+        else { ry=0; rh=img.naturalHeight;
             rw=Math.min(sw,140); rx=Math.max(0,Math.round(sx+sw/2-rw/2)); rw=Math.min(rw,img.naturalWidth-rx); }
         const cv=document.createElement('canvas'); cv.width=rw; cv.height=rh;
         const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(img,rx,ry,rw,rh,0,0,rw,rh);
@@ -6520,6 +6569,18 @@
         const n=horizEdge?rh:rw, prof=new Float64Array(n);
         for(let y=0;y<rh;y++){ const bo=y*rw*4; for(let x=0;x<rw;x++){ const p=bo+x*4, dk=255-(0.299*d[p]+0.587*d[p+1]+0.114*d[p+2]); if(horizEdge) prof[y]+=dk; else prof[x]+=dk; } }
         return _mtfBarPitch(prof,n);
+    }
+    function _mtfGrabLin(gx,gy,gw,gh){       // linear-luma patch from the dropped image
+        const cv=document.createElement('canvas'); cv.width=gw; cv.height=gh;
+        const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(_mtfImg,gx,gy,gw,gh,0,0,gw,gh);
+        const d=c.getImageData(0,0,gw,gh).data, out=new Float64Array(gw*gh);
+        for(let i=0,p=0;i<gw*gh;i++,p+=4) out[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
+        return out;
+    }
+    function _mtfTranspose(a,w,h){
+        const t=new Float64Array(w*h);
+        for(let y=0;y<h;y++) for(let x=0;x<w;x++) t[x*h+y]=a[y*w+x];
+        return t;
     }
     function _mtfDiff(f_lpmm, NA){           // diffraction-limited MTF for a given NA (lam 0.55)
         const cutoff=2*NA/0.55*1000, u=Math.max(0,Math.min(1,f_lpmm/cutoff));
@@ -6561,19 +6622,38 @@
             sw=Math.round(_mtfRoi.w/s), sh=Math.round(_mtfRoi.h/s);
         sw=Math.min(sw,_mtfImg.naturalWidth-sx); sh=Math.min(sh,_mtfImg.naturalHeight-sy);
         if(sw<12||sh<12){ res.style.color='#ff6a6a'; res.textContent='Box too small — enlarge it over a bar edge.'; return; }
-        const cv=document.createElement('canvas'); cv.width=sw; cv.height=sh;
-        const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(_mtfImg,sx,sy,sw,sh,0,0,sw,sh);
-        const d=cx.getImageData(0,0,sw,sh).data;
-        let roi=new Float64Array(sw*sh);
-        for(let i=0,p=0;i<sw*sh;i++,p+=4) roi[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
+        const fail=m=>{ res.style.color='#ff6a6a'; res.textContent=m; };
+        let roi=_mtfGrabLin(sx,sy,sw,sh);
         let ehx=0,ehy=0;
         for(let y=0;y<sh;y++){ const ro=y*sw; for(let x=0;x<sw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
         for(let y=0;y<sh-1;y++){ const ro=y*sw,r2=(y+1)*sw; for(let x=0;x<sw;x++){ const dd=roi[r2+x]-roi[ro+x]; ehy+=dd*dd; } }
         let W=sw,H=sh,horizEdge=false,dir='horiz-MTF (vertical edge)';
-        if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)';
-            const t=new Float64Array(sw*sh); for(let y=0;y<sh;y++)for(let x=0;x<sw;x++) t[x*sh+y]=roi[y*sw+x]; roi=t; W=sh; H=sw; }
-        let mr; try{ mr=_mtfSlantedEdge(roi,W,H,4); }catch(e){ res.style.color='#ff6a6a'; res.textContent='No clean single edge in the box — place it across one bar edge.'; return; }
+        if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)'; roi=_mtfTranspose(roi,sw,sh); W=sh; H=sw; }
+        // pass 1: locate the edge inside the user's box (robust RANSAC fit)
+        let f1; try{ f1=_mtfEdgeLocate(roi,W,H); }
+        catch(e){ fail('No clean single edge in the box — center it on one bar edge, away from bar ends.'); return; }
         const pitch=_mtfScaleFromBars(sx,sy,sw,sh,horizEdge);
+        // pass 2: recut from the source image with the edge centered, so the Hann
+        // window is never clipped by the box border (a clipped window inflates MTF50)
+        const acrossHalf=Math.round(Math.min(100,Math.max(40, pitch>0?0.45*pitch:100)));
+        const acrossC=f1.a*(H/2)+f1.b;
+        let rsx=sx,rsy=sy,rsw=sw,rsh=sh;
+        if(horizEdge){ const cyI=sy+acrossC; rsy=Math.max(0,Math.round(cyI-acrossHalf));
+            rsh=Math.min(_mtfImg.naturalHeight,Math.round(cyI+acrossHalf))-rsy; }
+        else { const cxI=sx+acrossC; rsx=Math.max(0,Math.round(cxI-acrossHalf));
+            rsw=Math.min(_mtfImg.naturalWidth,Math.round(cxI+acrossHalf))-rsx; }
+        if(rsw<12||rsh<12){ fail('Edge too close to the frame border.'); return; }
+        let roi2=_mtfGrabLin(rsx,rsy,rsw,rsh), W2=rsw, H2=rsh;
+        if(horizEdge){ roi2=_mtfTranspose(roi2,rsw,rsh); W2=rsh; H2=rsw; }
+        let mr;
+        try{ mr=_mtfSlantedEdge(roi2,W2,H2,4); }
+        catch(e){
+            fail(e.message==='noisy' ? 'Edge too noisy or bent — move the box to a cleaner stretch of one bar edge.'
+               : e.message==='rows'  ? 'Box mostly misses the edge — center it on one bar edge.'
+               : e.message==='margin'? 'Not enough flat area beside the edge — keep the edge away from the frame border.'
+               : 'No clean single edge in the box — place it across one bar edge.');
+            return;
+        }
         const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
         const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
         const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1));
@@ -6583,7 +6663,7 @@
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · res ~'+(isFinite(f10)?(500/f10).toFixed(2):'—')+' µm<br>'+
-            'edge '+mr.angle.toFixed(1)+'° · '+dir+' · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
+            'edge '+mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
         if(umpx>0) _mtfDrawPlot(_mtfLast);
     }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
