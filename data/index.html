@@ -1866,7 +1866,8 @@
                         </div>
                     </div>
                     <div id="mtf-hint" style="display:none; font-size:9px; color:#7a958c; margin-top:2px;">
-                        drag the box onto a clean bar edge (~5° slanted), then MEASURE</div>
+                        drag the box across one whole bar (~5° slanted) — both edges are
+                        measured &amp; averaged — or onto a single edge, then MEASURE</div>
                     <div class="gfx-btn flat" id="mtf-run" onclick="mtfMeasure()"
                          style="display:none; position:relative; left:auto; top:auto; width:100%; height:26px; margin-top:6px; font-size:11px;">MEASURE</div>
                     <div id="mtf-result" style="margin-top:7px; font-size:11px; line-height:1.45;
@@ -6471,20 +6472,22 @@
         const t=Array.from(arr.subarray(from,to)); if(!t.length) return arr[from]||0;
         t.sort((x,y)=>x-y); const m=t.length>>1; return (t.length&1)? t[m] : (t[m-1]+t[m])/2;
     }
-    function _mtfEdgeCentroids(roi,W,H){     // per-row |gradient| centroid of the strongest edge
+    function _mtfEdgeCentroids(roi,W,H,pol){ // per-row gradient centroid of the strongest edge;
+        // pol +1/-1 restricts to rising/falling edges so both sides of a bar can be measured
+        const gv=pol? (d=>Math.max(pol*d,0)) : (d=>Math.abs(d));
         const ex=new Float64Array(H), peakg=new Float64Array(H);
         for(let r=0;r<H;r++){ ex[r]=NaN; const ro=r*W; let maxv=0,maxi=0;
-            for(let col=0;col<W-1;col++){ const g=Math.abs(roi[ro+col+1]-roi[ro+col]); if(g>maxv){maxv=g;maxi=col;} }
+            for(let col=0;col<W-1;col++){ const g=gv(roi[ro+col+1]-roi[ro+col]); if(g>maxv){maxv=g;maxi=col;} }
             peakg[r]=maxv; const lo=Math.max(0,maxi-8), hi=Math.min(W-1,maxi+9); let sw=0,swx=0;
-            for(let col=lo;col<hi;col++){ const g=Math.abs(roi[ro+col+1]-roi[ro+col]); sw+=g; swx+=g*(col+0.5); }
+            for(let col=lo;col<hi;col++){ const g=gv(roi[ro+col+1]-roi[ro+col]); sw+=g; swx+=g*(col+0.5); }
             if(sw>0) ex[r]=swx/sw; }
         let pgmax=0; for(let r=0;r<H;r++) if(peakg[r]>pgmax) pgmax=peakg[r];
         const valid=[]; for(let r=0;r<H;r++) if(peakg[r]>0.3*pgmax && isFinite(ex[r])) valid.push(r);
         return {ex,valid};
     }
-    function _mtfEdgeLocate(roi,W,H){        // RANSAC line through the centroids — survives boxes
+    function _mtfEdgeLocate(roi,W,H,pol){    // RANSAC line through the centroids — survives boxes
         // where the slanted edge exits through a border (contiguous pinned-row outliers)
-        const {ex,valid}=_mtfEdgeCentroids(roi,W,H);
+        const {ex,valid}=_mtfEdgeCentroids(roi,W,H,pol);
         const m=valid.length; if(m<8) throw new Error('no edge');
         const K=16, anchors=[]; for(let i=0;i<K;i++) anchors.push(valid[Math.floor(i*(m-1)/(K-1))]);
         let best=null;
@@ -6498,8 +6501,8 @@
         if(!best || best.length<8 || best.length<0.5*m) throw new Error('no edge');
         return _mtfFitLine(best,ex);
     }
-    function _mtfEdgeFit(roi,W,H){           // sigma-clipped LSQ line through the edge centroids
-        const {ex,valid}=_mtfEdgeCentroids(roi,W,H);
+    function _mtfEdgeFit(roi,W,H,pol){       // sigma-clipped LSQ line through the edge centroids
+        const {ex,valid}=_mtfEdgeCentroids(roi,W,H,pol);
         if(valid.length<8) throw new Error('no edge');
         let keepArr=valid, a=0, b=0;
         for(let it=0;it<3;it++){ const f=_mtfFitLine(keepArr,ex); a=f.a; b=f.b;
@@ -6509,9 +6512,9 @@
         const keep=new Uint8Array(H); for(const r of keepArr) keep[r]=1;
         return {a, b, keep, rms:Math.sqrt(s2/keepArr.length), frac:keepArr.length/H};
     }
-    function _mtfSlantedEdge(roi,W,H,os){
+    function _mtfSlantedEdge(roi,W,H,os,pol){
         os=os||4;
-        const ef=_mtfEdgeFit(roi,W,H);
+        const ef=_mtfEdgeFit(roi,W,H,pol);
         if(ef.rms>2.0) throw new Error('noisy');   // edge centroids don't sit on a line -> garbage box
         if(ef.frac<0.5) throw new Error('rows');
         const a=ef.a, b=ef.b, angle=Math.atan(a)*180/Math.PI;
@@ -6569,6 +6572,21 @@
         const n=horizEdge?rh:rw, prof=new Float64Array(n);
         for(let y=0;y<rh;y++){ const bo=y*rw*4; for(let x=0;x<rw;x++){ const p=bo+x*4, dk=255-(0.299*d[p]+0.587*d[p+1]+0.114*d[p+2]); if(horizEdge) prof[y]+=dk; else prof[x]+=dk; } }
         return _mtfBarPitch(prof,n);
+    }
+    function _mtfInterp(xs,ys,x){
+        let i=1; while(i<xs.length && xs[i]<x) i++;
+        if(i>=xs.length) return ys[ys.length-1];
+        const t=(x-xs[i-1])/(xs[i]-xs[i-1]); return ys[i-1]+t*(ys[i]-ys[i-1]);
+    }
+    function _mtfCombine(list){              // average per-edge MTF curves on a common grid
+        if(list.length===1) return list[0];
+        let fmax=Infinity, angle=0, rise=0;
+        for(const L of list){ fmax=Math.min(fmax,L.freqs[L.freqs.length-1]);
+            angle+=L.angle/list.length; rise+=L.rise/list.length; }
+        const N=200, freqs=new Float64Array(N+1), mtf=new Float64Array(N+1);
+        for(let i=0;i<=N;i++){ const f=fmax*i/N; freqs[i]=f;
+            let s=0; for(const L of list) s+=_mtfInterp(L.freqs,L.mtf,f); mtf[i]=s/list.length; }
+        return {freqs,mtf,angle,rise};
     }
     function _mtfGrabLin(gx,gy,gw,gh){       // linear-luma patch from the dropped image
         const cv=document.createElement('canvas'); cv.width=gw; cv.height=gh;
@@ -6629,41 +6647,49 @@
         for(let y=0;y<sh-1;y++){ const ro=y*sw,r2=(y+1)*sw; for(let x=0;x<sw;x++){ const dd=roi[r2+x]-roi[ro+x]; ehy+=dd*dd; } }
         let W=sw,H=sh,horizEdge=false,dir='horiz-MTF (vertical edge)';
         if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)'; roi=_mtfTranspose(roi,sw,sh); W=sh; H=sw; }
-        // pass 1: locate the edge inside the user's box (robust RANSAC fit)
-        let f1; try{ f1=_mtfEdgeLocate(roi,W,H); }
-        catch(e){ fail('No clean single edge in the box — center it on one bar edge, away from bar ends.'); return; }
         const pitch=_mtfScaleFromBars(sx,sy,sw,sh,horizEdge);
-        // pass 2: recut from the source image with the edge centered, so the Hann
-        // window is never clipped by the box border (a clipped window inflates MTF50)
+        // one pass per edge polarity: a box across a whole bar yields a rising AND a
+        // falling edge — measured independently and averaged for a tighter estimate.
+        // Each edge: RANSAC locate in the user's box, then recut from the source image
+        // with that edge centered so the Hann window is never clipped by a box border
+        // (a clipped window inflates MTF50).
         const acrossHalf=Math.round(Math.min(100,Math.max(40, pitch>0?0.45*pitch:100)));
-        const acrossC=f1.a*(H/2)+f1.b;
-        let rsx=sx,rsy=sy,rsw=sw,rsh=sh;
-        if(horizEdge){ const cyI=sy+acrossC; rsy=Math.max(0,Math.round(cyI-acrossHalf));
-            rsh=Math.min(_mtfImg.naturalHeight,Math.round(cyI+acrossHalf))-rsy; }
-        else { const cxI=sx+acrossC; rsx=Math.max(0,Math.round(cxI-acrossHalf));
-            rsw=Math.min(_mtfImg.naturalWidth,Math.round(cxI+acrossHalf))-rsx; }
-        if(rsw<12||rsh<12){ fail('Edge too close to the frame border.'); return; }
-        let roi2=_mtfGrabLin(rsx,rsy,rsw,rsh), W2=rsw, H2=rsh;
-        if(horizEdge){ roi2=_mtfTranspose(roi2,rsw,rsh); W2=rsh; H2=rsw; }
-        let mr;
-        try{ mr=_mtfSlantedEdge(roi2,W2,H2,4); }
-        catch(e){
-            fail(e.message==='noisy' ? 'Edge too noisy or bent — move the box to a cleaner stretch of one bar edge.'
-               : e.message==='rows'  ? 'Box mostly misses the edge — center it on one bar edge.'
-               : e.message==='margin'? 'Not enough flat area beside the edge — keep the edge away from the frame border.'
-               : 'No clean single edge in the box — place it across one bar edge.');
+        let lastErr='';
+        const tryEdge=pol=>{
+            let f1; try{ f1=_mtfEdgeLocate(roi,W,H,pol); }catch(e){ lastErr=lastErr||e.message; return null; }
+            const acrossC=f1.a*(H/2)+f1.b;
+            let rsx=sx,rsy=sy,rsw=sw,rsh=sh;
+            if(horizEdge){ const cyI=sy+acrossC; rsy=Math.max(0,Math.round(cyI-acrossHalf));
+                rsh=Math.min(_mtfImg.naturalHeight,Math.round(cyI+acrossHalf))-rsy; }
+            else { const cxI=sx+acrossC; rsx=Math.max(0,Math.round(cxI-acrossHalf));
+                rsw=Math.min(_mtfImg.naturalWidth,Math.round(cxI+acrossHalf))-rsx; }
+            if(rsw<12||rsh<12){ lastErr='border'; return null; }
+            let roi2=_mtfGrabLin(rsx,rsy,rsw,rsh), W2=rsw, H2=rsh;
+            if(horizEdge){ roi2=_mtfTranspose(roi2,rsw,rsh); W2=rsh; H2=rsw; }
+            try{ return _mtfSlantedEdge(roi2,W2,H2,4,pol); }catch(e){ lastErr=e.message; return null; }
+        };
+        const found=[]; for(const pol of [1,-1]){ const m=tryEdge(pol); if(m) found.push(m); }
+        if(!found.length){
+            fail(lastErr==='noisy' ? 'Edge too noisy or bent — move the box to a cleaner stretch of one bar edge.'
+               : lastErr==='rows'  ? 'Box mostly misses the edge — center it on one bar edge.'
+               : lastErr==='margin'? 'Not enough flat area beside the edge — keep the edge away from the frame border.'
+               : lastErr==='border'? 'Edge too close to the frame border.'
+               : 'No clean edge in the box — center it on a bar edge or across one whole bar.');
             return;
         }
+        const mr=_mtfCombine(found);
         const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
         const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
         const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1));
+        const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
         const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
         _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,dir,cutoff,ideal50};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · res ~'+(isFinite(f10)?(500/f10).toFixed(2):'—')+' µm<br>'+
-            'edge '+mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
+            (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
+            mr.angle.toFixed(1)+'° · '+dir+' · rise '+mr.rise.toFixed(0)+'px · '+(umpx>0?umpx.toFixed(4):'—')+' µm/px (pitch '+pitch.toFixed(0)+'px)</span>';
         if(umpx>0) _mtfDrawPlot(_mtfLast);
     }
     function centeringChosen(input){ if (input.files && input.files.length) centeringHandleFiles(input.files); input.value=''; }
