@@ -6693,7 +6693,7 @@
         for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
             const i=y*w+x, gx=g[i+1]-g[i-1], gy=g[i+w]-g[i-w];
             e[i]=gx*gx+gy*gy; egx[i]=gx; egy[i]=gy; }
-        const ts=Math.max(16,Math.round(Math.min(w,h)/12));
+        const ts=Math.max(10,Math.round(Math.min(w,h)/24));   // fine bins — coarse tiles blur the focus map
         const cols=Math.max(1,Math.floor(w/ts)), rows=Math.max(1,Math.floor(h/ts));
         const tv=new Float64Array(cols*rows), tcoh=new Float64Array(cols*rows), tang=new Float64Array(cols*rows);
         for(let ty=0;ty<rows;ty++) for(let tx=0;tx<cols;tx++){
@@ -6760,9 +6760,16 @@
         _mtfFit={s:s2,ox:ox2,oy:oy2};
         if(_mtfHeatOn && en.heat){
             const hM=en.heat, tpx=hM.ts*hM.k*s2;
+            // contrast-stretch the drawn range: raw scores cluster near the top, so a
+            // linear alpha makes every edge tile look identical. Stretch [min..max] of
+            // the drawn tiles and apply gamma so the sharpest areas clearly stand out.
+            let lo=1, hi=0;
+            for(const v of hM.vals) if(v>0.25){ if(v<lo)lo=v; if(v>hi)hi=v; }
+            const rng=Math.max(1e-6, hi-lo);
             for(let ty=0;ty<hM.rows;ty++) for(let tx=0;tx<hM.cols;tx++){
-                const v=hM.vals[ty*hM.cols+tx]; if(v<0.35) continue;
-                cx2.fillStyle='rgba(61,219,122,'+(0.38*v).toFixed(3)+')';
+                const v=hM.vals[ty*hM.cols+tx]; if(v<0.25) continue;
+                const vp=Math.pow((v-lo)/rng, 1.5);
+                cx2.fillStyle='rgba(61,219,122,'+(0.08+0.55*vp).toFixed(3)+')';
                 cx2.fillRect(ox2+tx*tpx, oy2+ty*tpx, tpx+0.5, tpx+0.5);
             }
         }
