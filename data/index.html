@@ -2335,6 +2335,15 @@
       #mtf-title { color:#3ddb7a; font-weight:bold; letter-spacing:1px; font-size:14px; }
       #mtf-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
         padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #mtf-info { cursor:pointer; width:22px; height:22px; border-radius:50%;
+        border:1px solid #3ddb7a; color:#3ddb7a; font-weight:bold; font-size:13px;
+        display:flex; align-items:center; justify-content:center; }
+      #mtf-info:hover { background:#12362b; }
+      #mtf-help { display:none; position:absolute; top:46px; left:16px; z-index:20;
+        max-width:520px; max-height:calc(100% - 60px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
       #mtf-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
       #mtf-left { flex:0 0 400px; display:flex; flex-direction:column; gap:8px;
         min-height:0; overflow-y:auto; }
@@ -2355,10 +2364,15 @@
         background:#3ddb7a; border-radius:2px; cursor:nwse-resize; touch-action:none; }
       #mtf-hint { display:none; font-size:10px; color:#7a958c; }
       #mtf-run { display:none; position:relative; left:auto; top:auto; width:100%;
-        height:30px; font-size:12px; }
+        height:36px; font-size:15px; letter-spacing:1px; }
       #mtf-result { font-size:13px; line-height:1.5; color:var(--text-disabled); min-height:30px; }
-      #mtf-plot { display:none; flex:1 1 auto; width:100%; min-height:220px;
+      #mtf-plotwrap { display:none; flex:1 1 auto; position:relative; min-height:220px; }
+      #mtf-plot { display:block; position:absolute; inset:0; width:100%; height:100%;
         background:#000; border:1px solid #222; }
+      #mtf-legend { position:absolute; top:10px; right:14px; z-index:5;
+        background:rgba(6,18,15,0.88); border:1px solid #1f3a33; border-radius:4px;
+        padding:6px 10px; font-size:11px; line-height:1.7; cursor:move;
+        touch-action:none; user-select:none; white-space:nowrap; }
       @media (max-width:760px) {
         #mtf-body { flex-direction:column; overflow-y:auto; }
         #mtf-left { flex:0 0 auto; overflow:visible; }
@@ -2367,8 +2381,36 @@
     </style>
     <div id="mtf">
       <div id="mtf-head">
-        <div id="mtf-title">MTF / RESOLUTION</div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div id="mtf-title">MTF / RESOLUTION</div>
+          <div id="mtf-info" onclick="mtfToggleHelp()" title="How to use this tool">?</div>
+        </div>
         <div id="mtf-close" onclick="closeMtf()">CLOSE &#10005;</div>
+      </div>
+      <div id="mtf-help" onclick="mtfToggleHelp()">
+        <b style="color:#3ddb7a;">Shooting</b><br>
+        Photograph a USAF-1951 target: pick an element whose bars fill most of the
+        frame, tilt the target ~5&deg; so the edges are slanted, best focus, lowest ISO.<br><br>
+        <b style="color:#3ddb7a;">Inputs</b><br>
+        <b>Grp/Elem</b> — the element you photographed; its known bar pitch calibrates
+        &micro;m/px automatically (needs &ge;2 bars in frame).
+        <b>eff NA</b> — the effective NA of the whole imaging train (objective stopped
+        by relay/tube optics); the grey ideal curve. The blue curve and the plot range
+        use the <i>active objective&rsquo;s</i> nominal NA from the main screen.<br><br>
+        <b style="color:#3ddb7a;">Measuring</b><br>
+        Drag the box across one <b>whole bar</b> — both edges are measured and
+        averaged — or onto a single edge. Avoid bar ends/corners. Re-measure after
+        moving the box; results are placement-independent.<br><br>
+        <b style="color:#3ddb7a;">Reading the plot</b><br>
+        <b>MTF50</b> — perceived-sharpness benchmark. <b>MTF10</b> — practical
+        resolution limit (&asymp;Rayleigh 9% contrast); res &micro;m = 500/MTF10.
+        <b>MTF5</b> — approximate by-eye extinction (&asymp;5% contrast, invisible below).
+        A &#9888; warning means MTF10 exceeds the objective&rsquo;s diffraction limit —
+        physically impossible, so check Grp/Elem and the selected objective.<br><br>
+        <b style="color:#3ddb7a;">Tips</b><br>
+        Measure both horizontal and vertical bars — a large difference indicates
+        astigmatism or focus-plane tilt. Drag the legend if it covers the curve.
+        <span style="color:#7a958c;">(click anywhere here to close)</span>
       </div>
       <div id="mtf-body">
         <div id="mtf-left">
@@ -2394,7 +2436,10 @@
           <div id="mtf-result">
             Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.
           </div>
-          <canvas id="mtf-plot" width="220" height="150"></canvas>
+          <div id="mtf-plotwrap">
+            <canvas id="mtf-plot" width="220" height="150"></canvas>
+            <div id="mtf-legend"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -6412,18 +6457,22 @@
             dz.addEventListener('drop', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';
                 if (e.dataTransfer && e.dataTransfer.files.length) mtfHandleFile(e.dataTransfer.files[0]);});
             _mtfBindRoi();
+            _mtfBindLegend();
             _mtfDropBound=true;
         }
         _mtfGen++;
         document.getElementById('mtf-prevwrap').style.display='none';
         document.getElementById('mtf-run').style.display='none';
         document.getElementById('mtf-hint').style.display='none';
-        document.getElementById('mtf-plot').style.display='none';
+        document.getElementById('mtf-plotwrap').style.display='none';
+        document.getElementById('mtf-help').style.display='none';
         const res=document.getElementById('mtf-result'); res.style.color='var(--text-disabled)';
         res.innerHTML='Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.';
         m.style.display='flex';
     }
     function closeMtf(){ _mtfGen++; document.getElementById('mtf').style.display='none'; }
+    function mtfToggleHelp(){ const h=document.getElementById('mtf-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
     function mtfChosen(input){ if (input.files && input.files[0]) mtfHandleFile(input.files[0]); input.value=''; }
     function _mtfSetRoi(x,y,w,h){
         const cv=document.getElementById('mtf-prev');
@@ -6450,6 +6499,19 @@
         el.addEventListener('pointermove', onmove); hd.addEventListener('pointermove', onmove);
         el.addEventListener('pointerup', ()=>mode=null); hd.addEventListener('pointerup', ()=>mode=null);
     }
+    function _mtfBindLegend(){                   // draggable plot legend (defaults to upper right)
+        const lg=document.getElementById('mtf-legend'), wrap=document.getElementById('mtf-plotwrap');
+        let drag=null;
+        lg.addEventListener('pointerdown', e=>{ e.preventDefault(); lg.setPointerCapture(e.pointerId);
+            const r=lg.getBoundingClientRect(); drag={dx:e.clientX-r.left, dy:e.clientY-r.top}; });
+        lg.addEventListener('pointermove', e=>{ if(!drag) return;
+            const wr=wrap.getBoundingClientRect();
+            let x=e.clientX-wr.left-drag.dx, y=e.clientY-wr.top-drag.dy;
+            x=Math.max(0,Math.min(x,wr.width-lg.offsetWidth));
+            y=Math.max(0,Math.min(y,wr.height-lg.offsetHeight));
+            lg.style.left=x+'px'; lg.style.top=y+'px'; lg.style.right='auto'; });
+        lg.addEventListener('pointerup', ()=>drag=null);
+    }
     function mtfHandleFile(file){
         const myGen=++_mtfGen, res=document.getElementById('mtf-result');
         res.style.color='var(--text-primary)'; res.textContent='Reading '+file.name+'…';
@@ -6464,7 +6526,7 @@
             cx.fillStyle='#000'; cx.fillRect(0,0,cw,ch); cx.drawImage(img,ox,oy,dw,dh);
             _mtfFit={s,ox,oy};
             document.getElementById('mtf-prevwrap').style.display='block';
-            document.getElementById('mtf-run').style.display='block';
+            document.getElementById('mtf-run').style.display='flex';
             document.getElementById('mtf-hint').style.display='block';
             _mtfSetRoi(cw*0.42, ch*0.22, cw*0.16, ch*0.55);   // auto-suggested portrait box (edge-detect next)
             res.style.color='var(--text-primary)'; res.textContent='Drag the box onto a clean bar edge, then MEASURE.';
@@ -6634,6 +6696,7 @@
         return { mtf:(2/Math.PI)*(Math.acos(u)-u*Math.sqrt(1-u*u)), cutoff };
     }
     function _mtfDrawPlot(L){
+        document.getElementById('mtf-plotwrap').style.display='block';
         const cv=document.getElementById('mtf-plot');
         const { ctx, PW, PH, S }=_ctrHiDPI(cv,300);
         const ML=30*S, MR=10*S, MT=8*S, MB=22*S, pw=PW-ML-MR, ph=PH-MT-MB;
@@ -6649,29 +6712,52 @@
             if(major){ ctx.fillStyle='#8aa'; ctx.textAlign='center'; ctx.textBaseline='top';
                 ctx.fillText(f,x,MT+ph+3*S); }
         }
+        // y grid: minor every 0.1; the 0.5 line emphasized dashed
+        for(let m=1;m<10;m++){
+            const y=toY(m/10);
+            ctx.strokeStyle='#182c26'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.moveTo(ML,y); ctx.lineTo(ML+pw,y); ctx.stroke();
+        }
         ctx.strokeStyle='#243a34'; ctx.lineWidth=1;
         ctx.setLineDash([3*S,3*S]); ctx.beginPath(); ctx.moveTo(ML,toY(0.5)); ctx.lineTo(ML+pw,toY(0.5)); ctx.stroke(); ctx.setLineDash([]);
         ctx.strokeStyle='#4a5a56'; ctx.beginPath(); ctx.moveTo(ML,MT); ctx.lineTo(ML,MT+ph); ctx.lineTo(ML+pw,MT+ph); ctx.stroke();
-        // diffraction-limited ideals: active objective (teal) + effective NA (grey)
+        // diffraction-limited ideals: active objective (blue) + effective NA (grey)
         const ideal=(NAv,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=Math.max(1,1.2*S);
             ctx.setLineDash([4*S,3*S]); ctx.beginPath();
             for(let i=0;i<=80;i++){ const f=fmax*i/80, x=toX(f), y=toY(_mtfDiff(f,NAv).mtf); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
             ctx.stroke(); ctx.setLineDash([]); };
-        ideal(L.objNA,'#59c9a5');
+        ideal(L.objNA,'#4da6ff');
         const showEff=Math.abs(L.NA-L.objNA)>0.001;
         if(showEff) ideal(L.NA,'#999');
         // measured
         ctx.strokeStyle='#ff6a6a'; ctx.lineWidth=Math.max(1.4,1.8*S); ctx.beginPath(); let started=false;
         for(let i=0;i<L.mtf.length;i++){ const f=L.freqs[i]/L.umpx*1000; if(f>fmax)break; const x=toX(f),y=toY(L.mtf[i]); started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true); } ctx.stroke();
-        if(isFinite(L.f50) && L.f50<=fmax){ ctx.strokeStyle='#ff6a6a'; ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(toX(L.f50),toY(0.5)); ctx.lineTo(toX(L.f50),toY(0)); ctx.stroke(); ctx.setLineDash([]); }
+        // markers on the measured curve: MTF50, MTF10 (practical limit), MTF5 (~eye extinction)
+        const mark=(f,lvl,col,label)=>{
+            if(!isFinite(f)||f>fmax) return;
+            const x=toX(f), y=toY(lvl);
+            ctx.strokeStyle=col; ctx.lineWidth=1;
+            ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,MT+ph); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,2.6*S,0,2*Math.PI); ctx.fill();
+            ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+            const tw=ctx.measureText(label).width, lx=(x+4*S+tw>ML+pw)?x-4*S-tw:x+4*S;
+            ctx.fillText(label,lx,y-3*S);
+        };
+        mark(L.f50,0.5,'#ff6a6a','MTF50 '+Math.round(L.f50));
+        mark(L.f10,0.1,'#ffb347','MTF10 '+Math.round(L.f10));
+        mark(L.f05,0.05,'#d9d9a0','MTF5 (eye) '+(isFinite(L.f05)?Math.round(L.f05):''));
         ctx.fillStyle='#8aa'; ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
         ctx.fillText('1',ML-3*S,toY(1)); ctx.fillText('.5',ML-3*S,toY(0.5)); ctx.fillText('0',ML-3*S,toY(0.02));
-        // diffraction cutoff at the right edge + legend
-        ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#59c9a5';
+        // diffraction cutoff at the right edge
+        ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#4da6ff';
         ctx.fillText(Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
-        ctx.textAlign='left'; ctx.fillStyle='#ff6a6a'; ctx.fillText('measured',ML+4*S,MT+3*S);
-        ctx.fillStyle='#59c9a5'; ctx.fillText('ideal '+L.objName+' NA '+L.objNA,ML+4*S,MT+3*S+11*S);
-        if(showEff){ ctx.fillStyle='#999'; ctx.fillText('eff NA '+L.NA,ML+4*S,MT+3*S+22*S); }
+        // HTML legend (draggable — see _mtfBindLegend; defaults to upper right)
+        document.getElementById('mtf-legend').innerHTML=
+            '<div style="color:#ff6a6a;">&#9644; measured</div>'+
+            '<div style="color:#4da6ff;">&#9476; ideal '+L.objName+' NA '+L.objNA+'</div>'+
+            (showEff?'<div style="color:#999;">&#9476; eff NA '+L.NA+'</div>':'')+
+            '<div style="color:#ffb347;">&#9679; MTF10 = practical limit</div>'+
+            '<div style="color:#d9d9a0;">&#9679; MTF5 &asymp; eye extinction</div>';
     }
     async function mtfMeasure(){
         const res=document.getElementById('mtf-result');
@@ -6727,7 +6813,8 @@
         const mr=_mtfCombine(found);
         const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
         const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
-        const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1));
+        const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1)),
+              f05=lp(_mtfAt(mr.freqs,mr.mtf,0.05));
         const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
         const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
         const objNA=NA_TABLE[state.obj]||NA, objName=(OBJ_MAG[state.obj]||'?')+'x',
@@ -6735,7 +6822,7 @@
         const warn=(isFinite(f10)&&f10>objCutoff)
             ? '<br><span style="color:#ffb347;">&#9888; MTF10 exceeds the '+objName+' NA-'+objNA+
               ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '';
-        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,dir,cutoff,ideal50,objNA,objName,objCutoff};
+        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal)<br>'+
