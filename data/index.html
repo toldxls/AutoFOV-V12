@@ -6710,26 +6710,34 @@
         const uniform=Math.max(0,Math.min(1, 1-(um>0?us/um:1)));
         // sharpest 2x2 cluster among single-orientation tiles (coherence gate skips
         // bar corners, which score high on gradient energy but can't be measured)
+        // slide the suggested-box footprint over the tile grid and score what the
+        // WHOLE box would cover: aligned coherent edge tiles score positive, strong
+        // tiles that are incoherent or off-orientation (bar corners/ends) score
+        // heavily negative — the optimum settles on a clean mid-edge stretch
         const angDiff=(a,b)=>{ let d=Math.abs(a-b)%180; return Math.min(d,180-d); };
-        const pick=(cohMin,angMax)=>{
-            let bi=-1,bv=-1;
-            for(let ty=0;ty<Math.max(1,rows-1);ty++) for(let tx=0;tx<Math.max(1,cols-1);tx++){
-                let v=0,ok=true; const angs=[];
-                for(const [dy,dx] of [[0,0],[0,1],[1,0],[1,1]]){
-                    const y2=ty+dy,x2=tx+dx; if(y2>=rows||x2>=cols) continue;
-                    const ii=y2*cols+x2; v+=heatV[ii];
-                    if(heatV[ii]>0.4){ if(tcoh[ii]<cohMin) ok=false; angs.push(tang[ii]); } }
-                // every strong tile in the cluster must share one edge orientation —
-                // a corner splits into two coherent-but-orthogonal tiles otherwise
-                if(ok) for(let i2=1;i2<angs.length;i2++)
-                    if(angDiff(angs[i2],angs[0])>angMax){ ok=false; break; }
-                if(ok && v>bv){ bv=v; bi=ty*cols+tx; } }
-            return bi;
-        };
-        let bi=pick(0.7,25); if(bi<0) bi=pick(0.5,40); if(bi<0) bi=pick(0,180);
-        const bty=Math.floor(bi/cols), btx=bi%cols;
-        return {score:sc, uniform, heat:{cols,rows,ts,k,vals:heatV},
-                bestFx:Math.min(1,((btx+1)*ts)/w), bestFy:Math.min(1,((bty+1)*ts)/h)};
+        const bwT=Math.max(1,Math.min(cols,Math.ceil(0.34*w/ts))),
+              bhT=Math.max(1,Math.min(rows,Math.ceil(0.46*h/ts)));
+        let bestSc=-Infinity, bestFx=0.5, bestFy=0.5;
+        for(let ty0=0;ty0<=rows-bhT;ty0++) for(let tx0=0;tx0<=cols-bwT;tx0++){
+            let refA=null, refV=-1;
+            for(let ty=ty0;ty<ty0+bhT;ty++) for(let tx=tx0;tx<tx0+bwT;tx++){
+                const ii=ty*cols+tx;
+                if(heatV[ii]>0.35 && tcoh[ii]>=0.6 && heatV[ii]>refV){ refV=heatV[ii]; refA=tang[ii]; } }
+            if(refA===null) continue;
+            let v=0, nAligned=0;
+            for(let ty=ty0;ty<ty0+bhT;ty++) for(let tx=tx0;tx<tx0+bwT;tx++){
+                const ii=ty*cols+tx; if(heatV[ii]<=0.35) continue;
+                if(tcoh[ii]>=0.55 && angDiff(tang[ii],refA)<=30){ v+=heatV[ii]; nAligned++; }
+                else v-=2*heatV[ii];
+            }
+            if(nAligned>=3 && v>bestSc){ bestSc=v;
+                bestFx=Math.min(1,(tx0+bwT/2)*ts/w); bestFy=Math.min(1,(ty0+bhT/2)*ts/h); }
+        }
+        if(!isFinite(bestSc)){                    // fallback: sharpest single tile
+            let bi=0; for(let i=1;i<heatV.length;i++) if(heatV[i]>heatV[bi]) bi=i;
+            bestFx=Math.min(1,((bi%cols)+0.5)*ts/w); bestFy=Math.min(1,(Math.floor(bi/cols)+0.5)*ts/h);
+        }
+        return {score:sc, uniform, heat:{cols,rows,ts,k,vals:heatV}, bestFx, bestFy};
     }
     function _mtfEsc(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
     function _mtfRenderPreview(){
