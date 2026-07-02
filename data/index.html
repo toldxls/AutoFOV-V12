@@ -2363,12 +2363,25 @@
       #mtf-roi-h { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px;
         background:#3ddb7a; border-radius:2px; cursor:nwse-resize; touch-action:none; }
       #mtf-hint { display:none; font-size:10px; color:#7a958c; }
+      #mtf-heat-btn { position:absolute; top:6px; right:6px; display:none; cursor:pointer;
+        background:rgba(6,18,15,0.8); border:1px solid #2a7a6a; border-radius:3px;
+        padding:2px 7px; font-size:9px; color:#7fd8c0; user-select:none; }
+      #mtf-thumbs { display:none; flex-wrap:wrap; gap:6px; }
+      .mtf-thumb { width:100px; cursor:pointer; border:1px solid #1f3a33; border-radius:4px;
+        padding:3px; font-size:9px; line-height:1.35; color:#7a958c; background:#08140f; }
+      .mtf-thumb canvas { display:block; margin-bottom:2px; }
+      .mtf-thumb.best { border-color:#3ddb7a; }
+      .mtf-thumb.sel { background:#0d2a1e; box-shadow:0 0 0 1px #7fd8c0; }
       #mtf-run { display:none; position:relative; left:auto; top:auto; width:100%;
         height:36px; font-size:15px; letter-spacing:1px; }
       #mtf-result { font-size:13px; line-height:1.5; color:var(--text-disabled); min-height:30px; }
       #mtf-plotwrap { display:none; flex:1 1 auto; position:relative; min-height:220px; }
       #mtf-plot { display:block; position:absolute; inset:0; width:100%; height:100%;
         background:#000; border:1px solid #222; }
+      #mtf-units { position:absolute; top:10px; left:44px; z-index:5; cursor:pointer;
+        background:rgba(26,60,58,0.85); border:1px solid #2a5e58; border-radius:4px;
+        padding:4px 10px; color:#9fe6cf; font-size:11px; font-weight:bold; user-select:none; }
+      #mtf-units:hover { background:#12362b; }
       #mtf-legend { position:absolute; top:10px; right:14px; z-index:5;
         background:rgba(6,18,15,0.88); border:1px solid #1f3a33; border-radius:4px;
         padding:6px 10px; font-size:11px; line-height:1.7; cursor:move;
@@ -2398,15 +2411,20 @@
         by relay/tube optics); the grey ideal curve. The blue curve and the plot range
         use the <i>active objective&rsquo;s</i> nominal NA from the main screen.<br><br>
         <b style="color:#3ddb7a;">Measuring</b><br>
-        Drag the box across one <b>whole bar</b> — both edges are measured and
-        averaged — or onto a single edge. Avoid bar ends/corners. Re-measure after
-        moving the box; results are placement-independent.<br><br>
+        Drop one or several crops (JPG/PNG/baseline TIFF) — each is focus-scored,
+        the sharpest is pre-selected (&#9733;) and the green heatmap shows where the
+        shot is sharpest; the box is pre-placed there. Drag the box across one
+        <b>whole bar</b> — both edges are measured and averaged — or onto a single
+        edge. Avoid bar ends/corners. Re-measure after moving the box; results are
+        placement-independent.<br><br>
         <b style="color:#3ddb7a;">Reading the plot</b><br>
         <b>MTF50</b> — perceived-sharpness benchmark. <b>MTF10</b> — practical
         resolution limit (&asymp;Rayleigh 9% contrast); res &micro;m = 500/MTF10.
         <b>MTF5</b> — approximate by-eye extinction (&asymp;5% contrast, invisible below).
-        A &#9888; warning means MTF10 exceeds the objective&rsquo;s diffraction limit —
-        physically impossible, so check Grp/Elem and the selected objective.<br><br>
+        The <b>lp/mm &harr; µm</b> button switches the axis to minimum resolvable
+        separation (500/f µm). A &#9888; warning means MTF10 exceeds the
+        objective&rsquo;s diffraction limit — physically impossible, so check
+        Grp/Elem and the selected objective.<br><br>
         <b style="color:#3ddb7a;">Tips</b><br>
         Measure both horizontal and vertical bars — a large difference indicates
         astigmatism or focus-plane tilt. Drag the legend if it covers the curve.
@@ -2422,15 +2440,17 @@
           <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()">
             Drop a crop of the element<br><span style="color:#5a8;">(element filling the frame, best focus)</span>
           </div>
-          <input type="file" id="mtf-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                 style="display:none;" onchange="mtfChosen(this)">
+          <input type="file" id="mtf-file" accept=".jpg,.jpeg,.png,.tif,.tiff,image/jpeg,image/png,image/tiff"
+                 style="display:none;" onchange="mtfChosen(this)" multiple>
           <div id="mtf-prevwrap">
             <canvas id="mtf-prev" width="640" height="440"></canvas>
             <div id="mtf-roi"><div id="mtf-roi-h"></div></div>
+            <div id="mtf-heat-btn" onclick="mtfToggleHeat()" title="Toggle the green focus heatmap">focus map</div>
           </div>
           <div id="mtf-hint">drag the box across one whole bar (~5&deg; slanted) — both edges are
             measured &amp; averaged — or onto a single edge, then MEASURE</div>
           <div class="gfx-btn flat" id="mtf-run" onclick="mtfMeasure()">MEASURE</div>
+          <div id="mtf-thumbs"></div>
         </div>
         <div id="mtf-right">
           <div id="mtf-result">
@@ -2439,6 +2459,7 @@
           <div id="mtf-plotwrap">
             <canvas id="mtf-plot" width="220" height="150"></canvas>
             <div id="mtf-legend"></div>
+            <div id="mtf-units" onclick="mtfToggleUnits()" title="Toggle x-axis: lp/mm &harr; µm (min resolvable separation = 500/f)">lp/mm</div>
           </div>
         </div>
       </div>
@@ -6447,6 +6468,11 @@
     // analysis (JS port of the validated slanted-edge prototype) + the MTF curve
     // plot land next.  ROI coords are in preview-canvas pixels.
     let _mtfGen=0, _mtfImg=null, _mtfDropBound=false, _mtfRoi={x:0,y:0,w:0,h:0}, _mtfFit=null, _mtfLast=null;
+    let _mtfUnits='lpmm';                    // x-axis units: 'lpmm' | 'um' (500/f = min resolvable separation)
+    let _mtfFiles=[], _mtfSel=-1, _mtfBestIdx=-1, _mtfHeatOn=true;
+    function mtfToggleUnits(){ _mtfUnits=(_mtfUnits==='lpmm')?'um':'lpmm';
+        document.getElementById('mtf-units').textContent=(_mtfUnits==='lpmm')?'lp/mm':'µm';
+        if(_mtfLast) _mtfDrawPlot(_mtfLast); }
     const _MTF_LUT=(()=>{ const t=new Float64Array(256); for(let i=0;i<256;i++){ const v=i/255; t[i]=v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); } return t; })();
     function openMtf(){
         const m=document.getElementById('mtf');
@@ -6455,9 +6481,14 @@
             dz.addEventListener('dragover', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#0d2a1e';});
             dz.addEventListener('dragleave',e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';});
             dz.addEventListener('drop', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';
-                if (e.dataTransfer && e.dataTransfer.files.length) mtfHandleFile(e.dataTransfer.files[0]);});
+                if (e.dataTransfer && e.dataTransfer.files.length) mtfHandleFiles(e.dataTransfer.files);});
             _mtfBindRoi();
             _mtfBindLegend();
+            document.addEventListener('pointerdown', e=>{   // click outside the ? help closes it
+                const h=document.getElementById('mtf-help');
+                if(h.style.display==='block' && !h.contains(e.target) && e.target.id!=='mtf-info')
+                    h.style.display='none';
+            }, true);
             _mtfDropBound=true;
         }
         _mtfGen++;
@@ -6466,6 +6497,9 @@
         document.getElementById('mtf-hint').style.display='none';
         document.getElementById('mtf-plotwrap').style.display='none';
         document.getElementById('mtf-help').style.display='none';
+        document.getElementById('mtf-thumbs').style.display='none';
+        document.getElementById('mtf-heat-btn').style.display='none';
+        _mtfFiles=[]; _mtfSel=-1; _mtfBestIdx=-1;
         const res=document.getElementById('mtf-result'); res.style.color='var(--text-disabled)';
         res.innerHTML='Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.';
         m.style.display='flex';
@@ -6473,7 +6507,7 @@
     function closeMtf(){ _mtfGen++; document.getElementById('mtf').style.display='none'; }
     function mtfToggleHelp(){ const h=document.getElementById('mtf-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
-    function mtfChosen(input){ if (input.files && input.files[0]) mtfHandleFile(input.files[0]); input.value=''; }
+    function mtfChosen(input){ if (input.files && input.files.length) mtfHandleFiles(input.files); input.value=''; }
     function _mtfSetRoi(x,y,w,h){
         const cv=document.getElementById('mtf-prev');
         w=Math.max(24,Math.min(w,cv.width)); h=Math.max(24,Math.min(h,cv.height));
@@ -6514,27 +6548,272 @@
         lg.addEventListener('pointerup', ()=>drag=null);
         lg.addEventListener('pointercancel', ()=>drag=null);
     }
-    function mtfHandleFile(file){
-        const myGen=++_mtfGen, res=document.getElementById('mtf-result');
-        res.style.color='var(--text-primary)'; res.textContent='Reading '+file.name+'…';
-        const url=URL.createObjectURL(file), img=new Image();
-        img.onerror=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
-            res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
-        img.onload=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
-            _mtfImg=img; _mtfLast=null;
-            document.getElementById('mtf-plotwrap').style.display='none';
-            const cv=document.getElementById('mtf-prev'), cx=cv.getContext('2d'), cw=cv.width, ch=cv.height;
-            const s=Math.min(cw/img.naturalWidth, ch/img.naturalHeight);
-            const dw=img.naturalWidth*s, dh=img.naturalHeight*s, ox=(cw-dw)/2, oy=(ch-dh)/2;
-            cx.fillStyle='#000'; cx.fillRect(0,0,cw,ch); cx.drawImage(img,ox,oy,dw,dh);
-            _mtfFit={s,ox,oy};
-            document.getElementById('mtf-prevwrap').style.display='block';
-            document.getElementById('mtf-run').style.display='flex';
-            document.getElementById('mtf-hint').style.display='block';
-            _mtfSetRoi(cw*0.42, ch*0.22, cw*0.16, ch*0.55);   // auto-suggested portrait box (edge-detect next)
-            res.style.color='var(--text-primary)'; res.textContent='Drag the box onto a clean bar edge, then MEASURE.';
+    // ---- minimal baseline TIFF decoder (strips; none/LZW/PackBits; 8/16-bit;
+    //      gray/RGB; predictor 2) -> canvas with naturalWidth/Height props ----
+    function _mtfLzw(src, outLen){
+        const out=new Uint8Array(outLen); let op=0, bitPos=0, prev=null, dict, dictSize, codeLen;
+        const reset=()=>{ dict=new Array(4096); for(let i=0;i<256;i++) dict[i]=[i]; dictSize=258; codeLen=9; };
+        reset();
+        const read=()=>{ let v=0; for(let i=0;i<codeLen;i++){ const by=src[bitPos>>3];
+            if(by===undefined) return 257; v=(v<<1)|((by>>(7-(bitPos&7)))&1); bitPos++; } return v; };
+        while(op<outLen){
+            const code=read();
+            if(code===257) break;
+            if(code===256){ reset(); prev=null; continue; }
+            let entry;
+            if(code<dictSize && dict[code]) entry=dict[code];
+            else if(prev) entry=prev.concat(prev[0]);
+            else break;
+            for(let i=0;i<entry.length && op<outLen;i++) out[op++]=entry[i];
+            if(prev){ dict[dictSize++]=prev.concat(entry[0]);
+                if(dictSize===511)codeLen=10; else if(dictSize===1023)codeLen=11; else if(dictSize===2047)codeLen=12; }
+            prev=entry;
+        }
+        return out;
+    }
+    function _mtfPackBits(src, outLen){
+        const out=new Uint8Array(outLen); let ip=0, op=0;
+        while(op<outLen && ip<src.length){ let n=src[ip++]; if(n>127) n-=256;
+            if(n>=0){ for(let i=0;i<=n && ip<src.length && op<outLen;i++) out[op++]=src[ip++]; }
+            else if(n>-128){ const v=src[ip++]; for(let i=0;i<1-n && op<outLen;i++) out[op++]=v; } }
+        return out;
+    }
+    function _mtfDecodeTiff(buf){
+        const dv=new DataView(buf);
+        if(buf.byteLength<8) throw new Error('not a TIFF');
+        const b0=dv.getUint16(0), le=b0===0x4949;
+        if(!le && b0!==0x4D4D) throw new Error('not a TIFF');
+        if(dv.getUint16(2,le)!==42) throw new Error('not a TIFF');
+        const u16=o=>dv.getUint16(o,le), u32=o=>dv.getUint32(o,le);
+        const off=u32(4), n=u16(off), tag={};
+        for(let i=0;i<n;i++){
+            const o=off+2+i*12, t=u16(o), ty=u16(o+2), cnt=Math.min(u32(o+4),1<<20);
+            const sz=(ty===3)?2:(ty===4)?4:1, vo=(sz*cnt<=4)? o+8 : u32(o+8);
+            const vals=[];
+            for(let k=0;k<cnt;k++) vals.push(ty===3?u16(vo+k*2): ty===4?u32(vo+k*4): dv.getUint8(vo+k));
+            tag[t]=vals;
+        }
+        const W=(tag[256]||[0])[0], H=(tag[257]||[0])[0];
+        if(!W||!H||W*H>80e6) throw new Error('bad TIFF size');
+        if(tag[322]||tag[323]) throw new Error('tiled TIFF — export as stripped, or PNG');
+        const comp=(tag[259]||[1])[0], photo=(tag[262]||[1])[0], spp=(tag[277]||[1])[0],
+              bps=(tag[258]||[8])[0], pred=(tag[317]||[1])[0], planar=(tag[284]||[1])[0],
+              rps=(tag[278]||[H])[0], offs=tag[273], cnts=tag[279];
+        if(planar!==1||!offs||!cnts) throw new Error('TIFF variant unsupported');
+        if(comp!==1&&comp!==5&&comp!==32773) throw new Error('TIFF compression unsupported — export uncompressed/LZW, or PNG');
+        if(bps!==8&&bps!==16) throw new Error('TIFF bit depth unsupported');
+        if(photo!==0&&photo!==1&&photo!==2) throw new Error('TIFF color unsupported');
+        const bpsB=bps>>3, rowBytes=W*spp*bpsB;
+        if(bps===16 && W*H*spp*2>3e8) throw new Error('16-bit TIFF too large');
+        const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+        const c=cv.getContext('2d'), id=c.createImageData(W,H), px=id.data;
+        const strips=[]; let rowBase=0;
+        for(let sI=0;sI<offs.length && rowBase<H;sI++){
+            const rows=Math.min(rps,H-rowBase);
+            let raw=new Uint8Array(buf, offs[sI], cnts[sI]);
+            if(comp===5) raw=_mtfLzw(raw, rows*rowBytes);
+            else if(comp===32773) raw=_mtfPackBits(raw, rows*rowBytes);
+            else raw=raw.slice(0, rows*rowBytes);
+            for(let r=0;r<rows;r++){
+                const rOff=r*rowBytes;
+                if(pred===2){                      // horizontal differencing
+                    if(bps===8){ for(let x=spp;x<W*spp;x++) raw[rOff+x]=(raw[rOff+x]+raw[rOff+x-spp])&255; }
+                    else { for(let x=spp;x<W*spp;x++){ const o2=rOff+x*2, p2=o2-spp*2;
+                        const v=((le?raw[o2]|(raw[o2+1]<<8):(raw[o2]<<8)|raw[o2+1]) +
+                                 (le?raw[p2]|(raw[p2+1]<<8):(raw[p2]<<8)|raw[p2+1]))&65535;
+                        if(le){ raw[o2]=v&255; raw[o2+1]=v>>8; } else { raw[o2]=v>>8; raw[o2+1]=v&255; } } }
+                }
+            }
+            strips.push({raw,rows,rowBase}); rowBase+=rows;
+        }
+        // 16-bit: normalize by the real max — 10/12-bit data in 16-bit containers
+        // (common from microscopy cameras) would otherwise decode nearly black
+        let sc16=1/256;
+        if(bps===16){
+            let mxv=1;
+            for(const st of strips) for(let o2=0;o2+1<st.raw.length;o2+=2){
+                const v=le? st.raw[o2]|(st.raw[o2+1]<<8) : (st.raw[o2]<<8)|st.raw[o2+1];
+                if(v>mxv) mxv=v; }
+            sc16=255/mxv;
+        }
+        for(const st of strips){
+            const raw=st.raw;
+            for(let r=0;r<st.rows;r++){
+                const rOff=r*rowBytes, py=(st.rowBase+r)*W*4;
+                for(let x=0;x<W;x++){
+                    const so=rOff+x*spp*bpsB;
+                    const smp=i2=>{ const o2=so+i2*bpsB;
+                        if(bps===8) return raw[o2];
+                        const v=le? raw[o2]|(raw[o2+1]<<8) : (raw[o2]<<8)|raw[o2+1];
+                        return Math.min(255,Math.round(v*sc16)); };
+                    let R,G2,B;
+                    if(spp>=3){ R=smp(0); G2=smp(1); B=smp(2); }
+                    else { let v=smp(0); if(photo===0) v=255-v; R=G2=B=v; }
+                    const o3=py+x*4; px[o3]=R; px[o3+1]=G2; px[o3+2]=B; px[o3+3]=255;
+                }
+            }
+        }
+        c.putImageData(id,0,0);
+        cv.naturalWidth=W; cv.naturalHeight=H;   // Image-compatible for drawImage consumers
+        return cv;
+    }
+    function mtfHandleFile(file){ mtfHandleFiles([file]); }   // single-file compat
+    function _mtfLoadOne(file){                  // -> Promise<Image | canvas(TIFF)>
+        if(file.type==='image/tiff' || /\.tiff?$/i.test(file.name))
+            return file.arrayBuffer().then(buf=>_mtfDecodeTiff(buf));
+        return new Promise((resolve,reject)=>{
+            const url=URL.createObjectURL(file), img=new Image();
+            img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('decode')); };
+            img.onload=()=>{ URL.revokeObjectURL(url); resolve(img); };
+            img.src=url;
+        });
+    }
+    function _mtfFocusScore(src){                // tile Tenengrad focus map on a <=640px copy
+        const iw=src.naturalWidth, ih=src.naturalHeight;
+        const k=Math.max(1, Math.max(iw,ih)/640);
+        const w=Math.max(32,Math.round(iw/k)), h=Math.max(32,Math.round(ih/k));
+        const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+        const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(src,0,0,w,h);
+        const d=c.getImageData(0,0,w,h).data, g=new Float64Array(w*h);
+        for(let i=0,p2=0;i<w*h;i++,p2+=4) g[i]=0.299*d[p2]+0.587*d[p2+1]+0.114*d[p2+2];
+        const srt=Array.from(g).sort((a,b)=>a-b);
+        const rng=Math.max(8, srt[Math.floor(0.95*(srt.length-1))]-srt[Math.floor(0.05*(srt.length-1))]);
+        const e=new Float64Array(w*h), egx=new Float64Array(w*h), egy=new Float64Array(w*h);
+        for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+            const i=y*w+x, gx=g[i+1]-g[i-1], gy=g[i+w]-g[i-w];
+            e[i]=gx*gx+gy*gy; egx[i]=gx; egy[i]=gy; }
+        const ts=Math.max(16,Math.round(Math.min(w,h)/12));
+        const cols=Math.max(1,Math.floor(w/ts)), rows=Math.max(1,Math.floor(h/ts));
+        const tv=new Float64Array(cols*rows), tcoh=new Float64Array(cols*rows), tang=new Float64Array(cols*rows);
+        for(let ty=0;ty<rows;ty++) for(let tx=0;tx<cols;tx++){
+            const list=[]; let jxx=0,jyy=0,jxy=0;
+            for(let y=ty*ts;y<Math.min((ty+1)*ts,h);y++)
+                for(let x=tx*ts;x<Math.min((tx+1)*ts,w);x++){ const i=y*w+x;
+                    list.push(e[i]); jxx+=egx[i]*egx[i]; jyy+=egy[i]*egy[i]; jxy+=egx[i]*egy[i]; }
+            list.sort((a,b)=>b-a);
+            const nT=Math.max(1,Math.floor(list.length*0.25)); let s2=0;
+            for(let i=0;i<nT;i++) s2+=list[i];
+            tv[ty*cols+tx]=(s2/nT)/(rng*rng);
+            // structure-tensor coherence: 1 = single edge orientation, low = corner/texture
+            tcoh[ty*cols+tx]=(jxx+jyy>1e-9)? Math.sqrt((jxx-jyy)*(jxx-jyy)+4*jxy*jxy)/(jxx+jyy) : 0;
+            tang[ty*cols+tx]=0.5*Math.atan2(2*jxy, jxx-jyy)*180/Math.PI;   // dominant orientation
+        }
+        let mxT=0; for(const v of tv) if(v>mxT) mxT=v;
+        const heatV=new Float64Array(tv.length);
+        if(mxT>0) for(let i=0;i<tv.length;i++) heatV[i]=tv[i]/mxT;
+        const sortedT=Array.from(tv).sort((a,b)=>b-a);
+        const nTop=Math.min(sortedT.length, Math.max(3,Math.floor(sortedT.length*0.1)));
+        let sc=0; for(let i=0;i<nTop;i++) sc+=sortedT[i]; sc/=nTop;
+        const edge=Array.from(tv).filter(v=>v>0.3*mxT);
+        let um=0; for(const v of edge) um+=v; um/=Math.max(1,edge.length);
+        let us=0; for(const v of edge) us+=(v-um)*(v-um); us=Math.sqrt(us/Math.max(1,edge.length));
+        const uniform=Math.max(0,Math.min(1, 1-(um>0?us/um:1)));
+        // sharpest 2x2 cluster among single-orientation tiles (coherence gate skips
+        // bar corners, which score high on gradient energy but can't be measured)
+        const angDiff=(a,b)=>{ let d=Math.abs(a-b)%180; return Math.min(d,180-d); };
+        const pick=(cohMin,angMax)=>{
+            let bi=-1,bv=-1;
+            for(let ty=0;ty<Math.max(1,rows-1);ty++) for(let tx=0;tx<Math.max(1,cols-1);tx++){
+                let v=0,ok=true; const angs=[];
+                for(const [dy,dx] of [[0,0],[0,1],[1,0],[1,1]]){
+                    const y2=ty+dy,x2=tx+dx; if(y2>=rows||x2>=cols) continue;
+                    const ii=y2*cols+x2; v+=heatV[ii];
+                    if(heatV[ii]>0.4){ if(tcoh[ii]<cohMin) ok=false; angs.push(tang[ii]); } }
+                // every strong tile in the cluster must share one edge orientation —
+                // a corner splits into two coherent-but-orthogonal tiles otherwise
+                if(ok) for(let i2=1;i2<angs.length;i2++)
+                    if(angDiff(angs[i2],angs[0])>angMax){ ok=false; break; }
+                if(ok && v>bv){ bv=v; bi=ty*cols+tx; } }
+            return bi;
         };
-        img.src=url;
+        let bi=pick(0.7,25); if(bi<0) bi=pick(0.5,40); if(bi<0) bi=pick(0,180);
+        const bty=Math.floor(bi/cols), btx=bi%cols;
+        return {score:sc, uniform, heat:{cols,rows,ts,k,vals:heatV},
+                bestFx:Math.min(1,((btx+1)*ts)/w), bestFy:Math.min(1,((bty+1)*ts)/h)};
+    }
+    function _mtfEsc(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+    function _mtfRenderPreview(){
+        const en=_mtfFiles[_mtfSel]; if(!en) return;
+        const cv=document.getElementById('mtf-prev'), cx2=cv.getContext('2d'), cw=cv.width, ch=cv.height;
+        const iw=en.src.naturalWidth, ih=en.src.naturalHeight;
+        const s2=Math.min(cw/iw, ch/ih), dw2=iw*s2, dh2=ih*s2, ox2=(cw-dw2)/2, oy2=(ch-dh2)/2;
+        cx2.fillStyle='#000'; cx2.fillRect(0,0,cw,ch); cx2.drawImage(en.src,ox2,oy2,dw2,dh2);
+        _mtfFit={s:s2,ox:ox2,oy:oy2};
+        if(_mtfHeatOn && en.heat){
+            const hM=en.heat, tpx=hM.ts*hM.k*s2;
+            for(let ty=0;ty<hM.rows;ty++) for(let tx=0;tx<hM.cols;tx++){
+                const v=hM.vals[ty*hM.cols+tx]; if(v<0.35) continue;
+                cx2.fillStyle='rgba(61,219,122,'+(0.38*v).toFixed(3)+')';
+                cx2.fillRect(ox2+tx*tpx, oy2+ty*tpx, tpx+0.5, tpx+0.5);
+            }
+        }
+        const hb=document.getElementById('mtf-heat-btn');
+        hb.style.display='block'; hb.style.opacity=_mtfHeatOn?1:0.55;
+    }
+    function mtfToggleHeat(){ _mtfHeatOn=!_mtfHeatOn; _mtfRenderPreview(); }
+    function _mtfSelect(i){
+        _mtfSel=i; const en=_mtfFiles[i]; _mtfImg=en.src;
+        _mtfRenderPreview(); _mtfRenderThumbs();
+        const dw2=en.src.naturalWidth*_mtfFit.s, dh2=en.src.naturalHeight*_mtfFit.s;
+        const bw=dw2*0.34, bh=dh2*0.46;          // suggested box over the sharpest cluster
+        _mtfSetRoi(_mtfFit.ox+en.bestFx*dw2-bw/2, _mtfFit.oy+en.bestFy*dh2-bh/2, bw, bh);
+    }
+    function _mtfRenderThumbs(){
+        const tb=document.getElementById('mtf-thumbs');
+        tb.style.display=_mtfFiles.length>1?'flex':'none';
+        tb.innerHTML='';
+        if(_mtfFiles.length<=1) return;
+        _mtfFiles.forEach((en,i)=>{
+            const div=document.createElement('div');
+            div.className='mtf-thumb'+(i===_mtfSel?' sel':'')+(i===_mtfBestIdx?' best':'');
+            const c=document.createElement('canvas'); c.width=94; c.height=62;
+            const g2=c.getContext('2d');
+            const iw=en.src.naturalWidth, ih=en.src.naturalHeight;
+            const sc2=Math.min(94/iw,62/ih), dw3=iw*sc2, dh3=ih*sc2;
+            g2.fillStyle='#000'; g2.fillRect(0,0,94,62);
+            g2.drawImage(en.src,(94-dw3)/2,(62-dh3)/2,dw3,dh3);
+            div.appendChild(c);
+            const lab=document.createElement('div');
+            lab.innerHTML=(i===_mtfBestIdx?'<b style="color:#3ddb7a;">&#9733; sharpest</b><br>':'')+
+                _mtfEsc(en.name.slice(0,18))+'<br>sharp '+en.pct+'% · uniform '+Math.round(en.uniform*100)+'%';
+            div.appendChild(lab);
+            div.onclick=()=>_mtfSelect(i);
+            tb.appendChild(div);
+        });
+    }
+    async function mtfHandleFiles(fileList){
+        const files=Array.from(fileList).filter(f=>f&&f.name).slice(0,12);
+        if(!files.length) return;
+        const myGen=++_mtfGen, res=document.getElementById('mtf-result');
+        res.style.color='var(--text-primary)';
+        res.textContent='Reading '+files.length+' file'+(files.length>1?'s':'')+'…';
+        document.getElementById('mtf-plotwrap').style.display='none'; _mtfLast=null;
+        const entries=[], bad=[];
+        for(const f of files){
+            try{ const src=await _mtfLoadOne(f); if(myGen!==_mtfGen) return; entries.push({src,name:f.name}); }
+            catch(err){ if(myGen!==_mtfGen) return;
+                bad.push(f.name+(err&&err.message&&err.message!=='decode'?' — '+err.message:'')); }
+        }
+        if(!entries.length){ res.style.color='#ff6a6a';
+            res.textContent='Could not load: '+bad.join(', '); return; }
+        res.textContent='Scoring focus on '+entries.length+' file'+(entries.length>1?'s':'')+'…';
+        await new Promise(r=>setTimeout(r,0));
+        for(const en of entries){ Object.assign(en,_mtfFocusScore(en.src)); if(myGen!==_mtfGen) return; }
+        let mx=0; for(const en of entries) if(en.score>mx) mx=en.score;
+        entries.forEach(en=>en.pct=mx>0?Math.round(100*en.score/mx):0);
+        _mtfFiles=entries;
+        _mtfBestIdx=entries.reduce((bi,en,i,arr)=>en.score>arr[bi].score?i:bi,0);
+        document.getElementById('mtf-prevwrap').style.display='block';
+        document.getElementById('mtf-run').style.display='flex';
+        document.getElementById('mtf-hint').style.display='block';
+        _mtfSelect(_mtfBestIdx);
+        res.style.color='var(--text-primary)';
+        res.innerHTML=(entries.length>1
+            ? '<b style="color:#3ddb7a;">&#9733; '+_mtfEsc(_mtfFiles[_mtfBestIdx].name.slice(0,24))+'</b> scores sharpest'+
+              ' (sharp 100% · uniform '+Math.round(_mtfFiles[_mtfBestIdx].uniform*100)+'%) — box pre-placed on its'+
+              ' sharpest area. MEASURE, or pick another shot below.'
+            : 'Box pre-placed on the sharpest area (green map). Adjust if needed, then MEASURE.')+
+            (bad.length?'<br><span style="color:#ffb347;">skipped: '+_mtfEsc(bad.join(', '))+'</span>':'');
     }
     // ---- slanted-edge math (ported from the validated mtf_prototype.py) ----
     function _mtfFitLine(rows, ex){
@@ -6716,7 +6995,7 @@
             ctx.strokeStyle=major?'#2e4a42':'#182c26'; ctx.lineWidth=major?Math.max(1,1.1*S):1;
             ctx.beginPath(); ctx.moveTo(x,MT); ctx.lineTo(x,MT+ph); ctx.stroke();
             if(major){ ctx.fillStyle='#8aa'; ctx.textAlign='center'; ctx.textBaseline='top';
-                ctx.fillText(f,x,MT+ph+3*S); }
+                ctx.fillText(_mtfUnits==='um'?(500/f).toFixed(2):f,x,MT+ph+3*S); }
         }
         // y grid: minor every 0.1; the 0.5 line emphasized dashed
         for(let m=1;m<10;m++){
@@ -6749,14 +7028,15 @@
             const tw=ctx.measureText(label).width, lx=(x+4*S+tw>ML+pw)?x-4*S-tw:x+4*S;
             ctx.fillText(label,lx,y-3*S);
         };
-        mark(L.f50,0.5,'#ff6a6a','MTF50 '+Math.round(L.f50));
-        mark(L.f10,0.1,'#ffb347','MTF10 '+Math.round(L.f10));
-        mark(L.f05,0.05,'#d9d9a0','MTF5 (eye) '+(isFinite(L.f05)?Math.round(L.f05):''));
+        const fu=f=>_mtfUnits==='um'?(500/f).toFixed(2)+'µm':Math.round(f);
+        mark(L.f50,0.5,'#ff6a6a','MTF50 '+fu(L.f50));
+        mark(L.f10,0.1,'#ffb347','MTF10 '+fu(L.f10));
+        mark(L.f05,0.05,'#d9d9a0','MTF5 (eye) '+(isFinite(L.f05)?fu(L.f05):''));
         ctx.fillStyle='#8aa'; ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
         ctx.fillText('1',ML-3*S,toY(1)); ctx.fillText('.5',ML-3*S,toY(0.5)); ctx.fillText('0',ML-3*S,toY(0.02));
         // diffraction cutoff at the right edge
         ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#4da6ff';
-        ctx.fillText(Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
+        ctx.fillText(_mtfUnits==='um'?(500/fmax).toFixed(2)+' µm':Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
         // HTML legend (draggable — see _mtfBindLegend; defaults to upper right)
         document.getElementById('mtf-legend').innerHTML=
             '<div style="color:#ff6a6a;">&#9644; measured</div>'+

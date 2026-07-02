@@ -8,7 +8,7 @@ import gzip, os, re, shutil, subprocess, tempfile
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
-VERSION_MINOR = 3   # bump manually for milestone releases
+VERSION_MINOR = 4   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
 # commit count at the bump commit so patch = HEAD_count - base.  Without this,
 # each new series would inherit the old running count instead of starting at
@@ -18,7 +18,7 @@ VERSION_MINOR = 3   # bump manually for milestone releases
 # overlay, auth reconnect, TOF signal smoothing.
 # 12.3: photo-assisted calibration — measure the pixel count from a micrometer
 # JPEG (auto tick detection, deskew, in-focus region, contrast-profile review).
-VERSION_PATCH_BASE = 257
+VERSION_PATCH_BASE = 293
 # ─────────────────────────────────────────────────────────────────────────────
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
