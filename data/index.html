@@ -6498,6 +6498,7 @@
             else _mtfSetRoi(_mtfRoi.x, _mtfRoi.y, p.x-_mtfRoi.x, p.y-_mtfRoi.y); };
         el.addEventListener('pointermove', onmove); hd.addEventListener('pointermove', onmove);
         el.addEventListener('pointerup', ()=>mode=null); hd.addEventListener('pointerup', ()=>mode=null);
+        el.addEventListener('pointercancel', ()=>mode=null); hd.addEventListener('pointercancel', ()=>mode=null);
     }
     function _mtfBindLegend(){                   // draggable plot legend (defaults to upper right)
         const lg=document.getElementById('mtf-legend'), wrap=document.getElementById('mtf-plotwrap');
@@ -6511,6 +6512,7 @@
             y=Math.max(0,Math.min(y,wr.height-lg.offsetHeight));
             lg.style.left=x+'px'; lg.style.top=y+'px'; lg.style.right='auto'; });
         lg.addEventListener('pointerup', ()=>drag=null);
+        lg.addEventListener('pointercancel', ()=>drag=null);
     }
     function mtfHandleFile(file){
         const myGen=++_mtfGen, res=document.getElementById('mtf-result');
@@ -6519,7 +6521,8 @@
         img.onerror=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
             res.style.color='#ff6a6a'; res.textContent='Could not load that image.'; };
         img.onload=()=>{ URL.revokeObjectURL(url); if(myGen!==_mtfGen)return;
-            _mtfImg=img;
+            _mtfImg=img; _mtfLast=null;
+            document.getElementById('mtf-plotwrap').style.display='none';
             const cv=document.getElementById('mtf-prev'), cx=cv.getContext('2d'), cw=cv.width, ch=cv.height;
             const s=Math.min(cw/img.naturalWidth, ch/img.naturalHeight);
             const dw=img.naturalWidth*s, dh=img.naturalHeight*s, ox=(cw-dw)/2, oy=(ch-dh)/2;
@@ -6606,7 +6609,6 @@
     function _mtfSlantedEdge(roi,W,H,os,pol){
         os=os||4;
         const ef=_mtfEdgeFit(roi,W,H,pol);
-        if(ef.rms>2.0) throw new Error('noisy');   // edge centroids don't sit on a line -> garbage box
         if(ef.frac<0.5) throw new Error('rows');
         const a=ef.a, b=ef.b, angle=Math.atan(a)*180/Math.PI;
         const {esf,nb,binw,dmin}=_mtfEsf(roi,W,H,a,b,ef.keep,os);
@@ -6619,6 +6621,9 @@
         while(i10>0 && sgn*(esf[i10]-l10)>0) i10--;
         while(i90<nb-1 && sgn*(l90-esf[i90])>0) i90++;
         const rise=Math.max(1,(i90-i10)/os);
+        // gates: centroid jitter scales with the blur, so the noise gate is
+        // rise-relative (a fixed 2px gate rejects every high-resolution shot)
+        if(ef.rms > Math.max(2.0, 0.15*rise)) throw new Error('noisy');
         if(hw < os*Math.max(24,3*rise)) throw new Error('margin');
         const lsf=new Float64Array(nb);
         lsf[0]=esf[1]-esf[0]; lsf[nb-1]=esf[nb-1]-esf[nb-2];
@@ -6679,11 +6684,12 @@
             let s=0; for(const L of list) s+=_mtfInterp(L.freqs,L.mtf,f); mtf[i]=s/list.length; }
         return {freqs,mtf,angle,rise};
     }
-    function _mtfGrabLin(gx,gy,gw,gh){       // linear-luma patch from the dropped image
-        const cv=document.createElement('canvas'); cv.width=gw; cv.height=gh;
-        const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(_mtfImg,gx,gy,gw,gh,0,0,gw,gh);
-        const d=c.getImageData(0,0,gw,gh).data, out=new Float64Array(gw*gh);
-        for(let i=0,p=0;i<gw*gh;i++,p+=4) out[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
+    function _mtfGrabLin(gx,gy,gw,gh,ow,oh){ // linear-luma patch from the dropped image
+        ow=ow||gw; oh=oh||gh;                // optional downscale (locate pass on huge boxes)
+        const cv=document.createElement('canvas'); cv.width=ow; cv.height=oh;
+        const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(_mtfImg,gx,gy,gw,gh,0,0,ow,oh);
+        const d=c.getImageData(0,0,ow,oh).data, out=new Float64Array(ow*oh);
+        for(let i=0,p=0;i<ow*oh;i++,p+=4) out[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
         return out;
     }
     function _mtfTranspose(a,w,h){
@@ -6765,37 +6771,52 @@
         const G=parseInt(document.getElementById('mtf-group').value),
               E=parseInt(document.getElementById('mtf-elem').value),
               NA=parseFloat(document.getElementById('mtf-na').value)||0.29;
-        if(!(G>=0)||!(E>=1)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
+        if(!(G>=0&&G<=9)||!(E>=1&&E<=6)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
         const lpmmKnown=Math.pow(2, G+(E-1)/6);
         res.style.color='var(--text-primary)'; res.textContent='Measuring…'; await new Promise(r=>setTimeout(r,0));
+        const myGen=_mtfGen;                 // stale-measure guard (close / new image mid-measure)
         const {s,ox,oy}=_mtfFit;
-        let sx=Math.max(0,Math.round((_mtfRoi.x-ox)/s)), sy=Math.max(0,Math.round((_mtfRoi.y-oy)/s)),
-            sw=Math.round(_mtfRoi.w/s), sh=Math.round(_mtfRoi.h/s);
-        sw=Math.min(sw,_mtfImg.naturalWidth-sx); sh=Math.min(sh,_mtfImg.naturalHeight-sy);
+        // intersect the box with the image area — the box may overlap the letterbox
+        const ix0=Math.max(0,Math.round((_mtfRoi.x-ox)/s)), iy0=Math.max(0,Math.round((_mtfRoi.y-oy)/s)),
+              ix1=Math.min(_mtfImg.naturalWidth, Math.round((_mtfRoi.x+_mtfRoi.w-ox)/s)),
+              iy1=Math.min(_mtfImg.naturalHeight,Math.round((_mtfRoi.y+_mtfRoi.h-oy)/s));
+        const sx=ix0, sy=iy0, sw=ix1-ix0, sh=iy1-iy0;
         if(sw<12||sh<12){ res.style.color='#ff6a6a'; res.textContent='Box too small — enlarge it over a bar edge.'; return; }
-        const fail=m=>{ res.style.color='#ff6a6a'; res.textContent=m; };
-        let roi=_mtfGrabLin(sx,sy,sw,sh);
+        const fail=m=>{ if(myGen===_mtfGen){ res.style.color='#ff6a6a'; res.textContent=m; } };
+        // locate pass runs downscaled when the box is huge — bounds memory (a 45MP
+        // full-frame drop would otherwise allocate two ~360MB Float64 planes)
+        let k=1; if(sw*sh>2.4e6) k=Math.ceil(Math.sqrt(sw*sh/2.4e6));
+        const dw=Math.max(12,Math.floor(sw/k)), dh=Math.max(12,Math.floor(sh/k));
+        let roi=_mtfGrabLin(sx,sy,sw,sh,dw,dh);
         let ehx=0,ehy=0;
-        for(let y=0;y<sh;y++){ const ro=y*sw; for(let x=0;x<sw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
-        for(let y=0;y<sh-1;y++){ const ro=y*sw,r2=(y+1)*sw; for(let x=0;x<sw;x++){ const dd=roi[r2+x]-roi[ro+x]; ehy+=dd*dd; } }
-        let W=sw,H=sh,horizEdge=false,dir='horiz-MTF (vertical edge)';
-        if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)'; roi=_mtfTranspose(roi,sw,sh); W=sh; H=sw; }
+        for(let y=0;y<dh;y++){ const ro=y*dw; for(let x=0;x<dw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
+        for(let y=0;y<dh-1;y++){ const ro=y*dw,r2=(y+1)*dw; for(let x=0;x<dw;x++){ const dd=roi[r2+x]-roi[ro+x]; ehy+=dd*dd; } }
+        let W=dw,H=dh,horizEdge=false,dir='horiz-MTF (vertical edge)';
+        if(ehy>ehx){ horizEdge=true; dir='vert-MTF (horizontal edge)'; roi=_mtfTranspose(roi,dw,dh); W=dh; H=dw; }
+        const kx=sw/dw, ky=sh/dh;            // scale-back factors for locate-pass coords
         const pitch=_mtfScaleFromBars(sx,sy,sw,sh,horizEdge);
         // one pass per edge polarity: a box across a whole bar yields a rising AND a
         // falling edge — measured independently and averaged for a tighter estimate.
         // Each edge: RANSAC locate in the user's box, then recut from the source image
         // with that edge centered so the Hann window is never clipped by a box border
         // (a clipped window inflates MTF50).
-        const acrossHalf=Math.round(Math.min(100,Math.max(40, pitch>0?0.45*pitch:100)));
+        // recut sizing must scale with the shot: across from the bar pitch (0.45x keeps
+        // the opposite edge out), along capped — the ESF gains nothing past ~1500 rows
+        const acrossHalf=Math.round(Math.min(600, Math.max(40,
+            pitch>0 ? 0.45*pitch
+                    : Math.max(100,(horizEdge?_mtfImg.naturalHeight:_mtfImg.naturalWidth)/8))));
+        const ALONG_MAX=1500;
         let lastErr='';
         const tryEdge=pol=>{
             let f1; try{ f1=_mtfEdgeLocate(roi,W,H,pol); }catch(e){ lastErr=lastErr||e.message; return null; }
-            const acrossC=f1.a*(H/2)+f1.b;
+            const acrossC=(f1.a*(H/2)+f1.b)*(horizEdge?ky:kx);   // back to image px
             let rsx=sx,rsy=sy,rsw=sw,rsh=sh;
             if(horizEdge){ const cyI=sy+acrossC; rsy=Math.max(0,Math.round(cyI-acrossHalf));
-                rsh=Math.min(_mtfImg.naturalHeight,Math.round(cyI+acrossHalf))-rsy; }
+                rsh=Math.min(_mtfImg.naturalHeight,Math.round(cyI+acrossHalf))-rsy;
+                if(rsw>ALONG_MAX){ rsx=Math.max(0,Math.round(sx+sw/2-ALONG_MAX/2)); rsw=Math.min(ALONG_MAX,_mtfImg.naturalWidth-rsx); } }
             else { const cxI=sx+acrossC; rsx=Math.max(0,Math.round(cxI-acrossHalf));
-                rsw=Math.min(_mtfImg.naturalWidth,Math.round(cxI+acrossHalf))-rsx; }
+                rsw=Math.min(_mtfImg.naturalWidth,Math.round(cxI+acrossHalf))-rsx;
+                if(rsh>ALONG_MAX){ rsy=Math.max(0,Math.round(sy+sh/2-ALONG_MAX/2)); rsh=Math.min(ALONG_MAX,_mtfImg.naturalHeight-rsy); } }
             if(rsw<12||rsh<12){ lastErr='border'; return null; }
             let roi2=_mtfGrabLin(rsx,rsy,rsw,rsh), W2=rsw, H2=rsh;
             if(horizEdge){ roi2=_mtfTranspose(roi2,rsw,rsh); W2=rsh; H2=rsw; }
@@ -6810,6 +6831,7 @@
                : 'No clean edge in the box — center it on a bar edge or across one whole bar.');
             return;
         }
+        if(myGen!==_mtfGen) return;         // panel closed / image replaced mid-measure
         const mr=_mtfCombine(found);
         const umpx=(pitch>0)?(1000/lpmmKnown)/pitch:NaN;
         const lp=cpp=> (umpx>0)? cpp/umpx*1000 : NaN;
@@ -6819,9 +6841,11 @@
         const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
         const objNA=NA_TABLE[state.obj]||NA, objName=(OBJ_MAG[state.obj]||'?')+'x',
               objCutoff=2*objNA/0.55*1000;
-        const warn=(isFinite(f10)&&f10>objCutoff)
+        const warn=((isFinite(f10)&&f10>objCutoff)
             ? '<br><span style="color:#ffb347;">&#9888; MTF10 exceeds the '+objName+' NA-'+objNA+
-              ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '';
+              ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '')+
+            (pitch>0 ? '' : '<br><span style="color:#ffb347;">&#9888; scale unavailable — needs &ge;2 clean,'+
+              ' evenly-spaced bars spanning the frame, so lp/mm cannot be shown</span>');
         _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
