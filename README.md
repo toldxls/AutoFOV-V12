@@ -6,6 +6,8 @@ V12 adds a full real-time vibration monitoring and analysis system using the onb
 
 V12.3 adds **photo-assisted calibration** — drop a stage-micrometer JPEG on the web dashboard and it measures the pixel count across the demarcation window automatically (periodic tick detection, sub-pixel centroids, and image deskew), then auto-fills the calibration point. Calibrations can also be exported/imported and shared as `.json`/`.txt`.
 
+V12.4 adds an **MTF / resolution analyzer** — drop one or more USAF-1951 target shots on the dashboard and it measures the system's slanted-edge MTF, plots it against the objective's diffraction limit, fits the **equivalent NA** the system actually performs at, and reports MTF50 / MTF10 / MTF5 in lp/mm or µm. Accepts JPEG, PNG, and baseline TIFF; scores multiple shots for focus and picks the sharpest automatically.
+
 ## Features
 
 * **Real-Time FOV Calculation:** Uses a VL53L4CX ToF sensor to measure distance and computes FOV for 5×, 10×, and 20× objectives.
@@ -16,6 +18,8 @@ V12.3 adds **photo-assisted calibration** — drop a stage-micrometer JPEG on th
 * **Captive Portal Setup:** First-time WiFi setup via a built-in access point (AutoFOV-Setup).
 * **PSRAM-Backed UI:** Fluid, flicker-free UI using off-screen 16-bit sprites buffered in PSRAM.
 * **Customization:** Adjustable screen brightness, sleep timeouts, and multiple color themes (Classic, Midnight, Forest, Daylight) with adjustable tint.
+* **MTF / Resolution Analyzer (V12.4):** Slanted-edge MTF from a USAF-1951 target shot, on the web dashboard. Auto-scales from the known bar pitch, measures both edges of a bar and averages them, plots measured vs diffraction-limited ideal, fits an equivalent NA, subtracts the measured noise floor, and marks MTF50 / MTF10 (practical limit) / MTF5 (eye extinction).
+* **Lens Centering Check (V12.3):** Drop a stage-micrometer shot and the dashboard measures lateral chromatic-aberration shift across the field to verify the lens is centered.
 * **Vibration Monitor (V12):** Dual-core DSP pipeline on the LSM6DSOX. Separates acceleration into vertical and horizontal-plane channels by projecting out gravity, runs a 512-point FFT on each, and tracks dominant frequency, per-band RMS, and a Goertzel-fit settle-time estimate after each shutter pulse. Vibration signatures can be captured and saved to LittleFS for comparison.
 
 ## Hardware Requirements
@@ -107,7 +111,7 @@ firmware while keeping calibration and WiFi settings.
 1. **Initial boot:** No credentials saved → device starts in Captive Portal mode.
 2. **Connect:** Join the `AutoFOV-Setup` network; the setup page appears automatically.
 3. **Configure:** Enter your WiFi credentials. The device saves them, restarts, and connects. Assign a static high IP (e.g. 192.168.1.250) via your router for easy access.
-4. **Dashboard:** Enter the device IP in any browser. The full remote control UI loads from LittleFS.
+4. **Dashboard:** Enter the device IP in any browser. The full remote-control UI is served straight from the firmware binary (gzip-embedded — no LittleFS upload).
 
 ### Stack-Complete Notification
 
@@ -165,6 +169,43 @@ or high spacing error). JPEG only (browsers can't decode RAW): shoot JPEG or RAW
 a full **uncropped** frame; export RAW→JPEG first if needed. The dashboard
 **CALIBRATION POINTS** view lists the active/factory points and exports them as `.txt`,
 and **CAL I/O** backs up, restores, or shares a calibration via `.json`/`.txt`.
+
+### MTF / Resolution (dashboard)
+
+Open **MTF** from the dashboard's calibration tools. The tool measures the real
+resolving power of the whole imaging train (objective + bellows + relay + sensor)
+from a photo of a USAF-1951 resolution target, using the slanted-edge method.
+
+**Shooting.** Pick an element whose bars fill most of the frame (e.g. Group 4
+Element 2 at 20×), tilt the target ~5° so the edges are slanted, best focus,
+lowest ISO. JPEG, PNG, and baseline TIFF (uncompressed / LZW / PackBits, 8- or
+16-bit) all work — for honest high-frequency numbers shoot RAW and export an
+unsharpened TIFF, since in-camera JPEG sharpening inflates the MTF tail.
+
+**Measuring.** Set **Grp/Elem** to the element photographed — its known bar
+pitch calibrates µm/px automatically (needs ≥2 bars in frame). Drop one or
+several shots: each is focus-scored, thumbnails appear with sharp/uniform
+metrics, the sharpest is starred and pre-selected, and a green heatmap shows
+where the shot is sharpest — the measurement box is pre-placed there. Drag the
+box across one **whole bar** (both edges are measured and averaged) or onto a
+single edge, then **MEASURE**. Bad placements are rejected with a specific hint
+rather than a wrong number.
+
+**Reading the results.**
+* **MTF50** — perceived-sharpness benchmark; the headline number.
+* **MTF10** — practical resolution limit (≈ Rayleigh 9% contrast); shown also
+  as *min sep* in µm (1000/f — one line-pair period, the same convention as
+  objective-datasheet "resolving power").
+* **MTF5** — approximate by-eye extinction contrast.
+* **equiv NA** — the diffraction-limited NA whose ideal curve best fits the
+  measurement: what the system *performs like*. A lower bound on the true
+  aperture, and the right value for the calculator's effective-NA input.
+* The plot draws the measured curve against the active objective's ideal (blue),
+  the effective-NA ideal (grey), and the equiv-NA fit (green); the x-axis is
+  capped at the objective's diffraction limit and toggles between lp/mm and µm.
+  The measured noise floor (read beyond the cutoff, where true MTF must be zero)
+  is subtracted before the markers are placed, and a ⚠ warning flags any
+  physically impossible reading (wrong Grp/Elem or objective selected).
 
 ## License
 
