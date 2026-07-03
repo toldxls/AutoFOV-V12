@@ -1171,6 +1171,21 @@ static void startStaMode(const String& ssid, const String& pass,
     wifiServerMode = WMODE_STA;
 
     WiFi.mode(WIFI_STA);
+    // Disable WiFi modem power-save. The Arduino default is WIFI_PS_MIN_MODEM,
+    // which sleeps the radio between DTIM beacons; during a sustained OTA upload
+    // those sleep windows drop incoming TCP segments, TCP backs off its
+    // retransmit timer, and the transfer shows the intermittent multi-second
+    // "burst -> stall -> recover" the serial logs captured (the flash still
+    // completed, just slowly, tripping the 30 s stall watchdog first). Ruled out
+    // heap/CPU/WS/RSSI first; this is the remaining default that matches the
+    // symptom. The device is USB/mains powered, so the extra idle current is
+    // irrelevant — and it also lowers dashboard latency in general.
+    WiFi.setSleep(false);
+    // Boot-banner marker so a serial capture proves WHICH build is running: the
+    // version string doesn't change between these experiments, but this line
+    // (and WIFI_PS_NONE below) only appears on builds that carry the fix.
+    Serial.printf("[WiFi] modem power-save disabled — getSleep()=%d (0=NONE)\n",
+                  (int)WiFi.getSleep());
     WiFi.setAutoReconnect(true);
 
     // RF is up now — safe to mint the default device password with the HW RNG.
@@ -1277,6 +1292,8 @@ static void startFullServer() {
     //   * /login:       hostAllowed + valid HMAC over the nonce → returns the token
     //   * /state /cmd /forget-wifi /vibsig: apiAuthed (host + token)
     //   * /ota:         apiAuthed + valid HMAC over a nonce (X-Login-Nonce/X-OTA-Response)
+    //   * /ota-verify:  same gates as /ota, no body — pre-flight so a wrong
+    //                   password fails before the .bin uploads
     //   * WS:           hostAllowed + ?tok= matching csrfToken (below)
     //   * /ping:        hostAllowed only — liveness, reveals nothing
 
@@ -1607,6 +1624,28 @@ static void startFullServer() {
         String path = "/vibsig/" + base;
         if (!LittleFS.exists(path)) { req->send(404, "text/plain", "Not found"); return; }
         req->send(LittleFS, path, "application/octet-stream");
+    });
+
+    // ── OTA pre-flight auth check ────────────────────────────────────────────
+    // The /ota handler authenticates on the FIRST upload chunk, but a mid-upload
+    // rejection can't stop the browser from streaming the whole body it has
+    // already committed to — so a wrong password otherwise wastes a full
+    // multi-second upload before "Unauthorized" surfaces.  This endpoint runs the
+    // EXACT same three gates as /ota (right Host + session token + password
+    // challenge-response) against a one-time nonce, touches no file and no
+    // Updater state, and answers in milliseconds.  The dashboard calls it before
+    // uploading and only streams the .bin on a 200.  It must accept precisely
+    // what /ota accepts — no looser (a wrong password would pass then fail at
+    // /ota), no stricter (a valid flash would be blocked).  Uses its own nonce;
+    // the real /ota upload fetches a fresh challenge.  No lockout counter, mirror-
+    // ing /ota — the session token already gates who can reach it.
+    httpServer.on("/ota-verify", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        if (!tokenOk(req))     { req->send(401, "text/plain", "Unauthorized"); return; }
+        bool pwOk = req->hasHeader("X-Login-Nonce") && req->hasHeader("X-OTA-Response") &&
+                    checkChallenge(req->header("X-Login-Nonce"),
+                                   req->header("X-OTA-Response")) == CR_OK;
+        req->send(pwOk ? 200 : 401, "text/plain", pwOk ? "OK" : "Unauthorized");
     });
 
     // ── OTA firmware update ──────────────────────────────────────────────────

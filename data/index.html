@@ -937,7 +937,7 @@
                 <div class="gfx-btn flat" style="left: 10px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
                      onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTERING</div>
                 <div class="gfx-btn flat" style="left: 125px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
-                     onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot">MTF</div>
+                     onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot"><svg width="18" height="14" viewBox="0 0 20 14" style="margin-right: 5px; flex: none;" aria-hidden="true"><rect x="2" y="0" width="3" height="14" fill="#000"/><rect x="8.5" y="0" width="3" height="14" fill="#000"/><rect x="15" y="0" width="3" height="14" fill="#000"/><path d="M0 2.5 C 7 3, 9 11, 20 11.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>MTF</div>
                 <div class="gfx-btn" style="left: 60px; top: 291px; width: 120px; height: 25px; background: #FF0000;"
                      onclick="switchScreen('screen-main')">CANCEL</div>
             </div>
@@ -2403,7 +2403,59 @@
       <div id="mtf-help" onclick="mtfToggleHelp()">
         <b style="color:#3ddb7a;">Shooting</b><br>
         Photograph a USAF-1951 target: pick an element whose bars fill most of the
-        frame, tilt the target ~5&deg; so the edges are slanted, best focus, lowest ISO.<br><br>
+        frame, tilt the target ~5&deg; so the edges are slanted, best focus, lowest ISO.
+        Shoot <b>RAW</b> &mdash; in-camera JPG smooths &amp; sharpens artificially, skewing
+        the measured edge &mdash; and convert to a baseline <b>TIFF</b>.<br>
+        <!-- Visual aid: what a usable crop looks like — bars filling the frame,
+             tilted ~5deg inside the straight crop frame, with the green box dragged
+             across one whole bar. Two orientations so both MTF axes are illustrated. -->
+        <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap; margin:11px 0 5px;">
+          <figure style="margin:0; text-align:center;">
+            <svg width="150" height="100" viewBox="0 0 150 100" style="background:#08140f; border:1px solid #1f3a33; border-radius:4px;">
+              <defs><clipPath id="mtf-help-cropV"><rect x="5" y="5" width="140" height="90" rx="2"/></clipPath></defs>
+              <g clip-path="url(#mtf-help-cropV)">
+                <g transform="rotate(5 75 50)">
+                  <rect x="-45" y="-45" width="240" height="190" fill="#cececa"/>
+                  <rect x="30"  y="-45" width="18" height="190" fill="#181818"/>
+                  <rect x="66"  y="-45" width="18" height="190" fill="#181818"/>
+                  <rect x="102" y="-45" width="18" height="190" fill="#181818"/>
+                </g>
+              </g>
+              <rect x="55" y="22" width="40" height="56" fill="rgba(61,219,122,0.14)" stroke="#3ddb7a" stroke-width="1.5"/>
+              <g transform="translate(104,12)">
+                <rect x="-3" y="-1" width="42" height="27" rx="3" fill="rgba(6,18,15,0.82)"/>
+                <path d="M7 19 A 11 11 0 0 1 21 9" fill="none" stroke="#9fe6cf" stroke-width="1.3"/>
+                <path d="M21 9 l-4.5 -0.5 l1.5 4.2 z" fill="#9fe6cf"/>
+                <text x="4" y="22" fill="#9fe6cf" font-size="11" font-family="monospace">&#8776;5&#176;</text>
+              </g>
+            </svg>
+            <figcaption style="font-size:10px; color:#7a958c; margin-top:3px;">vertical bars</figcaption>
+          </figure>
+          <figure style="margin:0; text-align:center;">
+            <svg width="150" height="100" viewBox="0 0 150 100" style="background:#08140f; border:1px solid #1f3a33; border-radius:4px;">
+              <defs><clipPath id="mtf-help-cropH"><rect x="5" y="5" width="140" height="90" rx="2"/></clipPath></defs>
+              <g clip-path="url(#mtf-help-cropH)">
+                <g transform="rotate(5 75 50)">
+                  <rect x="-45" y="-45" width="240" height="190" fill="#cececa"/>
+                  <rect x="-45" y="14" width="240" height="18" fill="#181818"/>
+                  <rect x="-45" y="41" width="240" height="18" fill="#181818"/>
+                  <rect x="-45" y="68" width="240" height="18" fill="#181818"/>
+                </g>
+              </g>
+              <rect x="28" y="36" width="94" height="30" fill="rgba(61,219,122,0.14)" stroke="#3ddb7a" stroke-width="1.5"/>
+              <g transform="translate(104,8)">
+                <rect x="-3" y="-1" width="42" height="27" rx="3" fill="rgba(6,18,15,0.82)"/>
+                <path d="M7 19 A 11 11 0 0 1 21 9" fill="none" stroke="#9fe6cf" stroke-width="1.3"/>
+                <path d="M21 9 l-4.5 -0.5 l1.5 4.2 z" fill="#9fe6cf"/>
+                <text x="4" y="22" fill="#9fe6cf" font-size="11" font-family="monospace">&#8776;5&#176;</text>
+              </g>
+            </svg>
+            <figcaption style="font-size:10px; color:#7a958c; margin-top:3px;">horizontal bars</figcaption>
+          </figure>
+        </div>
+        <div style="text-align:center; font-size:10px; color:#7a958c; margin:-1px 0 9px;">
+          bars fill the frame &middot; tilt &#8776;5&deg; (either direction) &middot; drag the green box across one whole bar
+        </div>
         <b style="color:#3ddb7a;">Inputs</b><br>
         <b>Grp/Elem</b> — the element you photographed; its known bar pitch calibrates
         &micro;m/px automatically (needs &ge;2 bars in frame).
@@ -8039,6 +8091,30 @@
         doOtaUpload(file, file.name, sha, otaPw);
     }
 
+    // ── Quiesce the WebSocket during an OTA upload ────────────────────────────
+    // Serial diagnostics showed the .bin upload stalling after the FIRST chunk
+    // while WebSocket pings kept flowing (RSSI was −40 dBm, so not RF): the
+    // device's single AsyncTCP task (Core 0) juggles the WS ping/telemetry
+    // traffic and the bulk POST on one core with limited internal heap, and the
+    // large receive segments stop being buffered/acked.  So for the duration of
+    // the upload we CLOSE the socket outright — freeing that whole TCP
+    // connection and its buffers — so the transfer has the task to itself.
+    //   * onclose is nulled before close() so the auto-reconnect backoff can't
+    //     silently reopen the socket mid-upload (same trick as disconnectWifi).
+    //   * On success the reboot overlay reloads the page, re-establishing a fresh
+    //     socket — so we only reopen here on a FAILED flash.
+    let otaWsSuspended = false;
+    function otaSuspendWs() {
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        otaWsSuspended = true;
+        updateWifiZone(false);   // grey the header bars while the link is parked
+    }
+    function otaResumeWs() {
+        if (!otaWsSuspended) return;
+        otaWsSuspended = false;
+        if (wifiIP && csrfToken) openWebSocket(wifiIP);
+    }
+
     // Shared upload path — POSTs already-hashed firmware bytes to the device's
     // /ota endpoint.  Used by both the manual file picker (otaFlash) and the
     // GitHub updater (githubUpdate).  `blob` is a File or Blob; `sha` is its
@@ -8053,7 +8129,43 @@
         pct.textContent = '';
         st.style.color = 'var(--text-disabled)'; st.textContent = 'Authorizing…';
 
-        // Prove the password without sending it — challenge-response, like login.
+        // Pre-flight auth: verify the password with the device BEFORE streaming a
+        // single byte.  The /ota endpoint authenticates on the first chunk, but a
+        // rejection can't stop the browser from sending the whole body it's
+        // already committed to — so without this a wrong password wastes a full
+        // multi-second upload before "Rejected" surfaces.  /ota-verify runs the
+        // identical gates against a one-time nonce and answers in milliseconds.
+        //
+        // FAIL-OPEN by design: only a definitive 401 cancels the flash.  A missing
+        // endpoint (404 — older firmware, or a rolled-back device still serving a
+        // newer cached dashboard) or any network hiccup falls through to the
+        // upload, where /ota still authenticates on the first chunk.  The pre-
+        // flight is a fast-fail optimization, never a new way to block a flash.
+        try {
+            const pre = await challengeResponse(pw);
+            const vr = await fetch((wifiBase || '') + '/ota-verify', {
+                method: 'POST',
+                headers: {
+                    'X-AutoFOV-Token': csrfToken,
+                    'X-Login-Nonce':   pre.nonce,
+                    'X-OTA-Response':  pre.resp,
+                },
+                signal: AbortSignal.timeout(5000),
+            });
+            if (vr.status === 401) {
+                st.style.color = '#ff4444';
+                st.textContent = 'Wrong password — flash cancelled';
+                otaUnlockControls(); ghRestoreButton();
+                return;
+            }
+            // 200 = confirmed; anything else (404/403/5xx) = pre-flight
+            // unavailable → proceed and let /ota be the authority.
+        } catch (e) {
+            // Network error / timeout — pre-flight unavailable, fall through.
+        }
+
+        // Fetch a FRESH challenge for the upload itself (the pre-flight consumed
+        // its own single-use nonce).
         let cr;
         try { cr = await challengeResponse(pw); }
         catch (e) {
@@ -8108,6 +8220,7 @@
                 st.textContent = 'Error: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
                 fill.style.background = '#7a1a1a';
+                otaResumeWs();
                 otaUnlockControls(); ghRestoreButton();
             } else if (xhr.status !== 200 && uploadComplete) {
                 // Server returned an error AFTER full upload (e.g. SHA
@@ -8117,6 +8230,7 @@
                 st.textContent = 'Rejected: ' + (xhr.responseText || xhr.status);
                 st.style.color = '#ff4444';
                 fill.style.background = '#7a1a1a';
+                otaResumeWs();
                 otaUnlockControls(); ghRestoreButton();
             }
         };
@@ -8131,8 +8245,28 @@
             // its OTA state after 30 s so a retry will work.
             st.textContent = 'Connection lost — check device and retry';
             st.style.color = '#ff9900';
+            otaResumeWs();
             otaUnlockControls(); ghRestoreButton();
         };
+        // A 1.5 MB flash is seconds even on a weak link, so a frozen upload means
+        // the device stalled (the bug we're chasing).  Time out at 90 s so it
+        // fails cleanly — resume the socket, unlock, invite a retry — instead of
+        // hanging on a stuck progress bar.  Once the body is fully sent
+        // (uploadComplete) the XHR is just awaiting a response the rebooting
+        // device may never send, so the reboot overlay owns that case.
+        xhr.timeout = 90000;
+        xhr.ontimeout = () => {
+            if (uploadComplete) return;
+            st.textContent = 'Upload stalled — retry';
+            st.style.color = '#ff9900';
+            fill.style.background = '#7a1a1a';
+            otaResumeWs();
+            otaUnlockControls(); ghRestoreButton();
+        };
+        // Park the WebSocket, then stream the firmware with the AsyncTCP task
+        // to itself. (Auth + hashing above are plain HTTP, so the socket stayed
+        // live through them — only the bulk transfer needs the isolation.)
+        otaSuspendWs();
         xhr.send(fd);
     }
 
