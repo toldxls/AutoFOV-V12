@@ -71,6 +71,12 @@ static const uint32_t  RECONNECT_INTERVAL_MS = 30000UL;  // retry every 30 s
 static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor push — matches VL53L4CX timing budget 1:1
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
+// SoC die temperature ×10, cached. temperatureRead() lazily installs the
+// temp-sensor peripheral with a non-thread-safe init and a shared handle —
+// calling it from both the AsyncTCP task (WS-connect / GET /state on Core 0)
+// and the slow telemetry (Core 1) races. Only wifiLoop() (Core 1) reads the
+// hardware; every JSON builder reads this cache.
+static std::atomic<uint32_t> gDieTempC10{0};
 static char            otaPassword[13]     = {0};            // auto-generated on first boot, NVS "wifi"/"otapw" — the DEFAULT login password shown on the TFT
 // Optional user-set device password (NVS "wifi"/"devpw"). When non-empty it
 // overrides otaPassword as the login/OTA credential; empty means "use the
@@ -838,6 +844,17 @@ void wifiLoop() {
         lastSyncedMode = currentMode;
     }
 
+    // Refresh the cached die temperature on the slow cadence — BEFORE the
+    // early-returns below, so GET /state stays fresh with zero WS clients.
+    // This is the only temperatureRead() call site; see gDieTempC10.
+    static uint32_t lastDieTempMs = 0;
+    if (lastDieTempMs == 0 || (uint32_t)(millis() - lastDieTempMs) >= SLOW_TELEM_MS) {
+        lastDieTempMs = millis();
+        // int32 bit pattern: a sub-zero die temp (cold-garage power-up) must
+        // not wrap to ~4.29e9 in the unsigned atomic
+        gDieTempC10.store((uint32_t)(int32_t)lroundf(temperatureRead() * 10.0f), std::memory_order_relaxed);
+    }
+
     // ── Telemetry push ───────────────────────────────────────────────────────
     if (otaInProgress) return;           // OTA flash in progress — don't clog the WS queue
     if (wsServer.count() == 0) return;   // no connected clients — skip serialisation
@@ -1387,19 +1404,36 @@ static void startFullServer() {
     httpServer.on("/cmd", HTTP_POST,
         [](AsyncWebServerRequest* req) { /* headers only — body handled below */ },
         nullptr,
-        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
             // Auth gate — host + session token (see startFullServer notes).
             if (!apiAuthed(req)) {
                 req->send(403, "text/plain", "Forbidden");
                 return;
             }
-            if (len > 512) {
-                req->send(400, "text/plain", "Payload too large");
+            if (total > 512) {
+                if (index == 0) req->send(400, "text/plain", "Payload too large");
                 return;
             }
-            char buf[513];
-            memcpy(buf, data, len);
-            buf[len] = '\0';
+            // The library delivers the body per TCP segment — parse only once
+            // the final chunk lands. Treating each segment as a complete body
+            // silently dropped any command split across segments while still
+            // answering {"ok":1}. Single-segment bodies (the overwhelmingly
+            // common case at our 512-byte cap) parse from the stack; only a
+            // genuinely split body heap-accumulates via _tempObject (freed by
+            // the request destructor) — no per-command calloc on the WiFi heap.
+            char stackBuf[513];
+            char* buf;
+            if (index == 0 && len == total) {
+                memcpy(stackBuf, data, len);
+                buf = stackBuf;
+            } else {
+                if (!req->_tempObject) req->_tempObject = calloc(1, 513);
+                if (!req->_tempObject) { req->send(500, "text/plain", "OOM"); return; }
+                buf = (char*)req->_tempObject;
+                if (index + len <= 512) memcpy(buf + index, data, len);
+                if (index + len < total) return;   // more segments coming
+            }
+            buf[total] = '\0';
             StaticJsonDocument<512> doc;   // sized to the 512-byte payload cap above
             if (deserializeJson(doc, buf) == DeserializationError::Ok) {
                 for (JsonPair kv : doc.as<JsonObject>()) {
@@ -1418,8 +1452,11 @@ static void startFullServer() {
                     cmd.val[sizeof(cmd.val) - 1] = '\0';
                     xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0);
                 }
+                req->send(200, "application/json", "{\"ok\":1}");
+            } else {
+                // Bad JSON used to be silently dropped with a 200 {"ok":1}
+                req->send(400, "application/json", "{\"ok\":0}");
             }
-            req->send(200, "application/json", "{\"ok\":1}");
         }
     );
 
@@ -1837,6 +1874,10 @@ static void handleWifiCommand(const char* key, const char* val) {
 
     // ── Sensor sleep / wake ──────────────────────────────────────────────────
     } else if (strcmp(key, "sensorSleep") == 0) {
+        // Mirrors handleSensorInfoTouch: the flag flips only when the guarded
+        // I2C work ran, and the sleep flag is raised BEFORE the stop so
+        // sensorTask quits polling (a latched data-ready would otherwise
+        // restart ranging — see the sensorSleeping declaration).
         bool wantSleep = (iVal != 0);
         if (wantSleep && !sensorSleeping) {
             sensorSleeping = true;
@@ -1845,15 +1886,19 @@ static void handleWifiCommand(const char* key, const char* val) {
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
                 sensor.VL53L4CX_StopMeasurement();
                 xSemaphoreGive(i2cMutex);
+            } else {
+                sensorSleeping = false;   // stop never ran — don't claim asleep
             }
         } else if (!wantSleep && sensorSleeping) {
-            sensorEmaReset.store(true, std::memory_order_release);
-            sensorSleeping = false;
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
                 applyHighReflConfig();
                 sensor.VL53L4CX_StartMeasurement();
                 xSemaphoreGive(i2cMutex);
-            }
+                sensorEmaReset.store(true, std::memory_order_release);
+                sensorSleeping = false;
+                tofAutoSlept = false;     // manually woken — idle-resume must
+                                          // not re-configure a ranging sensor
+            }                             // timeout: stay asleep
         }
         if (currentMode == SENSOR_INFO) drawSensorInfoUI();
 
@@ -1862,15 +1907,18 @@ static void handleWifiCommand(const char* key, const char* val) {
     // the device-side path (handleSensorInfoTouch) exactly: stop, reconfigure,
     // restart, then request an EMA reset so the post-change samples are clean.
     } else if (strcmp(key, "highRefl") == 0) {
+        bool prevRefl = highReflMode;
         highReflMode = (iVal != 0);
-        if (!sensorSleeping) {
+        if (!sensorSleeping && highReflMode != prevRefl) {
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500))) {
                 sensor.VL53L4CX_StopMeasurement();
                 applyHighReflConfig();
                 sensor.VL53L4CX_StartMeasurement();
                 xSemaphoreGive(i2cMutex);
+                sensorEmaReset.store(true, std::memory_order_release);
+            } else {
+                highReflMode = prevRefl;  // reconfig never ran — keep the old mode
             }
-            sensorEmaReset.store(true, std::memory_order_release);
         }
         if (currentMode == SENSOR_INFO) drawSensorInfoUI();
 
@@ -2459,7 +2507,8 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // SoC junction temperature.  arduino-esp32 v3.x returns Celsius on the S3
     // (older cores returned Fahrenheit — confirm the unit if porting).  Useful
     // for deciding whether the chip needs a heatsink in your enclosure.
-    doc["dieC"]        = temperatureRead();
+    // Cached — this builder also runs on Core 0 (see gDieTempC10).
+    doc["dieC"]        = (int32_t)gDieTempC10.load(std::memory_order_relaxed) / 10.0f;
     doc["chipInfo"]    = ESP.getChipModel();
     // BUILD_SLOC / BUILD_SKB are computed by tools/embed_html.py across the
     // hand-written .ino + .html + tools sources at build time, so the count
@@ -2674,7 +2723,7 @@ static void buildSlowTelemJson(String& out) {
     // Die temp was only in the one-shot full-state frame, so the memory
     // screen showed a value frozen at connect time. Riding the 5 s slow
     // frame keeps it live; the JS dieC handler already accepts any frame.
-    doc["dieC"]          = temperatureRead();
+    doc["dieC"]          = (int32_t)gDieTempC10.load(std::memory_order_relaxed) / 10.0f;
 
     serializeJson(doc, out);
 }

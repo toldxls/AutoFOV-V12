@@ -499,6 +499,11 @@ PSRAMCanvas16 vibPlotSprite(232, 104);
 #define VIB_RES_MAX_HZ     140.0f
 #define VIB_RES_DEFAULT    55.0f
 #define VIB_SETTLE_LOG_MAX 400      // per-stack settle records (percentile pool)
+// Per-stack blur stats only integrate FFT hops within this window after a
+// shutter pulse (pulse → exposure → ring-down). Without the gate the ~16 idle
+// hops of the 5 s stack-done silence tail owned the min and diluted the avg —
+// the "per-stack" stats described the quiet bench, not the captures.
+#define VIB_BLUR_GATE_MS   1500
 
 float    vibResonanceHz   = VIB_RES_DEFAULT;  // Goertzel lock frequency (NVS-persisted)
 int      vibCurrentWaitMs = 1500;             // controller's WAIT setting, user-entered (NVS)
@@ -854,7 +859,11 @@ bool isCustomCalib = false;
 int currentBrightness = Config::DEFAULT_BRIGHTNESS;
 int currentLedDuty = TRIGGER_LED_DUTY;  // V17b: persisted LED brightness (0=off,255=full on-duty)
 bool ledEnabled = false;                // V17b: whether trigger LED fires at all
-bool sensorSleeping = false;            // V17b: TOF sensor user-sleep state
+// Atomic: written by loop()/wifiLoop() (Core 1), read by sensorTask (Core 0) —
+// the task must stop polling while asleep, or a data-ready latched just before
+// StopMeasurement() makes its next poll call ClearInterruptAndStartMeasurement()
+// and silently restart ranging (laser back on while the UI says "USER SLEEP").
+std::atomic<bool> sensorSleeping{false};   // V17b: TOF sensor user-sleep state
 bool highReflMode   = false;            // High-Reflectivity mode: 8ms timing budget (vs 33ms default)
 // Sensor auto-power-off (1 h idle). sensorsAutoOff = both sensors currently
 // auto-powered-down; tofAutoSlept = WE slept the TOF (vs the user having it
@@ -2032,6 +2041,7 @@ void finalizeCalibration();
 void finalizeEarly();
 void resetToFactory();
 void updateDisplay();
+void updateSensorAverages();
 void drawGearIcon(int cx, int cy, uint16_t color, uint16_t bgCol);
 void wakeScreen();
 void registerActivity();
@@ -3168,6 +3178,9 @@ void drawSensorInfoUI() {
 
 void handleSensorInfoTouch(TS_Point p) {
   if (btnSensorToggle.contains(p.x, p.y)) {
+    // State flags flip only when the guarded I2C work actually ran — on a
+    // mutex timeout (wedged bus) the tap is a no-op instead of leaving the
+    // UI claiming a state the hardware never reached.
     if (sensorSleeping) {
       // Wake: re-apply config (timing budget + ROI) then restart.
       // Sensor is already stopped; applyHighReflConfig() only sets parameters.
@@ -3175,33 +3188,42 @@ void handleSensorInfoTouch(TS_Point p) {
         applyHighReflConfig();
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
+        sensorEmaReset.store(true, std::memory_order_release);
+        sensorSleeping = false;
+        tofAutoSlept = false;   // manually woken — the idle-resume branch must
+                                // not re-configure the now-ranging sensor
       }
-      sensorEmaReset.store(true, std::memory_order_release);
-      sensorSleeping = false;
     } else {
-      // Sleep: stop measurement
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
-        sensor.VL53L4CX_StopMeasurement();
-        xSemaphoreGive(i2cMutex);
-      }
+      // Sleep: flag FIRST so sensorTask stops polling (see sensorSleeping
+      // decl — a latched data-ready would otherwise restart ranging), then
+      // stop; revert the flag if the stop never ran.
       sensorSleeping = true;
       sensorState.store(0, std::memory_order_release);
       sensorHealth.store(0xFF000000UL, std::memory_order_release);
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        sensor.VL53L4CX_StopMeasurement();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        sensorSleeping = false;
+      }
     }
     drawSensorInfoUI(); // full redraw to update toggle label
     return;
   }
   if (btnSensorHiRef.contains(p.x, p.y)) {
-    highReflMode = !highReflMode;
     if (!sensorSleeping) {
-      // Restart with the new timing budget + ROI.
+      // Restart with the new timing budget + ROI. Flip the mode only when the
+      // stop/reconfig/restart actually ran.
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500))) {
         sensor.VL53L4CX_StopMeasurement();
+        highReflMode = !highReflMode;
         applyHighReflConfig();   // 8 ms + 8×8 ROI  OR  33 ms + full ROI
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
+        sensorEmaReset.store(true, std::memory_order_release);
       }
-      sensorEmaReset.store(true, std::memory_order_release);
+    } else {
+      highReflMode = !highReflMode;   // asleep: config is applied on wake
     }
     drawSensorInfoUI();
     return;
@@ -3798,8 +3820,28 @@ void sensorTask(void *pvParameters) {
       emaSignal   = -1.0;
       sensorEmaReset.store(false, std::memory_order_release);
     }
+    // Asleep: don't touch the sensor at all. Polling here would see a
+    // data-ready latched before the stop and restart ranging via
+    // ClearInterruptAndStartMeasurement(). Re-clear the published state each
+    // pass so a frame that raced past the sleep toggle can't stay frozen
+    // on-screen as a stale "valid" distance for the whole sleep.
+    if (sensorSleeping.load(std::memory_order_acquire)) {
+      sensorState.store(0, std::memory_order_release);
+      sensorHealth.store(0xFF000000UL, std::memory_order_release);
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
     uint8_t dataReady = 0;
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+      // Re-check under the mutex: the sleep toggle can land between the check
+      // above and this take. The sleep paths raise the flag BEFORE taking the
+      // mutex to stop, so seeing it clear here means any concurrent stop will
+      // run after we release — and seeing it set means we must not service a
+      // latched data-ready (ClearInterrupt… would restart ranging).
+      if (sensorSleeping.load(std::memory_order_acquire)) {
+        xSemaphoreGive(i2cMutex);
+        continue;
+      }
       sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
       if (dataReady) {
         VL53L4CX_MultiRangingData_t multiRangingData;
@@ -3834,6 +3876,11 @@ void sensorTask(void *pvParameters) {
             // microscope distances so the distance is still correct).
             if (status == 0 || status == 3 || status == 6) {
               int dist = multiRangingData.RangeData[i].RangeMilliMeter;
+              // RangeMilliMeter is int16_t and status-3 (MIN_RANGE_CLIPPED)
+              // objects can come back slightly NEGATIVE at near-zero range
+              // (offset correction). A negative average would wrap to ~2^31 mm
+              // in the uint32 payload below — clamp at the source.
+              if (dist < 0) dist = 0;
               weightedDistanceSum += (dist * cps);
               validSignalSum += cps;
             }
@@ -4004,7 +4051,7 @@ static void vibAnalyzeSettle(uint32_t startPos) {
   if (thresh < floorV) thresh = floorV;
 
   // Settle block = first block past the peak that falls below the threshold.
-  int settleBlock = VIB_SETTLE_BLOCKS - 1;
+  int settleBlock = -1;
   for (int b = peakIdx + 1; b < VIB_SETTLE_BLOCKS; b++) {
     if (vibEnvPlot[b] < thresh) { settleBlock = b; break; }
   }
@@ -4024,7 +4071,14 @@ static void vibAnalyzeSettle(uint32_t startPos) {
       if (slope < -1e-4f) tauMs = (uint32_t)(-1.0f / slope * blockMs);
     }
   }
-  uint32_t settleMs = (uint32_t)((settleBlock - peakIdx) * blockMs);
+  // Never fell below threshold — including a peak sitting in the last block
+  // (rig still moving hard at the shutter, i.e. WAIT far too short). The old
+  // code defaulted settleBlock to the last block, which made that exact case
+  // read 0 ms and drag the suggested-wait p95 DOWN when it should read max.
+  // Report the full window as a conservative floor instead.
+  uint32_t settleMs = (settleBlock >= 0)
+      ? (uint32_t)((settleBlock - peakIdx) * blockMs)
+      : (uint32_t)(VIB_SETTLE_BLOCKS * blockMs);
   vibSettleMs.store(settleMs);
   vibSettleTauMs.store(tauMs);
   vibSettleSeq.fetch_add(1);
@@ -4081,6 +4135,7 @@ void vibTask(void *pvParameters) {
   uint32_t tonalLastBin = 0;
   uint8_t  tonalRun     = 0;
   uint32_t lastPulseSeen = vibPulseSeq.load();
+  uint32_t lastPulseMs   = 0;      // millis() when the last shutter pulse was seen
   uint32_t lastStartSeen = vibStackStartSeq.load();
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
   uint32_t lastAbortSeen = vibStackAbortSeq.load();
@@ -4358,7 +4413,11 @@ void vibTask(void *pvParameters) {
               vibBaseH[b] += ((float)dstH[b] - vibBaseH[b]) * VIB_BASE_ALPHA;
             }
           }
-        } else {
+        } else if ((uint32_t)(millis() - lastPulseMs) <= VIB_BLUR_GATE_MS) {
+          // In-stack, and a shutter pulse fired within the gate window — this
+          // hop covers an exposure / its ring-down, so it counts toward the
+          // per-stack stats. Hops in long inter-shot gaps and the 5 s
+          // stack-done silence tail are excluded (see VIB_BLUR_GATE_MS).
           const float T   = 1.0f / (float)vibShutterDenom;
           const float k_a = 9.81e-3f / 10.0f;   // deci-mg → m/s²
           double blurSqV  = 0.0;
@@ -4445,6 +4504,7 @@ void vibTask(void *pvParameters) {
     uint32_t ps = vibPulseSeq.load(std::memory_order_acquire);
     if (ps != lastPulseSeen) {
       lastPulseSeen = ps;
+      lastPulseMs   = millis();
       uint32_t startPos = (vibPulseRingPos + VIB_RAW_LEN - VIB_SETTLE_SAMPLES) % VIB_RAW_LEN;
       vibAnalyzeSettle(startPos);
     }
@@ -4851,33 +4911,48 @@ void loop() {
     // once idle, and restores them the moment any activity resets lastActivityTime
     // (touch, camera-trigger pulse, or a web menu/settings change).
     if (!sensorsAutoOff && idle > SENSOR_IDLE_OFF_MS) {
+      bool tofSleepOk = true;
       if (!sensorSleeping) {                 // leave a user-slept TOF as-is
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
-          sensor.VL53L4CX_StopMeasurement();
-          xSemaphoreGive(i2cMutex);
-        }
+        // Flag first so sensorTask stops polling; revert if the stop timed out
+        // (same pattern as handleSensorInfoTouch — see sensorSleeping decl).
         sensorSleeping = true;
         sensorState.store(0, std::memory_order_release);
         sensorHealth.store(0xFF000000UL, std::memory_order_release);
-        tofAutoSlept = true;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+          sensor.VL53L4CX_StopMeasurement();
+          xSemaphoreGive(i2cMutex);
+          tofAutoSlept = true;
+        } else {
+          sensorSleeping = false;
+          tofSleepOk = false;   // keep sensorsAutoOff clear so this retries —
+                                // otherwise the TOF ranges all idle-night while
+                                // the log claims it was powered down
+        }
       }
       vibAutoOff.store(true, std::memory_order_release);   // vibTask powers the IMU down
-      sensorsAutoOff = true;
-      Serial.println("[idle] inactivity timeout — TOF + accelerometer powered down");
+      if (tofSleepOk) {
+        sensorsAutoOff = true;
+        Serial.println("[idle] inactivity timeout — TOF + accelerometer powered down");
+      }
     } else if (sensorsAutoOff && idle < SENSOR_IDLE_OFF_MS) {
+      bool tofOk = true;
       if (tofAutoSlept) {                    // only wake the TOF if WE slept it
         if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
           applyHighReflConfig();
           sensor.VL53L4CX_StartMeasurement();
           xSemaphoreGive(i2cMutex);
+          sensorEmaReset.store(true, std::memory_order_release);
+          sensorSleeping = false;
+          tofAutoSlept = false;
+        } else {
+          tofOk = false;   // keep sensorsAutoOff set so this pass retries
         }
-        sensorEmaReset.store(true, std::memory_order_release);
-        sensorSleeping = false;
-        tofAutoSlept = false;
       }
       vibAutoOff.store(false, std::memory_order_release);  // vibTask re-powers the IMU
-      sensorsAutoOff = false;
-      Serial.println("[idle] activity resumed — TOF + accelerometer back on");
+      if (tofOk) {
+        sensorsAutoOff = false;
+        Serial.println("[idle] activity resumed — TOF + accelerometer back on");
+      }
     }
   }
 
@@ -5243,10 +5318,12 @@ void loop() {
     }
   }
   
-  if (currentMode == MAIN && ((unsigned long)(millis() - lastDisplayUpdate) > 30)) {
-    updateDisplay();
-    drawSignalHealthBar(lastStatus, lastMCPS, 44, 12, false); 
-
+  if ((unsigned long)(millis() - lastDisplayUpdate) > 30) {
+    updateSensorAverages();   // feeds sensorAvgDist/sensorErrInt on every screen
+    if (currentMode == MAIN) {
+      updateDisplay();
+      drawSignalHealthBar(lastStatus, lastMCPS, 44, 12, false);
+    }
     lastDisplayUpdate = millis();
   }
   
@@ -6645,20 +6722,98 @@ void refreshPixelValue(int p, bool force) {
 }
 
 void resetToFactory() {
-  settings.magic = 0;
-  preferences.begin("calib", false);
-  preferences.putBytes("settings", &settings, sizeof(CalibData));
-  preferences.end();
-
-  CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y; 
+  CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
   sensorWidthPixels = Config::DEFAULT_SENSOR_WIDTH_PX; demarcationDist = Config::DEFAULT_DEMARCATION_MM;
   nPoints = 10;  // sensible default; user can adjust between MIN_CALIB_POINTS and MAX_CALIB_POINTS
   CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; isCustomCalib = false;
   CALIB_R2 = 0.9991f;           // factory-default R² (matches boot-load fallback)
   pointsCaptured = 0;          // V17: clear captured points
   isRetakeMode = false;
-  
-  refreshCalSettingsValues(true); 
+
+  // Persist the factory-default calibration WITH a valid magic. The old
+  // approach (magic = 0, discard at next boot) had a trap: every later
+  // settings save rewrites the whole struct without restoring the magic, so
+  // brightness/LED/stack tweaks made after a RESET ALL were silently thrown
+  // away at the next power cycle. Non-calibration prefs keep their current
+  // values — this reset is about the calibration, not the whole device.
+  settings.magic = CALIB_MAGIC;
+  settings.ctrlX = CTRLX; settings.ctrlY = CTRLY;
+  settings.sensorWidth = sensorWidthPixels; settings.demarcation = demarcationDist;
+  settings.calibError = CALIB_ERROR; settings.calibR2 = CALIB_R2;
+  settings.isCustom = 0;
+  settings.calNPoints = 0;
+  settings.calPointsCaptured = 0;
+  settings.brightness = currentBrightness;
+  settings.stackStepSize = stackStepSize;
+  settings.stackTotalDepth = (float)stackTotalImgs;
+  settings.stackTimePerStep = stackTimePerStep;
+  settings.ledEnabled = ledEnabled ? 1 : 0;
+  settings.ledDuty = (uint8_t)constrain(currentLedDuty, 0, 127);
+  settings._pad = 0;
+  preferences.begin("calib", false);
+  preferences.putBytes("settings", &settings, sizeof(CalibData));
+  preferences.end();
+
+  refreshCalSettingsValues(true);
+}
+
+// Advances the 5-sample rolling distance average and the 5 s FOV-error window,
+// then publishes sensorAvgDist / sensorErrInt for the web telemetry. Runs from
+// loop() on the 30 ms display cadence on EVERY screen — previously this lived
+// inside updateDisplay() (MAIN only), so the dashboard's FOV and error froze
+// whenever the TFT was on any other screen, and stack-complete cards could
+// record a stale FOV. updateDisplay() now just renders these results.
+void updateSensorAverages() {
+  uint32_t currentState = sensorState.load(std::memory_order_acquire);
+  if (!((currentState >> 31) & 0x1)) return;
+  int currentRange = currentState & 0x7FFFFFFF;
+
+  if (!bufferFilled) {
+    for(int i = 0; i < numReadings; i++) readings[i] = currentRange;
+    totalDist = currentRange * numReadings;
+    bufferFilled = true;
+  }
+
+  totalDist -= readings[readIndex];
+  readings[readIndex] = currentRange;
+  totalDist += readings[readIndex];
+  readIndex = (readIndex + 1) % numReadings;
+  averageDist = (float)totalDist / numReadings;
+  sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
+
+  float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
+  float fovBase = fovAt(averageDist);   // 20x base FOV — objective-independent
+
+  // ── Error = 2σ of the AVG FOV over the last ~5 seconds ──
+  // A direct empirical measure of how much the reading actually moves (sensor
+  // jitter + slow drift) — not a model estimate, not averaged down by √N.
+  // We track the OBJECTIVE-INDEPENDENT base FOV so switching objectives doesn't
+  // inject a fake jump into the window, then scale the spread by the current
+  // multiplier so the ± lands in the displayed FOV's units. Sampled ~20 Hz; the
+  // window is a true 5 s; builds up once ≥3 samples are in range.
+  uint32_t nowMs = millis();
+  if (nowMs - fovErrLastSample >= 50) {
+    fovErrLastSample = nowMs;
+    fovErrWin[fovErrHead] = fovBase; fovErrWinT[fovErrHead] = nowMs;
+    fovErrHead = (fovErrHead + 1) % FOV_ERR_WIN;
+    if (fovErrCount < FOV_ERR_WIN) fovErrCount++;
+  }
+  float fovErrorBound = 0.0f;
+  {
+    float sum = 0; int cnt = 0;
+    for (int i = 0; i < fovErrCount; i++)
+      if (nowMs - fovErrWinT[i] <= 5000) { sum += fovErrWin[i]; cnt++; }
+    if (cnt >= 3) {
+      float mean = sum / cnt, var = 0;
+      for (int i = 0; i < fovErrCount; i++)
+        if (nowMs - fovErrWinT[i] <= 5000) { float dv = fovErrWin[i] - mean; var += dv * dv; }
+      fovErrorBound = 2.0f * mult * sqrtf(var / (cnt - 1));   // 2σ, scaled to displayed units
+    }
+  }
+
+  int errInt = round(fovErrorBound * 100.0);
+  if (errInt < 1) errInt = 1;
+  sensorErrInt.store((uint32_t)errInt, std::memory_order_release);
 }
 
 void updateDisplay() {
@@ -6667,53 +6822,9 @@ void updateDisplay() {
   int currentRange = currentState & 0x7FFFFFFF;
 
   if (rangeValid) {
-    if (!bufferFilled) {
-      for(int i = 0; i < numReadings; i++) readings[i] = currentRange;
-      totalDist = currentRange * numReadings;
-      bufferFilled = true;
-    }
-    
-    totalDist -= readings[readIndex];
-    readings[readIndex] = currentRange;
-    totalDist += readings[readIndex];
-    readIndex = (readIndex + 1) % numReadings;
-    averageDist = (float)totalDist / numReadings;
-    sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
-
     float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
-    float fovBase = fovAt(averageDist);   // 20x base FOV — objective-independent
-    float fov = mult * fovBase;
-
-    // ── Error = 2σ of the AVG FOV over the last ~5 seconds ──
-    // A direct empirical measure of how much the reading actually moves (sensor
-    // jitter + slow drift) — not a model estimate, not averaged down by √N.
-    // We track the OBJECTIVE-INDEPENDENT base FOV so switching objectives doesn't
-    // inject a fake jump into the window, then scale the spread by the current
-    // multiplier so the ± lands in the displayed FOV's units. Sampled ~20 Hz; the
-    // window is a true 5 s; builds up once ≥3 samples are in range.
-    uint32_t nowMs = millis();
-    if (nowMs - fovErrLastSample >= 50) {
-      fovErrLastSample = nowMs;
-      fovErrWin[fovErrHead] = fovBase; fovErrWinT[fovErrHead] = nowMs;
-      fovErrHead = (fovErrHead + 1) % FOV_ERR_WIN;
-      if (fovErrCount < FOV_ERR_WIN) fovErrCount++;
-    }
-    float fovErrorBound = 0.0f;
-    {
-      float sum = 0; int cnt = 0;
-      for (int i = 0; i < fovErrCount; i++)
-        if (nowMs - fovErrWinT[i] <= 5000) { sum += fovErrWin[i]; cnt++; }
-      if (cnt >= 3) {
-        float mean = sum / cnt, var = 0;
-        for (int i = 0; i < fovErrCount; i++)
-          if (nowMs - fovErrWinT[i] <= 5000) { float dv = fovErrWin[i] - mean; var += dv * dv; }
-        fovErrorBound = 2.0f * mult * sqrtf(var / (cnt - 1));   // 2σ, scaled to displayed units
-      }
-    }
-    
-    int errInt = round(fovErrorBound * 100.0);
-    if (errInt < 1) errInt = 1;
-    sensorErrInt.store((uint32_t)errInt, std::memory_order_release);
+    float fov = mult * fovAt(averageDist);
+    int errInt = (int)sensorErrInt.load(std::memory_order_acquire);
 
     static int lastErrInt = -1;
     static unsigned long lastTextUpdate = 0;
