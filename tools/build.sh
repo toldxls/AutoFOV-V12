@@ -16,11 +16,22 @@ ARDUINO_CLI="$HOME/bin/arduino-cli"
 # TinyUF2 bootloader and change boot behavior — do not use it), then reproduce
 # the old `custom` behavior with two build-property overrides below:
 #   build.partitions=            empty, mirroring how `custom` was defined
-#   upload.maximum_size=1900544  the real app0/app1 slot (0x1D0000 = 1856 KB), so
-#                                the build-time size guard reads "80% / 1900544"
-#                                exactly as before instead of `default`'s 1.2 MB.
+#   upload.maximum_size=<app0>   the real app0/app1 slot, so the build-time size
+#                                guard reads e.g. "80% / 1900544" instead of
+#                                `default`'s 1.2 MB.
 FQBN="esp32:esp32:adafruit_feather_esp32s3:PSRAM=enabled,PartitionScheme=default,LoopCore=1,EventsCore=1"
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
+
+# Derive the app-slot size from partitions.csv (field 5 of the app0 row) so the
+# size guard tracks the real layout instead of a hardcoded copy — the slot was
+# already resized once (commit a1759ef) and a stale literal would let an
+# oversized build pass the check and then fail every OTA on the device.
+APP_SLOT_HEX="$(awk -F',' '$1=="app0"{gsub(/[ \t]/,"",$5); print $5}' tools/partitions.csv | head -1)"
+APP_MAX_SIZE=$(( ${APP_SLOT_HEX:-0} ))   # bash arithmetic parses the 0x… hex
+if [ "$APP_MAX_SIZE" -le 0 ]; then
+    APP_MAX_SIZE=1900544
+    echo "WARNING: couldn't read app0 size from tools/partitions.csv — using fallback $APP_MAX_SIZE"
+fi
 
 # Optional minify deps — warn (non-fatal) if absent so the ~46 KB JS/CSS/HTML
 # minify in embed_html.py doesn't silently fall back to an un-minified embed.
@@ -36,7 +47,7 @@ echo "=== Step 2: compile ==="
 "$ARDUINO_CLI" compile \
     --fqbn "$FQBN" \
     --build-property "build.partitions=" \
-    --build-property "upload.maximum_size=1900544" \
+    --build-property "upload.maximum_size=$APP_MAX_SIZE" \
     --build-path "$(pwd)/$BUILD_DIR" \
     --libraries "$HOME/Documents/Arduino/libraries" \
     --warnings none \

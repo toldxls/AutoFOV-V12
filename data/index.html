@@ -8105,6 +8105,12 @@
     //     socket — so we only reopen here on a FAILED flash.
     let otaWsSuspended = false;
     function otaSuspendWs() {
+        // Cancel any ARMED reconnect first. If the socket had already dropped
+        // before FLASH (ws null, a reconnect/​init-retry timer counting down),
+        // closing ws isn't enough — the timer would fire mid-upload and reopen
+        // the socket, re-creating the exact contention this parking avoids.
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
         otaWsSuspended = true;
         updateWifiZone(false);   // grey the header bars while the link is parked
@@ -8152,14 +8158,22 @@
                 },
                 signal: AbortSignal.timeout(5000),
             });
-            if (vr.status === 401) {
+            if (vr.status === 401 || vr.status === 429) {
+                // 401 = valid nonce, WRONG PASSWORD — the only wrong-password
+                // signal. 429 = too many wrong guesses → locked out. Both are
+                // definitive, so cancel. Everything else is NOT a wrong password:
+                // 200 (handled below) proceeds; 409 (stale session token or
+                // expired/evicted nonce), 403, 404 (older firmware), 5xx, and
+                // network errors all FALL THROUGH to the upload and let /ota be
+                // the authority — otherwise a rotated token after a silent reboot
+                // would mislabel a correct password as wrong.
                 st.style.color = '#ff4444';
-                st.textContent = 'Wrong password — flash cancelled';
+                st.textContent = vr.status === 429
+                    ? 'Too many wrong-password attempts — wait, then retry'
+                    : 'Wrong password — flash cancelled';
                 otaUnlockControls(); ghRestoreButton();
                 return;
             }
-            // 200 = confirmed; anything else (404/403/5xx) = pre-flight
-            // unavailable → proceed and let /ota be the authority.
         } catch (e) {
             // Network error / timeout — pre-flight unavailable, fall through.
         }
@@ -8184,6 +8198,8 @@
         // come up and the polling reload should run regardless of how the
         // XHR resolves.
         let uploadComplete = false;
+        let lastProgressMs = Date.now();   // for the no-progress stall watchdog
+        let stallWatch = null;
         const xhr = new XMLHttpRequest();
         xhr.open('POST', (wifiBase || '') + '/ota');
         xhr.setRequestHeader('X-AutoFOV-Token', csrfToken);
@@ -8192,6 +8208,7 @@
         xhr.setRequestHeader('X-OTA-SHA256',    sha);
 
         xhr.upload.onprogress = e => {
+            lastProgressMs = Date.now();   // any progress feeds the stall watchdog
             if (!e.lengthComputable) return;
             const p = Math.round(e.loaded / e.total * 100);
             fill.style.background = '#2a7abf';
@@ -8205,6 +8222,7 @@
         // queuing the response and AsyncTCP sometimes drops the FIN.
         xhr.upload.onload = () => {
             uploadComplete = true;
+            clearInterval(stallWatch);
             fill.style.width = '100%'; fill.style.background = '#2abf6a';
             pct.textContent = '100%';
             st.textContent = 'Done — rebooting';
@@ -8212,6 +8230,7 @@
             otaShowRebootOverlay();
         };
         xhr.onload = () => {
+            clearInterval(stallWatch);
             // A non-200 here means the device rejected the upload (bad SHA,
             // payload too large, etc.) — overlay stays hidden, surface the
             // error inline so the user can fix the input.  200 just confirms
@@ -8235,6 +8254,7 @@
             }
         };
         xhr.onerror = () => {
+            clearInterval(stallWatch);
             if (uploadComplete) {
                 // Device is rebooting — the overlay is already up via
                 // upload.onload, and otaShowRebootOverlay is polling /ping
@@ -8248,21 +8268,26 @@
             otaResumeWs();
             otaUnlockControls(); ghRestoreButton();
         };
-        // A 1.5 MB flash is seconds even on a weak link, so a frozen upload means
-        // the device stalled (the bug we're chasing).  Time out at 90 s so it
-        // fails cleanly — resume the socket, unlock, invite a retry — instead of
-        // hanging on a stuck progress bar.  Once the body is fully sent
-        // (uploadComplete) the XHR is just awaiting a response the rebooting
-        // device may never send, so the reboot overlay owns that case.
-        xhr.timeout = 90000;
-        xhr.ontimeout = () => {
-            if (uploadComplete) return;
-            st.textContent = 'Upload stalled — retry';
-            st.style.color = '#ff9900';
-            fill.style.background = '#7a1a1a';
-            otaResumeWs();
-            otaUnlockControls(); ghRestoreButton();
-        };
+        // Stall watchdog — abort only after 45 s of NO upload progress, not a
+        // fixed whole-request cap. A slow-but-healthy flash on a weak link can
+        // legitimately take minutes; as long as onprogress keeps ticking it's
+        // never killed. But a truly wedged transfer (the device's own OTA stall
+        // watchdog gives up at 30 s) still fails cleanly here at 45 s of silence.
+        // Once the body is fully sent (uploadComplete) the XHR is only awaiting a
+        // response the rebooting device may never send, so the reboot overlay
+        // owns that case and this watchdog stands down.
+        stallWatch = setInterval(() => {
+            if (uploadComplete) { clearInterval(stallWatch); return; }
+            if (Date.now() - lastProgressMs > 45000) {
+                clearInterval(stallWatch);
+                st.textContent = 'Upload stalled — retry';
+                st.style.color = '#ff9900';
+                fill.style.background = '#7a1a1a';
+                otaResumeWs();
+                otaUnlockControls(); ghRestoreButton();
+                xhr.abort();   // fires onabort (not onerror); UI already handled
+            }
+        }, 5000);
         // Park the WebSocket, then stream the firmware with the AsyncTCP task
         // to itself. (Auth + hashing above are plain HTTP, so the socket stayed
         // live through them — only the bulk transfer needs the isolation.)
@@ -8510,12 +8535,21 @@
                     if (sawDown) { location.reload(); return; }
                     if (Date.now() - start > 15000) {
                         // Answering continuously 15 s after "rebooting" — it
-                        // almost certainly never rebooted. Stop pretending.
+                        // almost certainly never rebooted (a flash the device
+                        // rejected after full upload, whose error response was
+                        // dropped by the AsyncTCP FIN issue). Stop pretending —
+                        // and, because the upload path parked the WebSocket and
+                        // locked the controls, RESTORE them here: otherwise the
+                        // dashboard is stranded (grey/disconnected, buttons
+                        // locked) with only a full page reload to recover.
                         const msg = document.getElementById('ota-reboot-msg');
                         if (msg) msg.textContent =
                             'Device never went offline — the update may have been ' +
-                            'rejected. Refresh and check the running version.';
+                            'rejected. Check the running version below.';
                         if (manual) manual.style.display = 'inline-block';
+                        otaResumeWs();
+                        otaUnlockControls();
+                        ghRestoreButton();
                         return;
                     }
                     setTimeout(otaPollDeviceBack, 400);   // tight while still up — don't miss the gap
@@ -8818,6 +8852,11 @@
     }
 
     function openWebSocket(ip) {
+        // Hard guard: while an OTA upload has the link parked, refuse EVERY
+        // reopen path (a stray reconnect timer, the manual RECONNECT button,
+        // connectWifi) so nothing contends with the bulk transfer. otaResumeWs()
+        // clears otaWsSuspended before it calls back in here.
+        if (otaWsSuspended) return;
         if (ws) { ws.onclose = null; ws.close(); }
         // Server's wsServer.setFilter() rejects upgrades without a matching
         // ?tok=… query param. encodeURIComponent is a belt-and-braces hedge —

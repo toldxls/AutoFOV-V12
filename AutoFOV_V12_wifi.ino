@@ -1266,6 +1266,53 @@ static bool apiAuthed(AsyncWebServerRequest* req) {
            authIPKnown((uint32_t)req->client()->remoteIP());
 }
 
+// Shared auth for BOTH OTA endpoints — the /ota-verify pre-flight and /ota's
+// first upload chunk route through this one path so the brute-force throttle
+// can't be sidestepped by hammering /ota directly. Returns the HTTP status the
+// caller sends back:
+//   200 — right Host + session token + correct password challenge-response
+//   403 — wrong Host (DNS-rebinding defense)
+//   409 — session token invalid, or the challenge nonce was missing/expired.
+//         RETRYABLE and explicitly NOT a wrong password — the client must not
+//         report it as one (re-login / fetch a fresh nonce instead).
+//   401 — valid nonce but wrong password (CR_BAD): a genuine guess
+//   429 — too many wrong-password guesses from this IP; locked out
+// CR_BAD feeds the SAME escalating per-IP lockout as /login (5 fails → 15 s,
+// doubling to a 4 min cap), so a token passively sniffed off the plaintext-HTTP
+// LAN can't be replayed to guess the device password at wire speed. A correct
+// challenge resets the counter, exactly like /login's CR_OK path.
+static int otaAuthCheck(AsyncWebServerRequest* req) {
+    if (!hostAllowed(req)) return 403;
+    if (!tokenOk(req))     return 409;
+    uint32_t now = millis();
+    uint32_t ip  = (uint32_t)req->client()->remoteIP();
+    LoginFailEntry& fe = loginFails[loginFailSlot(ip)];
+    if (fe.lockoutUntilMs && (int32_t)(fe.lockoutUntilMs - now) > 0) return 429;
+    if (!req->hasHeader("X-Login-Nonce") || !req->hasHeader("X-OTA-Response"))
+        return 409;
+    switch (checkChallenge(req->header("X-Login-Nonce"), req->header("X-OTA-Response"))) {
+    case CR_OK:
+        fe.fails = 0; fe.lockoutUntilMs = 0;
+        return 200;
+    case CR_BAD:
+        if (fe.fails < 255) fe.fails++;
+        if (fe.fails >= 5) { uint8_t shift = fe.fails - 5; if (shift > 4) shift = 4;
+                             fe.lockoutUntilMs = now + (15000UL << shift); }
+        return 401;
+    default:  // CR_NO_CHALLENGE — stale/missing/evicted nonce
+        return 409;
+    }
+}
+
+// One-line body for an otaAuthCheck() status — shared by /ota-verify and /ota.
+static const char* otaAuthMsg(int st) {
+    return st == 200 ? "OK"
+         : st == 401 ? "Unauthorized"
+         : st == 429 ? "Too many attempts — wait a bit"
+         : st == 403 ? "Forbidden"
+         :             "Session or challenge expired — re-login";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FULL HTTP + WEBSOCKET SERVER  (STA mode)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1640,12 +1687,8 @@ static void startFullServer() {
     // the real /ota upload fetches a fresh challenge.  No lockout counter, mirror-
     // ing /ota — the session token already gates who can reach it.
     httpServer.on("/ota-verify", HTTP_POST, [](AsyncWebServerRequest* req) {
-        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
-        if (!tokenOk(req))     { req->send(401, "text/plain", "Unauthorized"); return; }
-        bool pwOk = req->hasHeader("X-Login-Nonce") && req->hasHeader("X-OTA-Response") &&
-                    checkChallenge(req->header("X-Login-Nonce"),
-                                   req->header("X-OTA-Response")) == CR_OK;
-        req->send(pwOk ? 200 : 401, "text/plain", pwOk ? "OK" : "Unauthorized");
+        int st = otaAuthCheck(req);
+        req->send(st, "text/plain", otaAuthMsg(st));
     });
 
     // ── OTA firmware update ──────────────────────────────────────────────────
@@ -1690,18 +1733,17 @@ static void startFullServer() {
             };
 
             if (!index) {
-                // Three gates: right Host (DNS-rebinding defense) + the per-boot
-                // session token (already proves login) + the device password
-                // re-typed here, proven by challenge-response (X-Login-Nonce +
-                // X-OTA-Response = HMAC(password, nonce)) so the password never
-                // crosses the wire even on this irreversible, persistent action.
-                // A stolen mid-session token alone can't flash.
-                bool pwOk = req->hasHeader("X-Login-Nonce") && req->hasHeader("X-OTA-Response") &&
-                            checkChallenge(req->header("X-Login-Nonce"),
-                                           req->header("X-OTA-Response")) == CR_OK;
-                if (!hostAllowed(req) || !tokenOk(req) || !pwOk) {
+                // Right Host + per-boot session token + the device password
+                // re-typed here (challenge-response, so the password never
+                // crosses the wire even on this irreversible action). Same gates
+                // as the /ota-verify pre-flight — routed through otaAuthCheck() so
+                // a wrong-password guess here ALSO counts toward the per-IP
+                // lockout; a stolen mid-session token alone still can't flash, and
+                // can't be used to brute-force the password unthrottled.
+                int authSt = otaAuthCheck(req);
+                if (authSt != 200) {
                     markAborted();
-                    req->send(401, "text/plain", "Unauthorized");
+                    req->send(authSt, "text/plain", otaAuthMsg(authSt));
                     return;
                 }
                 // Pre-flight cleanup — runs on Core 0, the ONLY safe place to
