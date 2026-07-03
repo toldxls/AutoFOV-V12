@@ -5141,6 +5141,11 @@
     function calCancel() {
         if (state.calPointsCaptured > 0) {
             showConfirm('Cancel calibration?\nAll captured points will be lost.', () => {
+                // Tell the firmware too — every other cal mutation syncs
+                // (calStart/calTruncate/calUndoPoint); without this the
+                // abandoned partial points stayed live device-side and
+                // surfaced as the "current" cal set on the next full-state push.
+                sendCommand('calTruncate', 0);
                 state.calPointsCaptured = 0;
                 switchScreen('screen-main');
             });
@@ -5915,6 +5920,11 @@
         // so live redraws never yank a legend the user is mid-drag.
         if (mode !== legendModeApplied) { applyLegendPos(mode); legendModeApplied = mode; }
         const yOf    = mode === 'px' ? (p => (p.fov > 0 ? kPx / p.fov : 0)) : (p => p.fov);
+        // Known limitation: after editing Photo Width / demarc without
+        // recalibrating, px-view points rescale with the new kPx while the fit
+        // line (slope/intc, in fit-time pixel units) doesn't — the offset IS
+        // the un-recalibrated settings change. Not fixable client-side: the
+        // device doesn't expose the fit-time width/demarc to rebase either one.
         const lineAt = mode === 'px' ? (d => slope * d + intc) : fovPred;
         const yFmt   = mode === 'px' ? (v => v.toFixed(0)) : (v => v.toFixed(2));
         const ylab = document.getElementById('calgraph-ylabel');
@@ -6511,6 +6521,7 @@
         document.getElementById('mtf-thumbs').style.display='none';
         document.getElementById('mtf-heat-btn').style.display='none';
         _mtfFiles=[]; _mtfSel=-1; _mtfBestIdx=-1;
+        _mtfLast=null;   // else the units toggle resurrects the previous session's plot
         const res=document.getElementById('mtf-result'); res.style.color='var(--text-disabled)';
         res.innerHTML='Set Group/Element &amp; effective NA, drop a centered target shot, drag the box onto a bar edge, then MEASURE.';
         m.style.display='flex';
@@ -7240,11 +7251,24 @@
         for (let i=0;i<W;i++){ const a=Math.max(0,i-half), b=Math.min(W,i+half+1); out[i]=p[i]-(pre[b]-pre[a])/(b-a); }
         return out;
     }
-    function _ctrEstPitch(pG){                   // tick pitch (px) = autocorrelation peak in [30,160]
+    function _ctrEstPitch(pG){                   // tick pitch (px) = autocorrelation fundamental
         const W=pG.length; let mean=0; for (let i=0;i<W;i++) mean+=pG[i]; mean/=W;
         const a=new Float64Array(W); for (let i=0;i<W;i++) a[i]=pG[i]-mean;
+        const acf=L=>{ let s=0; for (let i=0;i<W-L;i++) s+=a[i]*a[i+L]; return s/(W-L); };
+        // Global max over [30,160] — but ACF peaks at every pitch MULTIPLE are
+        // near-equal, and pitches below the 30 px noise floor (high-mag shots
+        // downscaled to 4000 px put the 10 µm ticks at ~26 px) or a noisy
+        // tie-break can lock a harmonic, scaling every µm figure by 2-8×. So:
+        // take the max, then walk its integer subdivisions down (to ≥8 px) and
+        // keep the smallest one that is itself a comparable local ACF peak.
         const lo=30, hi=Math.min(160,W-1); let best=lo, bv=-1e300;
-        for (let L=lo;L<hi;L++){ let s=0; for (let i=0;i<W-L;i++) s+=a[i]*a[i+L]; s/=(W-L); if (s>bv){ bv=s; best=L; } }
+        for (let L=lo;L<hi;L++){ const s=acf(L); if (s>bv){ bv=s; best=L; } }
+        for (let k=Math.floor(best/8); k>=2; k--){
+            const c=Math.round(best/k);
+            if (c<8 || c>=W-1) continue;
+            const v=acf(c);
+            if (v>=0.7*bv && v>acf(c-2) && v>acf(c+2)){ return c; }
+        }
         return best;
     }
     function _ctrSubpix(a, b, maxlag){           // shift of a rel. to b (+ = a right), parabolic refine
@@ -7452,12 +7476,16 @@
                 r.angleDeg = angle;
                 const px = Math.round(r.pixelsSpan);
                 const errPct = r.errFrac*100;
-                // Sanity gate: a wrong-tier/harmonic lock, a wrong Tick pitch, or a
-                // non-micrometer photo all surface as far-too-few ticks for the declared
-                // span (or a high spacing error). Block USE so a silently-wrong count
-                // can't be captured; the preview still shows so the user sees why.
-                const tooFew = r.nTicks < r.intervals * 0.8;
-                const bad = tooFew || errPct > 8;
+                // Sanity gate, two-sided: a wrong-tier/harmonic lock or a Tick pitch
+                // entered too SMALL surfaces as far-too-few ticks; a pitch entered too
+                // LARGE (e.g. the 0.1 mm major-tick pitch instead of 0.01) shrinks the
+                // expected count while the fit still locks the minor grid, surfacing as
+                // far-too-MANY ticks — and would capture a calibration wrong by that
+                // exact factor. Block USE either way; the preview still shows why.
+                // (+1 allows the fencepost tick; ×1.3 allows one stray detection.)
+                const tooFew  = r.nTicks < r.intervals * 0.8;
+                const tooMany = r.nTicks > r.intervals * 1.3 + 1;
+                const bad = tooFew || tooMany || errPct > 8;
                 const tilt = Math.abs(angle) >= 0.02 ? ' · deskewed ' + angle.toFixed(2) + '°' : '';
                 res.style.color='var(--text-primary)';
                 res.innerHTML = '<b style="color:' + (bad?'#fa6':'#7fff7f') + '; font-size:14px;">' + px + ' px</b> per ' + spanMm.toFixed(2) + ' mm<br>' +
@@ -7469,6 +7497,8 @@
                     warn.style.color='#ff6a6a';
                     warn.textContent = tooFew
                         ? '⚠ Only ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — check the Tick pitch, or use a clearer/closer photo. Not measured.'
+                        : tooMany
+                        ? '⚠ ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — Tick pitch looks too large (0.1 instead of 0.01?). Not measured.'
                         : '⚠ High spacing error — check focus and that the slide is flat. Not measured.';
                     const u = document.getElementById('calphoto-use');
                     u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
@@ -7680,7 +7710,10 @@
         const pts = cal ? (cal.points ? cal.points.length : cal.calPoints) : '—';
         el.style.color = '#3ddb7a';
         el.innerHTML =
-            'Loaded <b>' + (name || (cal && cal.name) || 'calibration') + '</b> &#10003;<br>' +
+            // _mtfEsc: the name originates outside the page (gh-pages library
+            // index / imported .json) — the one remote string that reaches an
+            // innerHTML sink; everything else here uses textContent.
+            'Loaded <b>' + _mtfEsc(String(name || (cal && cal.name) || 'calibration')) + '</b> &#10003;<br>' +
             (cal ? ('Width ' + cal.calWidth + ' px &middot; Demarc ' + cal.demarcDist +
                     ' mm &middot; ' + pts + ' pts<br>' +
                     'Slope ' + fmt(f.slope, 5) + ' &middot; Int ' + fmt(f.intercept, 3) + '<br>' +
@@ -7780,7 +7813,10 @@
     // ── AutoRemote notify config ──────────────────────────────────────────────
     function ntfyScreenInit() {
         const inp = document.getElementById('ntfy-topic-input');
-        if (inp) inp.value = state.ntfyTopic || '';
+        // Focus guard (same as #vib-curwait): ntfyTopic rides every full-state
+        // frame, so a WS reconnect mid-typing would silently replace the
+        // half-typed topic with the stored value.
+        if (inp && document.activeElement !== inp) inp.value = state.ntfyTopic || '';
         const st = document.getElementById('ntfy-status');
         if (st) st.textContent = '';
         ntfyRenderLog();
@@ -8311,12 +8347,21 @@
         overlay.classList.add('open');
         const start = Date.now();
         const manual = document.getElementById('ota-reboot-manual');
-        // Give the chip ~2.5 s to actually reboot before we start probing — the
-        // first few /ping hits would land on the OLD firmware otherwise and
-        // tempt us to reload too early.
-        setTimeout(otaPollDeviceBack, 2500);
+        // Poll early and fast: sawDown gates the reload, so pre-reboot 200s
+        // from the OLD firmware can't trigger an early reload anymore — and
+        // starting at 300 ms all but guarantees a poll lands DURING the reboot
+        // gap, so a fast reboot (static lease, quick AP) isn't misread as
+        // "never went offline".
+        setTimeout(otaPollDeviceBack, 300);
         // Fallback: if it isn't back in 20 s, surface the manual reload button.
         setTimeout(() => { if (manual) manual.style.display = 'inline-block'; }, 20000);
+        // A /ping 200 only means "back up" if we first saw the device go DOWN.
+        // A flash the device REJECTED after the full upload (SHA/size check)
+        // whose error response got dropped (the AsyncTCP FIN issue documented
+        // at upload.onload) never reboots — the old code's first successful
+        // ping then hit the still-running OLD firmware and played the complete
+        // success sequence (reload included) for a failed update.
+        let sawDown = false;
         function otaPollDeviceBack() {
             if (otaPollAbort) return;
             // Bounded per-attempt timeout: a fetch to the mid-reboot (dead) IP
@@ -8326,9 +8371,24 @@
             fetch((wifiBase || '') + '/ping',
                   { cache: 'no-store', signal: AbortSignal.timeout(1500) })
                 .then(r => r.ok ? r.text() : Promise.reject(r.status))
-                .then(() => { if (!otaPollAbort) location.reload(); })
+                .then(() => {
+                    if (otaPollAbort) return;
+                    if (sawDown) { location.reload(); return; }
+                    if (Date.now() - start > 15000) {
+                        // Answering continuously 15 s after "rebooting" — it
+                        // almost certainly never rebooted. Stop pretending.
+                        const msg = document.getElementById('ota-reboot-msg');
+                        if (msg) msg.textContent =
+                            'Device never went offline — the update may have been ' +
+                            'rejected. Refresh and check the running version.';
+                        if (manual) manual.style.display = 'inline-block';
+                        return;
+                    }
+                    setTimeout(otaPollDeviceBack, 400);   // tight while still up — don't miss the gap
+                })
                 .catch(() => {
                     if (otaPollAbort) return;
+                    sawDown = true;   // unreachable = the reboot is happening
                     // 120 s budget: a device whose first WiFi connect attempt
                     // fails retries every 30 s, so 60 s could give up just
                     // before it came back. Manual button is up from 20 s.
@@ -8355,6 +8415,7 @@
 
     function disconnectWifi() {
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
         wifiBase = ''; wifiIP = '';
         const status = document.getElementById('connection-status');
@@ -8402,7 +8463,13 @@
         }
     }
 
+    // Initial-connection retry. The ws.onclose backoff only covers sockets
+    // that once opened — if the page loads while the device is mid-reboot,
+    // connectWifi()'s /state fetch fails once and nothing ever retried: the
+    // dashboard sat dead (grey bars) until a manual RECONNECT or reload.
+    let initRetryTimer = null, initRetryN = 0;
     async function connectWifi() {
+        if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         reconnectAttempts = 0;
         // patched3: pull the target host from the browser URL bar.  When the
@@ -8449,10 +8516,17 @@
             applyFullState(data);
             status.innerText = 'WiFi: CONNECTED'; status.style.color = '#00FF00';
             updateWifiZone(true);
+            initRetryN = 0;
             openWebSocket(wifiIP);
         } catch (e) {
             status.innerText = 'WiFi: FAILED — ' + e.message; status.style.color = '#FF0000';
             updateWifiZone(false);
+            // Auto-retry with backoff (3s → 6s → 12s → 24s → 30s cap). Login
+            // trouble returns above without throwing, so this only fires for
+            // network-level failures — device rebooting, WiFi blip, timeout.
+            const delay = Math.min(30000, 3000 * Math.pow(2, Math.min(initRetryN, 4)));
+            initRetryN++;
+            initRetryTimer = setTimeout(connectWifi, delay);
         }
     }
 
@@ -8721,9 +8795,14 @@
         } catch {}
     }
 
+    let _stackToastTimer = null;
     function showStackToast(data) {
         const existing = document.getElementById('stack-toast');
         if (existing) existing.remove();
+        // Cancel the previous toast's 60 s auto-remove — both toasts share one
+        // DOM id, so a stale timer would kill the replacement early (with its
+        // Save PNG button) after as little as a few seconds.
+        if (_stackToastTimer) { clearTimeout(_stackToastTimer); _stackToastTimer = null; }
         const fovStr = (data.fov || 0).toFixed(2) + '(' + (data.err || 0) + ')';
         const toast = document.createElement('div');
         toast.id = 'stack-toast';
@@ -8741,7 +8820,7 @@
             '<button onclick="document.getElementById(\'stack-toast\').remove()"' +
             ' style="background:none;border:none;color:#666;cursor:pointer;font-size:16px;">&#10005;</button>';
         document.body.appendChild(toast);
-        setTimeout(() => { const t = document.getElementById('stack-toast'); if (t) t.remove(); }, 60000);
+        _stackToastTimer = setTimeout(() => { const t = document.getElementById('stack-toast'); if (t) t.remove(); }, 60000);
     }
 
     function saveStackCard(data) {
@@ -8787,7 +8866,9 @@
             : vib || '';
         const lines = [
             'Objective  ' + objHdr,
-            'Step       ' + (data.stepMm || 0).toFixed(3) + ' mm \xd7 ' + (data.imgs || 0) + ' images',
+            // stepMm is a legacy key name — the value is MICROMETRES (the
+            // device TFT renders the same number as "%.3f um")
+            'Step       ' + (data.stepMm || 0).toFixed(3) + ' µm \xd7 ' + (data.imgs || 0) + ' images',
             'Duration   ' + durM + ':' + durSec,
             vibLine ? 'Vibration  ' + vibLine : '',
         ].filter(Boolean);
