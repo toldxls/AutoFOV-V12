@@ -3,40 +3,53 @@
 #     git config core.hooksPath tools/hooks
 # (or run tools/install-hooks.sh).
 #
-#   1. The dashboard's inline JS must pass `node --check` — blocks a broken
-#      <script> in data/index.html from ever being pushed.
+#   1. The dashboard's inline JS must pass `node --check` — checks the file AS
+#      COMMITTED at the TIP of each pushed ref (not the working tree: a
+#      dirty-tree fix used to let a broken commit through, and a dirty-tree
+#      breakage used to block pushing perfectly good commits). Intermediate
+#      commits of a multi-commit push are not checked — builds/OTA images come
+#      from tips, so that's the surface that matters here.
 #   2. Prints drift / flash-usage status afterwards (informational, never blocks
 #      — main is normally ahead of gh-pages between releases).
 #
-# Exits 0 cleanly on branches/worktrees without data/index.html (e.g. the
-# gh-pages worktree release.sh pushes from), so it never blocks a release.
+# Refs without data/index.html (e.g. the gh-pages worktree release.sh pushes
+# from) are skipped, so it never blocks a release.
 # Override in a pinch with:  git push --no-verify
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$root" || exit 0
-[ -f data/index.html ] || exit 0      # nothing to check here (e.g. gh-pages)
 
-# 1) Dashboard JS must parse. Syntax-only — node --check ignores the undefined
-#    browser globals (document, WebSocket, …), it just validates the grammar.
+# 1) Dashboard JS must parse, for every commit being pushed. Syntax-only —
+#    node --check ignores the undefined browser globals (document, WebSocket,
+#    …), it just validates the grammar.
 if command -v node >/dev/null 2>&1; then
-    # Temp DIR with a .js file inside — node --check rejects files whose
-    # extension it doesn't recognise, and mktemp can't guarantee a .js suffix.
-    tmpd=$(mktemp -d -t autofov_js.XXXXXX) || exit 0
-    js="$tmpd/check.js"; err="$tmpd/err.txt"
-    python3 - data/index.html >"$js" <<'PY'
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        # Branch deletion (local sha all zeros) — nothing to check.
+        case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+        # Ref without a dashboard (gh-pages) — skip.
+        git cat-file -e "$local_sha:data/index.html" 2>/dev/null || continue
+        # Temp DIR with a .js file inside — node --check rejects files whose
+        # extension it doesn't recognise, and mktemp can't guarantee a .js suffix.
+        tmpd=$(mktemp -d -t autofov_js.XXXXXX) || exit 0
+        js="$tmpd/check.js"; err="$tmpd/err.txt"; page="$tmpd/page.html"
+        # Two steps, file argument — piping into `python3 - <<PY` makes the
+        # pipe and the heredoc fight over stdin (shell-dependent who wins).
+        git show "$local_sha:data/index.html" >"$page"
+        python3 - "$page" >"$js" <<'PY'
 import re, sys
 html = open(sys.argv[1], encoding='utf-8').read()
 blocks = re.findall(r'<script\b[^>]*>(.*?)</script>', html, flags=re.S | re.I)
 sys.stdout.write('\n;\n'.join(blocks))
 PY
-    if ! node --check "$js" 2>"$err"; then
-        echo "pre-push: dashboard JS failed node --check — push blocked:" >&2
-        sed 's/^/  /' "$err" >&2
-        echo "  fix data/index.html <script>, or override with: git push --no-verify" >&2
+        if ! node --check "$js" 2>"$err"; then
+            echo "pre-push: dashboard JS in pushed commit ${local_sha:0:8} failed node --check — push blocked:" >&2
+            sed 's/^/  /' "$err" >&2
+            echo "  fix data/index.html <script> and amend/commit, or override with: git push --no-verify" >&2
+            rm -rf "$tmpd"
+            exit 1
+        fi
         rm -rf "$tmpd"
-        exit 1
-    fi
-    rm -rf "$tmpd"
+    done
 fi
 
 # 2) Release drift + flash usage (informational only).

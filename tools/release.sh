@@ -28,6 +28,18 @@ AUTO_YES=0
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
 PAGES_URL="https://toldxls.github.io/AutoFOV-V12"
 
+# Refuse a dirty tree: the version is stamped from HEAD's commit count, so a
+# dirty build publishes a binary that corresponds to no commit — and two
+# different binaries can ship under the same version number. data/web_ui.h is
+# exempt (build.sh regenerates it; its post-release commit is the documented
+# "build: regenerate web_ui.h" follow-up).
+DIRTY=$(git status --porcelain | grep -v ' data/web_ui\.h$' || true)
+if [ -n "$DIRTY" ]; then
+    echo "ERROR: working tree not clean — commit first (version is stamped from HEAD):"
+    echo "$DIRTY"
+    exit 1
+fi
+
 # ── Step 1: build (embeds HTML + compiles) ───────────────────────────────────
 echo "=== Step 1: build ==="
 bash tools/build.sh
@@ -63,6 +75,17 @@ echo "=== Step 3: stage gh-pages ==="
 WT=$(mktemp -d)
 cleanup() { git worktree remove --force "$WT" 2>/dev/null || true; rm -rf "$WT"; }
 trap cleanup EXIT
+
+# Heal any stale worktree from an old aborted run — a registered worktree
+# holding gh-pages makes the `worktree add -B` below fail forever. prune only
+# covers deleted directories; the old abort path KEPT its directory, so also
+# explicitly remove whichever worktree has gh-pages checked out.
+OLDWT=$(git worktree list --porcelain | awk '/^worktree /{wt=substr($0,10)} /^branch refs\/heads\/gh-pages$/{print wt}')
+if [ -n "$OLDWT" ]; then
+    echo "Removing stale gh-pages worktree from an aborted run: $OLDWT"
+    git worktree remove --force "$OLDWT" 2>/dev/null || true
+fi
+git worktree prune 2>/dev/null || true
 
 git fetch origin gh-pages:refs/remotes/origin/gh-pages 2>/dev/null || true
 if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
@@ -147,6 +170,9 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
     echo "First release? Enable Pages once:"
     echo "  GitHub → repo Settings → Pages → Source: branch 'gh-pages' / root"
 else
-    echo "Aborted — nothing pushed. Staged files left in: $WT"
-    trap - EXIT   # keep the worktree for inspection
+    echo "Aborted — nothing pushed."
+    # The worktree is cleaned up by the EXIT trap. It must NOT be kept: a
+    # registered worktree with gh-pages checked out blocks the next run's
+    # `git worktree add -B gh-pages` — and Enter at the [y/N] prompt (the
+    # default) used to land here and poison every future release.
 fi

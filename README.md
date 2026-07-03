@@ -72,14 +72,14 @@ translation unit (the build concatenates them alphabetically, so
 ### Build settings
 
 The build targets the Adafruit Feather ESP32-S3 with a **custom dual-OTA
-partition table** (`tools/partitions.csv`). `tools/build.sh` passes the correct
+partition table** (`partitions.csv`, sketch root — the esp32 core's prebuild hook only reads it there). `tools/build.sh` passes the correct
 FQBN automatically; if building from the Arduino IDE instead, match:
 
 | Setting | Value |
 | :--- | :--- |
 | Board | Adafruit Feather ESP32-S3 (4 MB Flash, 2 MB PSRAM) |
 | PSRAM | Enabled (QSPI PSRAM) |
-| Partition Scheme | Custom — `tools/partitions.csv` (dual-OTA) |
+| Partition Scheme | Custom — `partitions.csv` at the sketch root (dual-OTA) |
 | Arduino Runs On | Core 1 |
 | Events Run On | Core 1 |
 
