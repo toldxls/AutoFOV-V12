@@ -2233,6 +2233,15 @@
       #vibmenu .vm-analyze:active { filter:brightness(1.3); }
       #vibmenu .vm-close { cursor:pointer; background:#5a1414; border:1px solid #ff6600;
         color:#ffd0c0; padding:6px 14px; border-radius:4px; font-size:15px; font-weight:bold; line-height:1; }
+      #vibmenu .vm-info { cursor:pointer; width:30px; height:30px; border-radius:50%;
+        border:1px solid #00c8b4; color:#7fffe6; font-weight:bold; font-size:15px;
+        display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+      #vibmenu .vm-info:hover { background:#12362b; }
+      #vibmenu-help { display:none; position:absolute; top:58px; left:16px; z-index:20;
+        max-width:640px; max-height:calc(100% - 78px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
       #vibmenu-body { flex:1 1 auto; display:flex; gap:14px; padding:14px 16px; min-height:0; }
       #vibmenu .vm-rail { flex:0 0 250px; display:flex; flex-direction:column; gap:12px; min-height:0; }
       #vibmenu .vm-row2 { display:contents; }   /* cards stack in the rail; the media query flips them side-by-side when narrow */
@@ -2305,12 +2314,44 @@
         <span class="vm-title">VIBRATION</span>
         <span id="vib-state" class="vm-state" title="Overall vibration level right now">CALM</span>
         <span class="vm-head-right">
+          <span class="vm-info" onclick="vibToggleHelp()" title="How to read this">?</span>
           <span id="vib-units-toggle" onclick="vibToggleUnits()"
                 title="Toggle units: acceleration (mg) ↔ displacement (µm)">mg</span>
           <span class="vm-analyze" onclick="vibOpenPanel()"
                 title="Open the full multi-pane analyzer (spectrum + waterfall + RMS trend)">ANALYZE&nbsp;&#9654;</span>
           <span class="vm-close" onclick="goBack('screen-settings')" title="Close">&#10005;</span>
         </span>
+      </div>
+      <!-- How-to overlay (mirrors the MTF/centering ? panels). Tap anywhere to close. -->
+      <div id="vibmenu-help" onclick="vibToggleHelp()">
+        <b style="color:#3ddb7a;">What this is</b><br>
+        A <b>passive</b> vibration monitor (the onboard accelerometer). It watches how much
+        the rig shakes and how long it takes to settle after a movement or the shutter &mdash;
+        it never delays or gates capture, it only informs. The <b>CALM / …</b> badge is the
+        overall level right now.<br><br>
+        <b style="color:#3ddb7a;">Live readouts</b><br>
+        <b>DOMINANT FREQUENCY</b> &mdash; the single loudest frequency at this instant, split
+        into <b>V</b> (vertical &mdash; along the optical axis, the motion that actually blurs a
+        focus stack) and <b>H</b> (horizontal, across the plane).
+        <b>10&nbsp;s PEAK</b> is the worst seen in the last 10&nbsp;s (peak-hold) &mdash; it
+        catches brief bumps like a footstep or a door. The <b>mg&nbsp;/&nbsp;µm</b> button
+        toggles units: acceleration (mg) vs displacement (µm, how far it actually moves).<br><br>
+        <b style="color:#3ddb7a;">Signatures</b><br>
+        Name and <b>CAPTURE</b> the current vibration as a fingerprint, so you can recognise a
+        recurring source later (AC unit, pump, footsteps) by matching its spectrum.<br><br>
+        <b style="color:#3ddb7a;">Wait analysis</b><br>
+        After a shutter pulse it fits the resonance <b>ring-down</b> and shows a
+        <b>RECOMMENDED SETTLE</b> time. <b>YOUR WAIT</b> is what&rsquo;s configured on the
+        controller now (edit it to change). <b>RE-LOCK</b> re-measures &amp; locks the table&rsquo;s
+        resonance frequency used for that estimate; <b>SETTLE PLOT&nbsp;&#9654;</b> opens the
+        per-stack settle-time history.<br><br>
+        <b style="color:#3ddb7a;">Analyzer</b><br>
+        <b>ANALYZE&nbsp;&#9654;</b> (or tapping the spectrum) opens the full multi-pane view:
+        live spectrum, a scrolling waterfall, and the RMS trend.<br><br>
+        <b style="color:#3ddb7a;">Tip</b><br>
+        For focus stacking the <b>V</b> channel matters most &mdash; that&rsquo;s the axis that
+        shifts focus. Let the numbers settle for a few seconds before trusting a reading.
+        <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibmenu-body">
         <div class="vm-rail">
@@ -2813,9 +2854,12 @@
     let vibSpec = null;     // last 256-bin spectrum frame from the device
     let vibSigs = [];       // saved-signature filenames
 
+    function vibToggleHelp(){ const h=document.getElementById('vibmenu-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
     function vibEnter() {
         const m = document.getElementById('vibmenu');
         if (m) m.classList.add('open');
+        const h = document.getElementById('vibmenu-help'); if (h) h.style.display='none';
         sendCommand('vibPanel', 1);   // device starts streaming the spectrum
         vibHomeCursorX = -1;          // clear any stale hover/touch cursor
         vibMenuResize();              // size the spectrum canvas to its flex box, then paint
