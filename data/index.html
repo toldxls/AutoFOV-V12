@@ -1803,8 +1803,42 @@
                 <div style="position:relative; flex:0 0 auto; padding:9px 0 8px; text-align:center;
                      color:#3ddb7a; font-size:12px; font-weight:bold; letter-spacing:0.5px;
                      border-bottom:1px solid #1c4a3a;">&#9678; LENS CENTERING
+                    <div id="centering-info" onclick="centeringToggleHelp()" title="How to use this tool"
+                         style="position:absolute; top:5px; left:7px; width:22px; height:22px;
+                                border-radius:50%; border:1px solid #3ddb7a; color:#3ddb7a;
+                                font-weight:bold; font-size:13px; display:flex; align-items:center;
+                                justify-content:center; cursor:pointer;">?</div>
                     <div class="gfx-btn" onclick="closeCentering()" style="top:3px; left:205px; width:30px;
                          height:26px; background:#404040; color:#FF0000; font-size:15px;">X</div>
+                </div>
+                <!-- How-to overlay (mirrors the MTF ? panel). Tap anywhere on it to close. -->
+                <div id="centering-help" onclick="centeringToggleHelp()"
+                     style="display:none; position:absolute; top:36px; left:6px; right:6px; bottom:6px;
+                            z-index:5; overflow-y:auto; background:#0a1f1a; border:1px solid #2a7a6a;
+                            border-radius:6px; padding:9px 10px; font-size:10px; line-height:1.5;
+                            color:#cfe7df; cursor:pointer;">
+                    <b style="color:#3ddb7a;">What it does</b><br>
+                    Finds where the lens&rsquo;s red/blue lateral colour fringing crosses zero &mdash; the
+                    true optical axis &mdash; and compares it to the frame centre. If they differ, the
+                    lens/sensor is shifted <b>left/right</b>.<br><br>
+                    <b style="color:#3ddb7a;">What to drop</b><br>
+                    The <b>whole, uncropped</b> micrometer <b>.jpg</b> series &mdash; the same calibration
+                    set. It needs the full <b>magnification sweep</b> (zoomed-in through zoomed-out):
+                    <b>6+ frames</b> spanning &ge;~1.4&times;. A short or one-sided sweep reads
+                    INCONCLUSIVE &mdash; the per-frame neutral point drifts with magnification and only a
+                    balanced sweep averages that out.<br><br>
+                    <b style="color:#3ddb7a;">Reading it</b><br>
+                    <b style="color:#7fff7f;">WELL-CENTERED &#10003;</b> &mdash; neutral point within
+                    &plusmn;1% of centre.<br>
+                    <b style="color:#fa6;">OFF-AXIS &#9888;</b> &mdash; axis offset by the shown amount;
+                    <i>centre X%</i> is how far off (% of half-field), <i>&plusmn;Y%</i> the uncertainty.<br>
+                    <b style="color:#fd5;">INCONCLUSIVE</b> &mdash; need a fuller sweep, or the offset
+                    isn&rsquo;t resolved from noise.<br>
+                    <i>CA avg/max &micro;m</i> is the lateral-colour magnitude out at the edges.<br><br>
+                    <b style="color:#3ddb7a;">Tip</b><br>
+                    This checks the <b>left/right</b> axis only. Rotate the micrometer 90&deg; and reshoot
+                    to test <b>top/bottom</b>.
+                    <span style="color:#7a958c;">(tap anywhere to close)</span>
                 </div>
                 <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 8px;">
                     <div id="centering-drop" onclick="document.getElementById('centering-file').click()"
@@ -2402,8 +2436,10 @@
       </div>
       <div id="mtf-help" onclick="mtfToggleHelp()">
         <b style="color:#3ddb7a;">Shooting</b><br>
-        Photograph a USAF-1951 target: pick an element whose bars fill most of the
-        frame, tilt the target ~5&deg; so the edges are slanted, best focus, lowest ISO.
+        Photograph a USAF-1951 target: pick an element that fills most of the frame
+        and <b>keep it near the frame centre</b> — edge/periphery elements read lower
+        from off-axis aberrations and under-report the lens. Tilt the target ~5&deg;
+        so the edges are slanted, best focus, lowest ISO.
         Shoot <b>RAW</b> &mdash; in-camera JPG smooths &amp; sharpens artificially, skewing
         the measured edge &mdash; and convert to a baseline <b>TIFF</b>.<br>
         <!-- Visual aid: what a usable crop looks like — bars filling the frame,
@@ -6532,9 +6568,12 @@
         dz.innerHTML='Drop the calibration set<br><span style="color:#5a8;">(the .jpg micrometer series)</span>';
         document.getElementById('centering-target').style.display='none';
         document.getElementById('centering-mag').style.display='none';
+        document.getElementById('centering-help').style.display='none';
         m.style.display='flex';
     }
     function closeCentering(){ _ctrGen++; document.getElementById('centering').style.display='none'; }
+    function centeringToggleHelp(){ const h=document.getElementById('centering-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
 
     // ── MTF / RESOLUTION (slanted-edge, from a USAF target shot) ──
     // Step 1: modal + decode + draggable/resizable auto-suggested ROI. The
