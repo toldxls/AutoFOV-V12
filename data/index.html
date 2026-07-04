@@ -252,8 +252,8 @@
         #tof-menu-zone { position: absolute; left: 33px; top: 0px; width: 60px; height: 42px; cursor: pointer; }
         /* TOF signal strength — an isometric 3D box (white wireframe, empty
            interior) extruded up-right; setTofBar() fills it from the left with a
-           colour-coded 3D sub-box whose leading "cube face" marks the level.
-           Colour ramp matches the firmware thresholds (green ≥60%, yellow ≥30%). */
+           color-coded 3D sub-box whose leading "cube face" marks the level.
+           Color ramp matches the firmware thresholds (green ≥60%, yellow ≥30%). */
         #tof-box { position: absolute; left: 12px; top: 11px; }
         #dist-box { position: absolute; left: 42px; top: 165px; }
 
@@ -291,7 +291,7 @@
         /* --- STACK CALC / TIME --- */
         .stack-row { position: absolute; left: 0; width: 240px; cursor: pointer; height: 33px; }
         .stack-row:active { background-color: #111; }
-        /* Vertically centre the label + value within the row (= the haptic
+        /* Vertically center the label + value within the row (= the haptic
            press box) instead of pinning them near the top. Overrides the inline
            top:6/8px the rows ship with. */
         .stack-row .gfx-text { top: 50% !important; transform: translateY(-50%); }
@@ -329,7 +329,7 @@
             justify-content: center; align-items: center;
             font-size: 16px; font-weight: bold; border: 1px solid #787878;
             /* patched3 UI polish: bevel only — no gradient, so the swatch
-               still reads as a faithful sample of its theme colour. */
+               still reads as a faithful sample of its theme color. */
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.32),
                         inset 0 -2px 3px rgba(0,0,0,0.32);
             text-shadow: 0 1px 1px rgba(0,0,0,0.5);
@@ -459,7 +459,7 @@
                             <use href="#wba1" transform="translate(0.28,-0.28)" stroke="#424242"/>
                             <circle cx="11" cy="20" r="2" fill="#424242" transform="translate(0.28,-0.28)"/>
                         </g>
-                        <!-- front bars (colour set by JS) -->
+                        <!-- front bars (color set by JS) -->
                         <use id="wifi-badge-arc3" href="#wba3" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
                         <use id="wifi-badge-arc2" href="#wba2" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
                         <use id="wifi-badge-arc1" href="#wba1" fill="none" stroke="#555" stroke-width="2" stroke-linecap="round"/>
@@ -548,7 +548,7 @@
                             <use href="#cog" transform="translate(0.26,0.20)" fill="#0E760F"/>
                             <!-- lit front face caps the extrusion -->
                             <use href="#cog" fill="url(#gear-face)"/>
-                            <!-- recessed centre bore -->
+                            <!-- recessed center bore -->
                             <circle cx="0" cy="0" r="3.1" fill="url(#gear-hub)"/>
                             <circle cx="0" cy="0.5" r="3.1" fill="none" stroke="#2BC02B" stroke-width="0.5" stroke-opacity="0.7"/>
                         </g>
@@ -846,7 +846,7 @@
                     <div style="color:#3ddb7a; font-weight:bold; font-size:11px;">HIGH REFLECTIVITY</div>
                     For <b>bright / shiny / specular</b> subjects &mdash; polished metal, mirror-coated,
                     or very close &mdash; that flood the sensor so it under-reads or drops out. It cuts the
-                    collected signal <b>~16&times;</b> (8&nbsp;ms vs 33&nbsp;ms integration + the centre
+                    collected signal <b>~16&times;</b> (8&nbsp;ms vs 33&nbsp;ms integration + the center
                     8&times;8 of the SPAD array) to pull a saturating return back into range. Leave it
                     <b>OFF</b> for normal matte subjects &mdash; it lowers sensitivity, so dim/distant
                     targets read noisier.
@@ -971,6 +971,11 @@
             <!-- ===================== CAL RUN ===================== -->
             <div id="screen-calrun" class="screen">
                 <div class="gfx-text" style="left: 10px; top: 10px; font-size: 13px; color: #0000CD; font-weight: bold;">POINT <span id="calrun-pt">1</span>/<span id="calrun-total">10</span></div>
+                <div id="calrun-info" onclick="calRunToggleHelp()" title="What to do here"
+                     style="position:absolute; left: 118px; top: 4px; width: 22px; height: 22px;
+                            border-radius:50%; border:1px solid #5ad6ff; color:#5ad6ff; font-weight:bold;
+                            font-size:13px; display:flex; align-items:center; justify-content:center;
+                            cursor:pointer;">?</div>
 
                 <!-- Live distance readout (top-right). FOV is intentionally omitted -
                      during cal it would just reflect the stale slope and mislead. -->
@@ -1011,6 +1016,29 @@
                      background: #780000; font-size: 11px;" onclick="calCancel()">CANCEL</div>
 
                 <div id="calrun-status" class="gfx-text" style="left: 5px; top: 308px; color: var(--accent-green); font-size: 10px;"></div>
+
+                <!-- How-to overlay for the capture loop. Tap anywhere to close. -->
+                <div id="calrun-help" onclick="calRunToggleHelp()"
+                     style="display:none; position:absolute; top:0; left:0; width:240px; height:320px;
+                            background:rgba(0,0,0,0.98); z-index:191; overflow-y:auto; padding:10px 12px;
+                            font-size:10px; line-height:1.5; color:#cfe7df; cursor:pointer; box-sizing:border-box;">
+                    <div style="color:#5ad6ff; font-weight:bold; font-size:12px; text-align:center;
+                                margin-bottom:6px;">CAPTURE EACH POINT</div>
+                    Pair a known <b>pixel width</b> with the live <b>ToF distance</b>, once per bellows
+                    position:<br><br>
+                    <b>1.</b> Set the bellows &mdash; start at one end of its travel.<br>
+                    <b>2.</b> Enter the <b>pixel count</b> for one Demarc-Dist width: tap the box to type it,
+                    or <b>&#128247;&nbsp;MEASURE&nbsp;FROM&nbsp;PHOTO</b> and drop a micrometer JPEG
+                    (&#9668;&#9658; nudge).<br>
+                    <b>3.</b> Let <b>LIVE&nbsp;DIST</b> settle.<br>
+                    <b>4.</b> Tap <b>CAPTURE&nbsp;&amp;&nbsp;SAVE</b> &mdash; stores this pixel&harr;distance
+                    pair and advances to the next point.<br>
+                    <b>5.</b> Move the bellows ~10&nbsp;mm and repeat across its full range.<br><br>
+                    Take <b>3+ points</b> (5+ across the whole range is better). A mini graph appears after
+                    3 to spot outliers. <b>REVIEW</b> checks/retakes points and <b>FINISH</b>es the fit;
+                    <b>BACK</b> undoes the last point; <b>CANCEL</b> aborts.
+                    <span style="color:#7a958c;">(tap anywhere to close)</span>
+                </div>
             </div>
 
             <!-- ===================== BRIGHTNESS SETTINGS ===================== -->
@@ -1852,8 +1880,8 @@
                             border-radius:6px; padding:9px 10px; font-size:10px; line-height:1.5;
                             color:#cfe7df; cursor:pointer;">
                     <b style="color:#3ddb7a;">What it does</b><br>
-                    Finds where the lens&rsquo;s red/blue lateral colour fringing crosses zero &mdash; the
-                    true optical axis &mdash; and compares it to the frame centre. If they differ, the
+                    Finds where the lens&rsquo;s red/blue lateral color fringing crosses zero &mdash; the
+                    true optical axis &mdash; and compares it to the frame center. If they differ, the
                     lens/sensor is shifted <b>left/right</b>.<br><br>
                     <b style="color:#3ddb7a;">What to drop</b><br>
                     The <b>whole, uncropped</b> micrometer <b>.jpg</b> series &mdash; the same calibration
@@ -1863,12 +1891,12 @@
                     balanced sweep averages that out.<br><br>
                     <b style="color:#3ddb7a;">Reading it</b><br>
                     <b style="color:#7fff7f;">WELL-CENTERED &#10003;</b> &mdash; neutral point within
-                    &plusmn;1% of centre.<br>
+                    &plusmn;1% of center.<br>
                     <b style="color:#fa6;">OFF-AXIS &#9888;</b> &mdash; axis offset by the shown amount;
-                    <i>centre X%</i> is how far off (% of half-field), <i>&plusmn;Y%</i> the uncertainty.<br>
+                    <i>center X%</i> is how far off (% of half-field), <i>&plusmn;Y%</i> the uncertainty.<br>
                     <b style="color:#fd5;">INCONCLUSIVE</b> &mdash; need a fuller sweep, or the offset
                     isn&rsquo;t resolved from noise.<br>
-                    <i>CA avg/max &micro;m</i> is the lateral-colour magnitude out at the edges.<br><br>
+                    <i>CA avg/max &micro;m</i> is the lateral-color magnitude out at the edges.<br><br>
                     <b style="color:#3ddb7a;">Tip</b><br>
                     This checks the <b>left/right</b> axis only. Rotate the micrometer 90&deg; and reshoot
                     to test <b>top/bottom</b>.
@@ -1886,7 +1914,7 @@
                     <div id="centering-result" style="margin-top:6px; font-size:11px; line-height:1.45;
                          color:var(--text-disabled); min-height:28px;">
                         Drop your micrometer <b>.jpg</b> series to check <b>left/right</b> lens centering — it
-                        measures the R/G lateral-CA neutral point vs the frame centre.
+                        measures the R/G lateral-CA neutral point vs the frame center.
                     </div>
                     <canvas id="centering-target" width="220" height="108"
                             style="display:none; width:220px; height:108px; margin-top:6px;
@@ -2512,7 +2540,7 @@
       <div id="mtf-help" onclick="mtfToggleHelp()">
         <b style="color:#3ddb7a;">Shooting</b><br>
         Photograph a USAF-1951 target: pick an element that fills most of the frame
-        and <b>keep it near the frame centre</b> — edge/periphery elements read lower
+        and <b>keep it near the frame center</b> — edge/periphery elements read lower
         from off-axis aberrations and under-report the lens. Tilt the target ~5&deg;
         so the edges are slanted, best focus, lowest ISO.
         Shoot <b>RAW</b> &mdash; in-camera JPG smooths &amp; sharpens artificially, skewing
@@ -3574,7 +3602,7 @@
         }
     }
 
-    // Per-bin colour for one waterfall pixel given the active normalisation
+    // Per-bin color for one waterfall pixel given the active normalisation
     // reference + user gain. Centralised so the live row and the bulk repaint
     // share one mapping.
     function vibWfTint(val) {
@@ -3599,7 +3627,7 @@
         // Asymmetric EMA contrast reference: rise fast so a real transient gets
         // headroom, decay slow so one bump doesn't crush later silent rows.
         // Update it from THIS frame BEFORE storing the row, then freeze the
-        // reference onto the row so the bulk repaint colours each row by the
+        // reference onto the row so the bulk repaint colors each row by the
         // reference active when it was captured. Without the freeze, re-
         // normalising the whole history by the latest vibWfRefMax every frame
         // pumps the entire image's brightness (the bright/dim flashing).
@@ -3862,7 +3890,7 @@
             const sumMx = Math.max(1300, vibRowSumRef);
             // Background slab — darker than before so the bars read against
             // a near-opaque track instead of fighting the bright heatmap
-            // colours underneath (a strong burst row is already pale yellow
+            // colors underneath (a strong burst row is already pale yellow
             // in the heatmap, which used to swallow an amber bar on top).
             g.fillStyle = 'rgba(0,0,0,0.65)';
             g.fillRect(W - BAR_MAX_W, 0, BAR_MAX_W, heatH);
@@ -3874,7 +3902,7 @@
             }
             // sqrt(frac) length so a moderate row already pushes well past
             // half-width — strong bursts no longer have to fully saturate the
-            // ceiling to look long.  Colour ramps deep-orange → amber → near-
+            // ceiling to look long.  Color ramps deep-orange → amber → near-
             // white so a maxed bar reads as visually "hot" against the bright
             // heatmap rows it's drawn over.
             for (let r = 0; r < visible; r++) {
@@ -4662,7 +4690,7 @@
             return;
         }
 
-        // ── Primary trace = peak-hold envelope, heat-coloured by amplitude ─
+        // ── Primary trace = peak-hold envelope, heat-colored by amplitude ─
         for (let x = 0; x < pw; x++) {
             const b = Math.floor(x * n / pw);
             const h = Math.round(hold[b] / mx * ph);
@@ -5098,8 +5126,11 @@
         sendCommand('calStart', 1);   // patched3: clears any stale pointsCaptured on ESP32
         updateCalRunUI(1);
         drawCalMiniGraph();          // hides itself when capturedPoints is empty
+        document.getElementById('calrun-help').style.display = 'none';
         switchScreen('screen-calrun');
     }
+    function calRunToggleHelp(){ const h=document.getElementById('calrun-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
 
     function resetAll() {
         showConfirm('Reset ALL calibration data?\nThis cannot be undone.', () => {
@@ -5584,7 +5615,7 @@
 
     function _applyTintBrightness() {
         // tintPct 0-100 maps to CSS brightness 0.55 (dim) → 1.45 (vivid)
-        // Centre (50%) = normal (1.0)
+        // Center (50%) = normal (1.0)
         const brightness = 0.55 + (state.tintPct / 100) * 0.9;
         document.getElementById('ili9341-display').style.filter =
             `brightness(${brightness.toFixed(2)})`;
@@ -5858,7 +5889,7 @@
                 ? sk + 'K/' + (sk + ff) + 'K'
                 : '—';
         }
-        // Die temp — colour-coded against the SoC's 110 °C junction limit so a
+        // Die temp — color-coded against the SoC's 110 °C junction limit so a
         // hot board reads at a glance without having to remember the number.
         if (g('mem-die')) {
             const t = state.dieC;
@@ -5892,7 +5923,7 @@
                 ? sl.toLocaleString() + ' ln / ' + sk + ' KB'
                 : '—';
         }
-        // Colour the UPDATE button from the last GitHub check, then refresh it so
+        // Color the UPDATE button from the last GitHub check, then refresh it so
         // an available update shows green without having to open the OTA screen.
         refreshAboutUpdateBtn();
         if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
@@ -6458,7 +6489,7 @@
     //   Detect the periodic ticks, fit position-vs-index, and report the pixels
     //   spanning the demarcation window. Validated against real micrometer shots.
     // ─────────────────────────────────────────────────────────────────────────
-    function _micBox(arr, r){            // centred box average (baseline)
+    function _micBox(arr, r){            // centered box average (baseline)
         const c = new Float32Array(arr.length + 1);
         for (let i = 0; i < arr.length; i++) c[i+1] = c[i] + arr[i];
         const o = new Float32Array(arr.length);
@@ -6626,7 +6657,7 @@
     // ── LENS CENTERING (lateral-CA neutral-point test) ──
     // Entry point + drop zone. The left/right analysis (per-channel column-
     // projection cross-correlation across the field → R/G neutral point vs the
-    // frame centre) and the bullseye + line-plot render land next; the method is
+    // frame center) and the bullseye + line-plot render land next; the method is
     // validated on the existing micrometer set.
     let _centeringDropBound = false, _ctrGen = 0;
     function openCentering(){
@@ -6643,7 +6674,7 @@
         const res=document.getElementById('centering-result'), dz=document.getElementById('centering-drop');
         res.style.color='var(--text-disabled)';
         res.innerHTML='Drop your micrometer <b>.jpg</b> series to check <b>left/right</b> lens centering — it '+
-            'measures the R/G lateral-CA neutral point vs the frame centre.';
+            'measures the R/G lateral-CA neutral point vs the frame center.';
         dz.style.padding='9px 8px'; dz.style.fontSize='10px'; dz.style.lineHeight='1.4';
         dz.innerHTML='Drop the calibration set<br><span style="color:#5a8;">(the .jpg micrometer series)</span>';
         document.getElementById('centering-target').style.display='none';
@@ -7397,7 +7428,7 @@
     // Analysis ported from the validated ca_align.py prototype. The micrometer
     // ticks are vertical edges spanning the field; per-channel column projections
     // cross-correlated across x give the R/G (and B/G) lateral-CA shift vs field
-    // position. A centred lens -> CA crosses zero at the frame centre, symmetric.
+    // position. A centered lens -> CA crosses zero at the frame center, symmetric.
     const _CTR_TICK_UM = 10.0, _CTR_WIN = 400, _CTR_STEP = 120, _CTR_MAXLAG = 14;
 
     function _ctrTickBand(data, W, H){          // rows with peak horiz-gradient energy (green)
@@ -7521,7 +7552,7 @@
         ctx.beginPath(); ctx.moveTo(ox,cy-R); ctx.lineTo(ox,cy+R); ctx.stroke();
         ctx.fillStyle=col; ctx.beginPath(); ctx.arc(ox,cy,Math.max(2,2.4*S),0,2*Math.PI); ctx.fill();
         ctx.fillStyle='#7fd8c0'; ctx.font=Math.round(8.5*S)+'px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-        ctx.fillText('optical centre — L/R only (vertical pending)', cx, PH-2*S);
+        ctx.fillText('optical center — L/R only (vertical pending)', cx, PH-2*S);
     }
     function _ctrDrawMag(pts){
         const { ctx, PW, PH, S }=_ctrHiDPI(document.getElementById('centering-mag'),64);
@@ -7539,7 +7570,7 @@
         line(fb,rb,'#ff6a6a',false); line(fb,bb,'#5ad6ff',true);
         ctx.fillStyle='#7a958c'; ctx.font=Math.round(8*S)+'px system-ui,sans-serif'; ctx.textBaseline='top';
         ctx.textAlign='left';   ctx.fillText('left',ML+1,MT+ph+1*S);
-        ctx.textAlign='center'; ctx.fillText('centre',toX(0),MT+ph+1*S);
+        ctx.textAlign='center'; ctx.fillText('center',toX(0),MT+ph+1*S);
         ctx.textAlign='right';  ctx.fillText('right',ML+pw-1,MT+ph+1*S);
         ctx.textAlign='left'; ctx.fillStyle='#ff6a6a'; ctx.fillText('R−G',ML+2*S,MT+1*S);
         ctx.fillStyle='#5ad6ff'; ctx.fillText('B−G  (CA µm vs field)',ML+2*S,MT+1*S+10*S);
@@ -7570,7 +7601,7 @@
             if (Math.abs(dl-dr)>0.8 && Math.abs(off)<50){
                 offs.push(off);
                 if (sw.umpx<umpxMin) umpxMin=sw.umpx;   // track magnification spread of the
-                if (sw.umpx>umpxMax) umpxMax=sw.umpx;    // frames that actually drive the centre
+                if (sw.umpx>umpxMax) umpxMax=sw.umpx;    // frames that actually drive the center
             }
             for (let k=0;k<sw.xs.length;k++){ const f=(sw.xs[k]-sw.cx)/(sw.W/2), dRum=sw.dR[k]*sw.umpx;
                 pts.push({ f, dR:dRum, dB:sw.dB[k]*sw.umpx });
@@ -7582,8 +7613,8 @@
         const n=offs.length, mean=offs.reduce((a,b)=>a+b,0)/n;
         const sd=Math.sqrt(offs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1)), se=sd/Math.sqrt(n);
         const edgeAvg=edgeN?edgeSum/edgeN:0;
-        // Monotonic 3-state verdict. The OFFSET MAGNITUDE alone decides centred-vs-off
-        // (a bigger offset can never read "more centred"); the error bar / sweep
+        // Monotonic 3-state verdict. The OFFSET MAGNITUDE alone decides centered-vs-off
+        // (a bigger offset can never read "more centered"); the error bar / sweep
         // coverage can only downgrade confidence to INCONCLUSIVE, never flip it.
         // A definitive call needs a real magnification sweep — the per-frame neutral
         // point is a fragile extrapolation that drifts with magnification, so only a
@@ -7601,7 +7632,7 @@
         res.innerHTML =
             '<b style="color:'+col+';">'+lbl+'</b>'+
             '<span style="font-size:9.5px; color:var(--text-disabled); line-height:1.35;"> (L/R)<br>'+
-            'centre '+mean.toFixed(2)+'% ± '+se.toFixed(2)+'% of half-field'+note+' · CA '+
+            'center '+mean.toFixed(2)+'% ± '+se.toFixed(2)+'% of half-field'+note+' · CA '+
             edgeAvg.toFixed(2)+'/'+edgeMax.toFixed(2)+' µm avg/max · '+used+' frames<br>'+
             '&#8635; reshoot vertical for the top/bottom axis</span>';
         dz.innerHTML='&#10003; '+used+' frames · tap to load a different set';
@@ -7962,7 +7993,7 @@
             const el = document.getElementById('wbar-' + i);
             if (el) el.setAttribute('fill', i <= bars ? barCol : '#404040');
         }
-        // WiFi badge (top-left, where BT rune used to live) — mirrors bar colour
+        // WiFi badge (top-left, where BT rune used to live) — mirrors bar color
         const badgeCol = connected ? barCol : '#555';
         // Arcs are open curves — only ever set their stroke and force fill:none,
         // otherwise a disconnected fill paints grey blobs that never clear.
@@ -9206,7 +9237,7 @@
     }
 
     // TOF signal box (isometric, up-right extrusion). Fills from the left with a
-    // 3D colour sub-box; the leading "cube face" marks the current level colour.
+    // 3D color sub-box; the leading "cube face" marks the current level color.
     function tofRGB(pct) {
         pct = Math.max(0, Math.min(100, pct));
         const stops = [[0,[255,68,0]], [20,[255,165,0]], [40,[255,215,0]], [60,[0,255,0]]];
@@ -9236,7 +9267,7 @@
 
     // Bellows-distance bar: 0mm anchored at the right (XR), fill grows LEFT,
     // 1 svg-unit = 1 mm over 0..150 mm. Up-LEFT isometric depth so the leading
-    // cube face shows on the left. Colours are static (set in markup) — only the
+    // cube face shows on the left. Colors are static (set in markup) — only the
     // three face `d` attributes change. Called gated to >=4mm moves.
     function setDistBar(distMM) {
         const top = document.getElementById('dist-fill-top');
