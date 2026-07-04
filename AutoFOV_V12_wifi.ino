@@ -2553,14 +2553,20 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["buildCommit"]  = BUILD_COMMIT;
     doc["buildDate"]   = __DATE__;
     doc["buildTime"]   = __TIME__;
-    doc["sketchKB"]    = ESP.getSketchSize()      / 1024;
-    doc["freeFlashKB"] = ESP.getFreeSketchSpace() / 1024;
     // Per-slot OTA size (tools/partitions.csv: app0/app1 = 0x1D0000 each) and
     // which slot the bootloader picked at startup.  The memory screen draws
     // both slots so the dual-OTA layout is visible at a glance.
     doc["partKB"]      = 0x1D0000 / 1024;
+    doc["sketchKB"]    = ESP.getSketchSize() / 1024;
     {
         const esp_partition_t* run = esp_ota_get_running_partition();
+        // "Free" = real headroom in the RUNNING app slot (capacity − sketch), NOT
+        // ESP.getFreeSketchSpace(), which returns the identically-sized standby
+        // OTA slot.  That 1.8 MB is reserved for the A/B rollback image, not app
+        // growth, so counting it as free flash was misleading.
+        uint32_t slot = run ? run->size : 0x1D0000;
+        uint32_t used = ESP.getSketchSize();
+        doc["freeFlashKB"] = (slot > used ? slot - used : 0) / 1024;
         doc["partRunning"] = (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1)
                              ? "ota_1" : "ota_0";
     }

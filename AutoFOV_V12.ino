@@ -24,6 +24,7 @@
 #include <DNSServer.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
+#include <esp_ota_ops.h>   // esp_ota_get_running_partition() — real app-slot size for the Flash readout
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -1537,8 +1538,14 @@ void drawMemInfoUI() {
     infoRow("CPU:", buf, TFT_WHITE);
   }
   {
-    uint32_t sk = ESP.getSketchSize(), ff = ESP.getFreeSketchSpace();
-    snprintf(buf, sizeof(buf), "%luK/%luK", sk/1024, (sk+ff)/1024);
+    // used / running-slot capacity — NOT sketch + getFreeSketchSpace(), which
+    // adds the identically-sized standby OTA (rollback) slot and misreads as
+    // ~1.8 MB of free app space the firmware can't actually grow into.
+    uint32_t sk = ESP.getSketchSize();
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    uint32_t slot = run ? run->size : 0x1D0000;
+    snprintf(buf, sizeof(buf), "%luK/%luK",
+             (unsigned long)(sk/1024), (unsigned long)(slot/1024));
     infoRow("Flash:", buf, themedText(COLOR_LIGHTGREY));
   }
 }

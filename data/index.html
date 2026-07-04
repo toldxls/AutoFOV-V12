@@ -1259,8 +1259,10 @@
                 <div id="mem-sdk" class="gfx-text" style="right:15px; top:232px; color:var(--text-disabled);">5.1.2</div>
                 <div class="gfx-text" style="left:15px; top:252px; color:var(--text-disabled);">Source:</div>
                 <div id="mem-source" class="gfx-text" style="right:15px; top:252px; color:var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled);">Flash:</div>
-                <div id="mem-flash" class="gfx-text" style="right:15px; top:272px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled);"
+                     title="Firmware used / running app-slot capacity. The matching 1.8 MB slot isn't counted — it holds the OTA rollback image (see the partition bars above).">Flash:</div>
+                <div id="mem-flash" class="gfx-text" style="right:15px; top:272px; color:var(--text-disabled);"
+                     title="Firmware used / running app-slot capacity. The matching 1.8 MB slot isn't counted — it holds the OTA rollback image (see the partition bars above).">—</div>
                 <div class="gfx-text" style="left:15px; top:292px; color:var(--text-disabled);">Die temp:</div>
                 <div id="mem-die" class="gfx-text" style="right:15px; top:292px; color:var(--accent-cyan);">—</div>
             </div>
@@ -5884,9 +5886,13 @@
                 : '—';
         }
         if (g('mem-flash')) {
-            const sk = state.sketchKB, ff = state.freeFlashKB;
-            g('mem-flash').innerText = (sk !== null && ff !== null)
-                ? sk + 'K/' + (sk + ff) + 'K'
+            // Firmware used / running app-slot capacity (partKB). The identically
+            // sized standby slot (the OTA rollback image) is deliberately NOT
+            // counted — free = capacity − used is real headroom, and the partition
+            // bars above already show both OTA slots.
+            const sk = state.sketchKB, cap = state.partKB;
+            g('mem-flash').innerText = (sk !== null && cap)
+                ? sk + 'K/' + cap + 'K'
                 : '—';
         }
         // Die temp — color-coded against the SoC's 110 °C junction limit so a
