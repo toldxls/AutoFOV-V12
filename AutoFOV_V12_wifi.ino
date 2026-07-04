@@ -137,6 +137,34 @@ static uint32_t                otaLastChunkMs   = 0;
 static mbedtls_sha256_context  otaShaCtx;
 static bool                    otaShaActive     = false;   // ctx initialised?
 static char                    otaExpectedSha[65] = {0};   // hex, 64 chars + NUL
+// V12: PSRAM whole-image OTA buffer.  Writing each chunk to flash inline on the
+// AsyncTCP receive task stalls RX (flash erase/write pins the task → dropped
+// packets → the intermittent TCP-RTO upload stall).  Instead we memcpy the whole
+// .bin into PSRAM during receive — pure RAM, ZERO flash — then a Core-1 flush
+// task writes it to flash AFTER the socket closes, so flash never competes with
+// RX and the stall is structurally impossible.  If the image won't fit in PSRAM
+// (or the alloc fails) otaBufMode stays false and the proven inline Update.write
+// path runs instead, so OTA never breaks.  Every Update.* and the SHA verify
+// happen ONLY in the flush task — single owner, no cross-core Updater race.
+static uint8_t*     otaBuf       = nullptr;   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
+static size_t       otaBufCap    = 0;         // allocated capacity (bytes)
+static size_t       otaBufLen    = 0;         // .bin bytes received so far
+static bool         otaBufMode   = false;     // true = buffering this OTA to PSRAM
+static TaskHandle_t otaFlushTask = nullptr;   // Core-1 buffer -> flash writer
+// Async flash result for the buffered path.  The buffered /ota returns 200 as
+// soon as the body is received (before the flash runs), so the flush task's
+// outcome can't ride that response — the dashboard polls GET /ota-status instead
+// to learn success (device reboots) vs a specific failure.  0=idle 1=flushing
+// 2=committed(rebooting) -1=failed.
+static volatile int8_t otaFlashState = 0;
+static char            otaFlashMsg[48] = {0};   // human-readable reason on failure
+// Leave this much internal-heap-independent PSRAM free after the buffer so the
+// live sprites / vib buffers / any transient alloc during OTA don't get squeezed.
+static const size_t OTA_PSRAM_MARGIN = 160 * 1024;
+static void otaBufFree() {
+    if (otaBuf) { heap_caps_free(otaBuf); otaBuf = nullptr; }
+    otaBufCap = 0; otaBufLen = 0; otaBufMode = false;
+}
 // Restart can't happen inline in the OTA completion handler — that runs on the
 // AsyncTCP task, and ESP.restart() preempts the response transmit so the
 // browser sees a connection drop instead of the 200 OK.  We stash a timestamp
@@ -797,10 +825,16 @@ void wifiLoop() {
     // use of the shared _buffer and corrupts the Updater state machine,
     // leaving _error stuck at ABORT.  That was the root cause of the
     // persistent "Rejected: Aborted" failures.  So this watchdog touches
-    // ONLY the plain bool/uint32 flags; the leftover Update session and SHA
-    // context are torn down safely on Core 0 by the next OTA request's
-    // pre-flight cleanup.
-    if (otaInProgress && otaLastChunkMs &&
+    // ONLY the plain bool/uint32 flags; the leftover Update session, SHA
+    // context, AND the PSRAM whole-image buffer are torn down safely on Core 0 by
+    // the next OTA request's pre-flight cleanup (freeing otaBuf here would race a
+    // producer memcpy on the AsyncTCP task, same class of cross-core bug).
+    // The !otaFlushTask gate is essential: during a buffered flash otaLastChunkMs
+    // is frozen at the last received chunk while the Core-1 flush task writes for
+    // seconds — without the gate a slow/large flush would trip this, resume 30 Hz
+    // telemetry mid-flash and reintroduce the exact RX/flash contention the
+    // buffered path exists to avoid.  A live flush task means "not abandoned".
+    if (otaInProgress && !otaFlushTask && otaLastChunkMs &&
         (uint32_t)(millis() - otaLastChunkMs) > 30000UL) {
         Serial.println("[OTA] stall watchdog — upload abandoned, resuming telemetry");
         otaInProgress  = false;
@@ -1313,6 +1347,70 @@ static const char* otaAuthMsg(int st) {
          :             "Session or challenge expired — re-login";
 }
 
+// OTA flush task (Core 1) — writes the PSRAM-buffered .bin to flash AFTER the
+// upload socket has closed, so no flash write ever competes with WiFi RX.  This
+// task is the SOLE owner of Update.* and the mbedtls SHA for the buffered path,
+// so there is no cross-core Updater race.  The ONLY irreversible step —
+// Update.end(true), which flips the boot partition — runs only after the SHA
+// matches, so any failure here leaves the device on the current firmware (dual-
+// OTA rollback also stays intact).  Frees the PSRAM buffer and self-deletes.
+static void otaFlushTaskFn(void*) {
+    const size_t total = otaBufLen;
+    otaFlashState = 1;                                     // flushing
+    const char* fail = nullptr;                            // set = failure reason
+    do {
+        if (!total)                       { fail = "empty image"; break; }
+        if (!Update.begin(total)) {                       // exact size known now
+            Serial.printf("[OTA] flush: begin failed: %s\n", Update.errorString());
+            fail = "flash begin failed"; break;
+        }
+        mbedtls_sha256_context sha; mbedtls_sha256_init(&sha);
+        mbedtls_sha256_starts(&sha, 0);
+        bool werr = false;
+        for (size_t off = 0; off < total; ) {
+            size_t n = total - off; if (n > 4096) n = 4096;
+            mbedtls_sha256_update(&sha, otaBuf + off, n);
+            if (Update.write(otaBuf + off, n) != n) {
+                Serial.printf("[OTA] flush: write error at %u: %s\n",
+                              (unsigned)off, Update.errorString());
+                werr = true; break;
+            }
+            off += n;
+            if ((off & 0x1FFFF) == 0) vTaskDelay(1);       // yield ~every 128 KB
+        }
+        uint8_t digest[32]; mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
+        char hex[65]; for (int i = 0; i < 32; i++) snprintf(hex + i*2, 3, "%02x", digest[i]);
+        hex[64] = '\0';
+        if (werr) { Update.abort(); fail = "flash write error"; break; }
+        if (otaExpectedSha[0] && strcmp(hex, otaExpectedSha) != 0) {
+            Serial.printf("[OTA] flush: sha mismatch got %s expected %s — refusing to flash\n",
+                          hex, otaExpectedSha);
+            Update.abort(); fail = "SHA-256 mismatch — image rejected"; break;
+        }
+        if (!Update.end(true)) {                           // COMMIT — only after SHA ok
+            Serial.printf("[OTA] flush: end error: %s\n", Update.errorString());
+            fail = "flash commit failed"; break;
+        }
+        Serial.printf("[OTA] flush: success, %u bytes, sha ok\n", (unsigned)total);
+    } while (0);
+
+    otaBufFree();
+    if (!fail) {
+        otaFlashState       = 2;                           // committed — rebooting
+        otaRestartPendingMs = millis();                    // wifiLoop (Core 1) reboots
+    } else {
+        // Stay on the current firmware.  Publish the reason for GET /ota-status,
+        // then resume telemetry so the dashboard recovers.
+        strncpy(otaFlashMsg, fail, sizeof(otaFlashMsg) - 1);
+        otaFlashMsg[sizeof(otaFlashMsg) - 1] = '\0';
+        otaFlashState  = -1;                               // failed
+        otaInProgress  = false;
+        otaLastChunkMs = 0;
+    }
+    otaFlushTask = nullptr;
+    vTaskDelete(NULL);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FULL HTTP + WEBSOCKET SERVER  (STA mode)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1691,6 +1789,26 @@ static void startFullServer() {
         req->send(st, "text/plain", otaAuthMsg(st));
     });
 
+    // GET /ota-status — async result of the buffered flash.  The buffered /ota
+    // acks 200 before the flash runs, so the dashboard's reboot overlay polls
+    // this to distinguish "committed → device is rebooting" from a specific
+    // failure ("SHA-256 mismatch", "flash write error", …) without waiting for
+    // the generic "never went offline" timeout.  Host-gated only (like /ping) so
+    // the poll keeps working across the reboot's session-token rotation; it
+    // reveals only the flash outcome, nothing sensitive.
+    httpServer.on("/ota-status", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        const char* state = otaFlashState == 2 ? "ok"
+                          : otaFlashState == 1 ? "flushing"
+                          : otaFlashState <  0 ? "failed"
+                          :                      "idle";
+        String body = "{\"state\":\"" + String(state) + "\",\"msg\":\"" +
+                      (otaFlashState < 0 ? otaFlashMsg : "") + "\"}";
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", body);
+        r->addHeader("Cache-Control", "no-store");
+        req->send(r);
+    });
+
     // ── OTA firmware update ──────────────────────────────────────────────────
     // Accepts a multipart/form-data POST with the compiled .bin as the "firmware"
     // field.  Runs entirely on the AsyncTCP task (Core 0); Update.h is safe from
@@ -1703,6 +1821,33 @@ static void startFullServer() {
             // _tempObject is a small heap flag the framework free()s for us, so
             // it must be malloc'd — never a literal pointer like (void*)1.
             if (req->_tempObject != nullptr) return;
+            if (otaBufMode) {
+                // Buffered path: the whole .bin is in PSRAM now.  Ack immediately,
+                // then flush to flash on a Core-1 task once this socket closes, so
+                // no flash write competes with RX.  The browser's reboot overlay
+                // polls /ping; on success the flush task reboots, on failure it
+                // resumes telemetry (the "device never went offline" path).
+                // Spawn the Core-1 flush task FIRST, so its create result decides
+                // the HTTP status — a create failure must report 500, never a
+                // false 200.  (The flush's OWN async result — SHA / write /
+                // commit — can't ride this response; on failure the device simply
+                // doesn't reboot, which the dashboard's reboot-overlay /ping poll
+                // reports as "device never went offline — may have been rejected".)
+                bool started = !otaFlushTask &&
+                    xTaskCreatePinnedToCore(otaFlushTaskFn, "otaFlush", 6144, NULL,
+                                            4, &otaFlushTask, 1) == pdPASS;
+                AsyncWebServerResponse* resp = req->beginResponse(
+                    started ? 200 : 500, "text/plain",
+                    started ? "OK" : "Could not start flash — try again");
+                resp->addHeader("Connection", "close");
+                req->send(resp);
+                if (!started) {
+                    Serial.println("[OTA] flush task create failed — staying on current fw");
+                    otaBufFree();
+                    otaInProgress = false; otaLastChunkMs = 0;
+                }
+                return;
+            }
             bool ok = !Update.hasError();
             String msg = ok ? "OK" : String(Update.errorString());
             AsyncWebServerResponse* resp =
@@ -1746,6 +1891,13 @@ static void startFullServer() {
                     req->send(authSt, "text/plain", otaAuthMsg(authSt));
                     return;
                 }
+                // A previous buffered flash still writing to flash?  Don't start a
+                // second OTA on top of its live Updater session.
+                if (otaFlushTask) {
+                    markAborted();
+                    req->send(409, "text/plain", "A flash is already in progress");
+                    return;
+                }
                 // Pre-flight cleanup — runs on Core 0, the ONLY safe place to
                 // touch Update.h / mbedtls.  A previous OTA abandoned mid-
                 // upload (browser tab closed) leaves the Updater "running"
@@ -1759,6 +1911,8 @@ static void startFullServer() {
                     Update.abort();
                 }
                 if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+                otaBufFree();            // free any PSRAM buffer from an abandoned OTA
+                otaFlashState = 0; otaFlashMsg[0] = '\0';   // clear the last flash result
                 otaInProgress       = false;
                 otaLastChunkMs      = 0;
                 otaRestartPendingMs = 0;
@@ -1784,26 +1938,70 @@ static void startFullServer() {
                 }
                 otaInProgress  = true;
                 otaLastChunkMs = millis();
-                if (otaShaActive) mbedtls_sha256_free(&otaShaCtx);
-                mbedtls_sha256_init(&otaShaCtx);
-                mbedtls_sha256_starts(&otaShaCtx, 0 /* 0 = SHA-256, not SHA-224 */);
-                otaShaActive = true;
-                if (otaExpectedSha[0])
-                    Serial.printf("[OTA] start: %s (expect sha %s…)\n",
-                                  filename.c_str(), otaExpectedSha);
-                else
-                    Serial.printf("[OTA] start: %s (no SHA header — integrity check skipped)\n",
-                                  filename.c_str());
-                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-                    Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
-                    markAborted();
-                    req->send(500, "text/plain", Update.errorString());
-                    mbedtls_sha256_free(&otaShaCtx); otaShaActive = false;
-                    otaInProgress = false;
-                    return;
+                // Pick the transfer strategy for this OTA.  Preferred: buffer the
+                // whole .bin into PSRAM (Content-Length gives the size up front) so
+                // the receive task only memcpys and no flash write competes with
+                // RX — the flush task writes it after the socket closes.  Fall back
+                // to inline Update.write per chunk if the image won't fit in PSRAM
+                // (keeping OTA_PSRAM_MARGIN free) or the alloc fails, so OTA never
+                // breaks.  otaBufFree() above already cleared any stale buffer.
+                otaBufMode = false;
+                size_t cl    = req->contentLength();     // multipart body ~ .bin size
+                size_t freeP = ESP.getFreePsram();
+                if (cl > 0 && freeP > OTA_PSRAM_MARGIN && cl <= freeP - OTA_PSRAM_MARGIN) {
+                    otaBuf = (uint8_t*)heap_caps_malloc(cl, MALLOC_CAP_SPIRAM);
+                    if (otaBuf) { otaBufCap = cl; otaBufLen = 0; otaBufMode = true; }
+                }
+                if (otaBufMode) {
+                    // SHA + Update.* run in the flush task; nothing to set up here.
+                    // Free the buffer promptly if the client disconnects before
+                    // completion starts the flush (abandoned upload).  This runs on
+                    // the AsyncTCP task — same task as the producer, so no race —
+                    // and the !otaFlushTask guard skips it once the flush owns the
+                    // buffer (a completed upload has already spawned the task).
+                    req->onDisconnect([]() {
+                        if (otaBufMode && !otaFlushTask) {
+                            Serial.println("[OTA] upload aborted before flush — freeing PSRAM buffer");
+                            otaBufFree();
+                            otaInProgress = false; otaLastChunkMs = 0;
+                        }
+                    });
+                    Serial.printf("[OTA] start: %s — buffering %u B to PSRAM (%s)\n",
+                                  filename.c_str(), (unsigned)cl,
+                                  otaExpectedSha[0] ? "sha checked" : "no sha");
+                } else {
+                    if (otaShaActive) mbedtls_sha256_free(&otaShaCtx);
+                    mbedtls_sha256_init(&otaShaCtx);
+                    mbedtls_sha256_starts(&otaShaCtx, 0 /* 0 = SHA-256, not SHA-224 */);
+                    otaShaActive = true;
+                    Serial.printf("[OTA] start: %s — inline write (%s)\n",
+                                  filename.c_str(), otaExpectedSha[0] ? "sha checked" : "no sha");
+                    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                        Serial.printf("[OTA] begin failed: %s\n", Update.errorString());
+                        markAborted();
+                        req->send(500, "text/plain", Update.errorString());
+                        mbedtls_sha256_free(&otaShaCtx); otaShaActive = false;
+                        otaInProgress = false;
+                        return;
+                    }
                 }
             }
             otaLastChunkMs = millis();
+            if (otaBufMode) {
+                // Buffered path: pure PSRAM memcpy, no flash, no SHA on this task.
+                if (otaBufLen + len > otaBufCap) {       // never overrun the buffer
+                    Serial.printf("[OTA] buffer overflow %u+%u > %u — aborting\n",
+                                  (unsigned)otaBufLen, (unsigned)len, (unsigned)otaBufCap);
+                    otaBufFree();
+                    markAborted();
+                    req->send(500, "text/plain", "Image larger than declared length");
+                    otaInProgress = false; otaLastChunkMs = 0;
+                    return;
+                }
+                memcpy(otaBuf + otaBufLen, data, len);
+                otaBufLen += len;
+                return;
+            }
             if (otaShaActive) mbedtls_sha256_update(&otaShaCtx, data, len);
             if (Update.write(data, len) != len) {
                 // Capture the specific Update error string BEFORE calling

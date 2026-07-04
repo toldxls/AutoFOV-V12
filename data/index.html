@@ -8689,26 +8689,48 @@
                 .then(() => {
                     if (otaPollAbort) return;
                     if (sawDown) { location.reload(); return; }
-                    if (Date.now() - start > 15000) {
-                        // Answering continuously 15 s after "rebooting" — it
-                        // almost certainly never rebooted (a flash the device
-                        // rejected after full upload, whose error response was
-                        // dropped by the AsyncTCP FIN issue). Stop pretending —
-                        // and, because the upload path parked the WebSocket and
-                        // locked the controls, RESTORE them here: otherwise the
-                        // dashboard is stranded (grey/disconnected, buttons
-                        // locked) with only a full page reload to recover.
-                        const msg = document.getElementById('ota-reboot-msg');
-                        if (msg) msg.textContent =
-                            'Device never went offline — the update may have been ' +
-                            'rejected. Check the running version below.';
-                        if (manual) manual.style.display = 'inline-block';
-                        otaResumeWs();
-                        otaUnlockControls();
-                        ghRestoreButton();
-                        return;
-                    }
-                    setTimeout(otaPollDeviceBack, 400);   // tight while still up — don't miss the gap
+                    // Device still up (hasn't rebooted). The buffered flash acks
+                    // 200 BEFORE flashing, so ask /ota-status for the real outcome
+                    // instead of guessing from ping timing.
+                    fetch((wifiBase || '') + '/ota-status',
+                          { cache: 'no-store', signal: AbortSignal.timeout(1500) })
+                        .then(r => r.ok ? r.json() : null).catch(() => null)
+                        .then(s => {
+                            if (otaPollAbort) return;
+                            const state = s && s.state;
+                            if (state === 'failed') {
+                                // Specific failure; the device is staying put.
+                                otaPollAbort = true;
+                                const msg = document.getElementById('ota-reboot-msg');
+                                if (msg) msg.textContent = 'Flash failed: ' +
+                                    (s.msg || 'image rejected') +
+                                    '. Still running the previous firmware.';
+                                if (manual) manual.style.display = 'inline-block';
+                                otaResumeWs(); otaUnlockControls(); ghRestoreButton();
+                                return;
+                            }
+                            // 'flushing'/'ok' → a reboot is imminent; keep polling
+                            // regardless of elapsed time so a slow flush isn't
+                            // misread as "never went offline".
+                            if (state === 'flushing' || state === 'ok') {
+                                setTimeout(otaPollDeviceBack, 400); return;
+                            }
+                            // 'idle'/unknown and STILL up after 15 s → it never
+                            // rebooted (inline path whose response dropped, or a
+                            // flash that never started). Stop pretending and, since
+                            // the upload path parked the WebSocket + locked the
+                            // controls, restore them so the dashboard isn't stranded.
+                            if (Date.now() - start > 15000) {
+                                const msg = document.getElementById('ota-reboot-msg');
+                                if (msg) msg.textContent =
+                                    'Device never went offline — the update may have ' +
+                                    'been rejected. Check the running version below.';
+                                if (manual) manual.style.display = 'inline-block';
+                                otaResumeWs(); otaUnlockControls(); ghRestoreButton();
+                                return;
+                            }
+                            setTimeout(otaPollDeviceBack, 400);
+                        });
                 })
                 .catch(() => {
                     if (otaPollAbort) return;
