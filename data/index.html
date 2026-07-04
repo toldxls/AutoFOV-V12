@@ -825,7 +825,33 @@
             <!-- ===================== TOF SENSOR INFO ===================== -->
             <div id="screen-sensorinfo" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 100px;">TOF SENSOR</div>
+                <div id="sensorinfo-info" onclick="sensorInfoToggleHelp()" title="What these settings do"
+                     style="position:absolute; left: 150px; top: 8px; width: 22px; height: 22px;
+                            border-radius:50%; border:1px solid #3ddb7a; color:#3ddb7a; font-weight:bold;
+                            font-size:13px; display:flex; align-items:center; justify-content:center;
+                            cursor:pointer;">?</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
+                <!-- How-to overlay for the two toggles below. Tap anywhere on it to close. -->
+                <div id="sensorinfo-help" onclick="sensorInfoToggleHelp()"
+                     style="display:none; position:absolute; top:40px; left:6px; right:6px; bottom:6px;
+                            z-index:5; overflow-y:auto; background:#0a1f1a; border:1px solid #2a7a6a;
+                            border-radius:6px; padding:9px 10px; font-size:10px; line-height:1.5;
+                            color:#cfe7df; cursor:pointer;">
+                    <div style="color:#780000; font-weight:bold; font-size:11px;">SLEEP SENSOR</div>
+                    Pauses the ToF ranging: the live <b>distance &amp; FOV freeze</b>, and the sensor
+                    stops drawing power, self-heating, and emitting its 940&nbsp;nm IR laser &mdash; handy
+                    during long stacks/exposures where you don&rsquo;t need a live reading, or near an
+                    IR-sensitive subject. Tap <b>WAKE SENSOR</b> to resume. (It also auto-sleeps after
+                    1&nbsp;h idle.)<br><br>
+                    <div style="color:#3ddb7a; font-weight:bold; font-size:11px;">HIGH REFLECTIVITY</div>
+                    For <b>bright / shiny / specular</b> subjects &mdash; polished metal, mirror-coated,
+                    or very close &mdash; that flood the sensor so it under-reads or drops out. It cuts the
+                    collected signal <b>~16&times;</b> (8&nbsp;ms vs 33&nbsp;ms integration + the centre
+                    8&times;8 of the SPAD array) to pull a saturating return back into range. Leave it
+                    <b>OFF</b> for normal matte subjects &mdash; it lowers sensitivity, so dim/distant
+                    targets read noisier.
+                    <span style="color:#7a958c;">(tap anywhere to close)</span>
+                </div>
                 <div class="gfx-text" style="left: 20px; top: 60px; color: var(--text-disabled);">Signal:</div>
                 <div id="sensor-signal" class="gfx-text" style="right: 15px; top: 60px; color: var(--accent-green);">—</div>
                 <div class="gfx-text" style="left: 20px; top: 90px; color: var(--text-disabled);">Ambient:</div>
@@ -2733,7 +2759,7 @@
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
         if (id === 'screen-ota')         otaReset();
         if (id === 'screen-autoremote')  ntfyScreenInit();
-        if (id === 'screen-sensorinfo')  refreshSensorInfoUI();
+        if (id === 'screen-sensorinfo')  { document.getElementById('sensorinfo-help').style.display='none'; refreshSensorInfoUI(); }
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { state.calGraphSel = null; updateFovInfoUI(); drawCalGraph(); }
         if (id === 'screen-memory')      updateMemoryUI();
@@ -5653,6 +5679,8 @@
         refreshSensorInfoUI();
         sendCommand('highRefl', state.highReflMode ? 1 : 0);
     }
+    function sensorInfoToggleHelp(){ const h=document.getElementById('sensorinfo-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
 
     // ─────────────────────────────────────────────────────────────────────────
     // FOV INFO / CAL GRAPH REFRESH
