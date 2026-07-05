@@ -937,7 +937,56 @@ static const char* diagReasonStr(uint8_t r) {
     case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
     case ESP_RST_BROWNOUT: return "BROWNOUT";
     case ESP_RST_SDIO:     return "SDIO";
+    // IDF-5.x additions (this build is IDF 5.1.x). CPU_LOCKUP is a genuine crash;
+    // PWR_GLITCH is a power fault (brownout-class). Without these they'd fall to
+    // "UNKNOWN" and read as benign on the dashboard.
+#ifdef ESP_RST_USB
+    case ESP_RST_USB:      return "USB-RESET";
+#endif
+#ifdef ESP_RST_JTAG
+    case ESP_RST_JTAG:     return "JTAG-RESET";
+#endif
+#ifdef ESP_RST_EFUSE
+    case ESP_RST_EFUSE:    return "EFUSE-ERR";
+#endif
+#ifdef ESP_RST_PWR_GLITCH
+    case ESP_RST_PWR_GLITCH: return "PWR-GLITCH";
+#endif
+#ifdef ESP_RST_CPU_LOCKUP
+    case ESP_RST_CPU_LOCKUP: return "CPU-LOCKUP";
+#endif
     default:               return "UNKNOWN";
+  }
+}
+
+// V12.5 (F1): does this reset reason indicate an UNEXPECTED failure (crash /
+// watchdog / power fault) — as opposed to a deliberate restart (our own
+// ESP.restart(): OTA, forget-wifi, F3 self-heal, F1 rollback → ESP_RST_SW) or a
+// cold/button boot (POWERON/EXT)? Only unexpected failures accumulate the
+// boot-loop counter, so a burst of intentional reboots (e.g. OTA then
+// forget-wifi within 30 s) can never trigger a spurious rollback, and a
+// persistent I²C wedge that F3 keeps healing (SW resets) never downgrades the
+// firmware. A cold power-on can't accumulate anyway (RTC garbage → sentinel
+// reset). UNKNOWN counts, conservatively — an unclassifiable reset might be a
+// real crash loop, and the rollback is fully guarded (validated slot, one
+// attempt, never bricks).
+static bool diagIsCrash(esp_reset_reason_t rr) {
+  switch (rr) {
+    case ESP_RST_PANIC:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+    case ESP_RST_BROWNOUT:
+    case ESP_RST_UNKNOWN:
+#ifdef ESP_RST_PWR_GLITCH
+    case ESP_RST_PWR_GLITCH:
+#endif
+#ifdef ESP_RST_CPU_LOCKUP
+    case ESP_RST_CPU_LOCKUP:
+#endif
+      return true;
+    default:
+      return false;   // POWERON / EXT / SW (deliberate) / DEEPSLEEP / SDIO / USB / JTAG / EFUSE
   }
 }
 
@@ -4679,7 +4728,12 @@ void setup() {
       memset(&g_rtc, 0, sizeof(g_rtc));
       g_rtc.sentinel = RTC_RESIL_SENTINEL;
     }
-    g_rtc.bootCount++;
+    // Count ONLY unexpected failures toward the boot-loop counter (see
+    // diagIsCrash). A deliberate restart (OTA / forget-wifi / F3 self-heal, all
+    // ESP_RST_SW) or a button/power boot resets it — so intentional reboots and
+    // F3's self-healing can never accumulate into a spurious rollback.
+    if (diagIsCrash(rr)) g_rtc.bootCount++;
+    else                 g_rtc.bootCount = 0;
 
     // F1 — boot-loop auto-rollback. Three consecutive boots that never reached
     // 30 s of healthy uptime → flip to the previous firmware in the inactive
@@ -4733,11 +4787,24 @@ void setup() {
              diagReasonStr(reason), up);
     preferences.begin("diag", false);
     {   // append e to the fixed-length ring (inlined — see note by DiagEntry)
-      uint8_t head = preferences.getUChar("head", 0);
-      char key[8]; snprintf(key, sizeof(key), "e%u", head % DIAG_RING_LEN);
-      preferences.putBytes(key, &e, sizeof(DiagEntry));
-      preferences.putUChar("head", (head + 1) % DIAG_RING_LEN);
-      preferences.putUChar("count", min<uint8_t>(DIAG_RING_LEN, preferences.getUChar("count", 0) + 1));
+      uint8_t head  = preferences.getUChar("head", 0);
+      uint8_t count = preferences.getUChar("count", 0);
+      // Dedup a reboot LOOP: if the previous run also failed the same way without
+      // reaching healthy uptime (< 30 s), don't wear flash writing an identical
+      // entry every ~15 s. Records the first loop entry, then coalesces repeats.
+      bool dup = false;
+      if (count > 0 && e.uptimeSec < 30) {
+        DiagEntry last;
+        char lk[8]; snprintf(lk, sizeof(lk), "e%u", (head + DIAG_RING_LEN - 1) % DIAG_RING_LEN);
+        if (preferences.getBytes(lk, &last, sizeof(last)) == sizeof(last) &&
+            last.reason == e.reason) dup = true;
+      }
+      if (!dup) {
+        char key[8]; snprintf(key, sizeof(key), "e%u", head % DIAG_RING_LEN);
+        preferences.putBytes(key, &e, sizeof(DiagEntry));
+        preferences.putUChar("head", (head + 1) % DIAG_RING_LEN);
+        preferences.putUChar("count", min<uint8_t>(DIAG_RING_LEN, count + 1));
+      }
     }
     preferences.end();
 

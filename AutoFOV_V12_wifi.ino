@@ -131,6 +131,17 @@ static uint32_t        lastReconnectMs     = 0;
 // the password — instead of the silent 30 s retry loop with no way back.
 static volatile uint8_t     g_lastStaDisconnReason = 0;
 static std::atomic<bool>    g_portalFallbackReq{false};
+// True while staConnectTask (Core 0) owns the WiFi association during its
+// connect attempts. wifiLoop's reconnect logic (Core 1) checks it so the two
+// cores never command the WiFi driver at once — the 2-attempt connect can run
+// up to 30 s, past wifiLoop's 30 s reconnect timer, which would otherwise inject
+// a WiFi.reconnect() mid-handshake and scramble the disconnect-reason capture.
+static std::atomic<bool>    g_staConnecting{false};
+// Set to millis() when F5 opens the FALLBACK portal (0 = normal no-creds boot
+// portal). If nobody configures within the timeout, reboot to re-try the saved
+// creds — so a transient handshake failure can't permanently strand the device.
+static uint32_t             fallbackPortalMs = 0;
+static const uint32_t       FALLBACK_PORTAL_TIMEOUT_MS = 180000UL;   // 3 min
 static uint32_t        lastFastTelemMs     = 0;
 static uint32_t        lastSlowTelemMs     = 0;
 static uint32_t        lastVibPushMs       = 0;       // V12: vibration spectrum stream timer
@@ -776,6 +787,7 @@ void wifiLoop() {
     if (g_portalFallbackReq.exchange(false, std::memory_order_acq_rel)) {
         Serial.println("[WiFi] portal fallback — starting setup AP");
         startPortalMode();
+        fallbackPortalMs = millis();   // arm the auto-return-to-STA timer
         currentMode = WIFI_INFO;
         drawWifiInfoUI();
         return;
@@ -785,13 +797,31 @@ void wifiLoop() {
     if (wifiServerMode == WMODE_PORTAL) {
         dnsServer.processNextRequest();
 
+        // A FALLBACK portal (auth-class STA failure) is only correct if the
+        // password was actually wrong. reason 15/204 can also be a TRANSIENT
+        // handshake failure on a weak AP, which would otherwise strand the
+        // device here until a manual power-cycle. So: if nobody has connected to
+        // the setup AP within the timeout, reboot and re-try the saved creds — a
+        // transient failure then reconnects; a genuinely wrong password fails
+        // again and returns here. Skipped while a client IS connected (the friend
+        // is mid-reconfigure) and for the normal no-creds boot portal
+        // (fallbackPortalMs == 0).
+        if (fallbackPortalMs &&
+            (uint32_t)(millis() - fallbackPortalMs) > FALLBACK_PORTAL_TIMEOUT_MS &&
+            WiFi.softAPgetStationNum() == 0) {
+            Serial.println("[WiFi] fallback portal idle — rebooting to retry saved WiFi");
+            Serial.flush();
+            ESP.restart();
+        }
         return;   // no telemetry in portal mode
     }
 
     if (wifiServerMode != WMODE_STA) return;
 
     // ── Reconnect logic ──────────────────────────────────────────────────────
-    if (!wifiConnected) {
+    // Skip while staConnectTask (Core 0) still owns the association during its
+    // initial connect attempts — otherwise both cores drive the WiFi driver.
+    if (!wifiConnected && !g_staConnecting.load(std::memory_order_acquire)) {
         if (millis() - lastReconnectMs >= RECONNECT_INTERVAL_MS) {
             lastReconnectMs = millis();
             if (WiFi.status() == WL_CONNECTED) {
@@ -1177,6 +1207,7 @@ struct StaConnectArgs {
 
 static void staConnectTask(void* arg) {
     StaConnectArgs* args = (StaConnectArgs*)arg;
+    g_staConnecting.store(true, std::memory_order_release);   // F5: own the WiFi driver
     // Apply static IP before begin() if the user configured one
     if (!args->staticIP.isEmpty()) {
         IPAddress ip, gw, subnet(255, 255, 255, 0), dns(8, 8, 8, 8);
@@ -1210,7 +1241,15 @@ static void staConnectTask(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         connected = (WiFi.status() == WL_CONNECTED);
+        // Brief grace for the async STA_DISCONNECTED event to land before we read
+        // the reason below — the deauth normally arrives well within the attempt,
+        // but this closes the window where a late event is missed.
+        if (!connected) vTaskDelay(pdMS_TO_TICKS(300));
     }
+    // NB: g_staConnecting is released on the paths that reach startFullServer()
+    // below (success / non-auth failure). The auth-fail path deliberately keeps
+    // it held through the portal handoff so wifiLoop can't inject a reconnect in
+    // the gap between clearing it and setting g_portalFallbackReq.
 
     if (connected) {
         wifiConnected = true;
@@ -1243,6 +1282,8 @@ static void staConnectTask(void* arg) {
         Serial.printf("[WiFi] Connect failed (status %d, reason %u) — will retry every %u s\n",
                       WiFi.status(), r, RECONNECT_INTERVAL_MS / 1000);
     }
+
+    g_staConnecting.store(false, std::memory_order_release);   // reached only by non-fallback paths
 
     // startFullServer registers handlers + calls httpServer.begin().
     // Doesn't touch TFT — safe from Core 0.

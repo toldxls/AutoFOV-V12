@@ -5953,7 +5953,8 @@
     // Reset reasons that mean the device did NOT shut down cleanly — highlighted
     // amber/red so a friend (and you) spot a real fault vs a normal power cycle.
     const DIAG_BAD = { 'PANIC':1, 'INT-WDT':1, 'TASK-WDT':1, 'OTHER-WDT':1,
-                       'SENSOR-STALL WDT':1, 'BROWNOUT':1, 'AUTO-ROLLBACK':1 };
+                       'SENSOR-STALL WDT':1, 'BROWNOUT':1, 'AUTO-ROLLBACK':1,
+                       'CPU-LOCKUP':1, 'PWR-GLITCH':1 };
     function diagFmtUptime(s) {
         s = s || 0;
         if (s < 60)   return s + 's';
@@ -5975,7 +5976,12 @@
         }
         diagLast = s;
         const g = (id) => document.getElementById(id);
-        if (g('diag-now'))    g('diag-now').innerText = s.resetReasonNow || '—';
+        if (g('diag-now')) {
+            const now = s.resetReasonNow || '—';
+            g('diag-now').innerText = now;
+            // Amber if this boot followed a crash/fault, green for a clean start.
+            g('diag-now').style.color = DIAG_BAD[now] ? '#ffaa00' : 'var(--accent-green)';
+        }
         if (g('diag-uptime')) g('diag-uptime').innerText = diagFmtUptime(s.uptimeSec) +
                               '  (boot #' + (s.bootCount || 0) + ')';
         if (g('diag-heap'))   g('diag-heap').innerText = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
