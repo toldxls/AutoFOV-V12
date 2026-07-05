@@ -4704,13 +4704,16 @@ void setup() {
     Serial.printf("[BOOT] reset reason: %s (last run up %us, minHeap %uKB)\n",
                   diagReasonStr(reason), (unsigned)e.uptimeSec, (unsigned)e.minHeap);
     Serial.flush();
-    // Compact uptime for the TFT line: 45s / 12m / 8h.
+    // Compact uptime for the TFT line: 45s / 12m / 8h. Reason + uptime only —
+    // no min-heap suffix here so the longest label ("SENSOR-STALL WDT") still
+    // fits the 240 px row without overlapping "Last:". Full detail (heap, slot,
+    // version) is on the dashboard DIAGNOSTICS screen.
     char up[8];
     if      (e.uptimeSec < 60)    snprintf(up, sizeof(up), "%us", (unsigned)e.uptimeSec);
     else if (e.uptimeSec < 3600)  snprintf(up, sizeof(up), "%um", (unsigned)(e.uptimeSec / 60));
     else                          snprintf(up, sizeof(up), "%uh", (unsigned)(e.uptimeSec / 3600));
-    snprintf(g_bootReasonLine, sizeof(g_bootReasonLine), "%s %s/%uK",
-             diagReasonStr(reason), up, (unsigned)e.minHeap);
+    snprintf(g_bootReasonLine, sizeof(g_bootReasonLine), "%s %s",
+             diagReasonStr(reason), up);
     preferences.begin("diag", false);
     {   // append e to the fixed-length ring (inlined — see note by DiagEntry)
       uint8_t head = preferences.getUChar("head", 0);
@@ -4950,11 +4953,17 @@ void setup() {
   // init() returns INVALID_STATE and we reconfigure the timeout instead of a
   // fresh init. Done LAST, after the 3 s boot delay and all blocking init.
   {
-    esp_task_wdt_config_t wdtCfg = { .timeout_ms = 15000, .idle_core_mask = 0, .trigger_panic = true };
+    // The core auto-inits the TWDT (sdkconfig: 5 s, panic, CHECK_IDLE_TASK_CPU0=y
+    // — the Core-0 idle task is watched, Core-1's isn't since loopTask hogs it).
+    // We reconfigure to a 15 s timeout (generous vs. our longest legit Core-1
+    // op ~1 s) and PRESERVE idle_core_mask = bit0 so the existing Core-0
+    // idle-hang watch stays — setting it to 0 would silently drop that coverage.
+    // Then subscribe loopTask so a Core-1/UI freeze also trips it.
+    esp_task_wdt_config_t wdtCfg = { .timeout_ms = 15000, .idle_core_mask = (1 << 0), .trigger_panic = true };
     esp_err_t we = esp_task_wdt_init(&wdtCfg);
-    if (we == ESP_ERR_INVALID_STATE) esp_task_wdt_reconfigure(&wdtCfg);  // raise core default (5 s) → 15 s
+    if (we == ESP_ERR_INVALID_STATE) esp_task_wdt_reconfigure(&wdtCfg);  // already inited by the core
     esp_task_wdt_add(NULL);   // subscribe loopTask; INVALID_ARG if already added — harmless
-    Serial.println("[BOOT] loopTask watchdog armed (15 s)");
+    Serial.println("[BOOT] loopTask watchdog armed (15 s, Core-0 idle preserved)");
   }
 
   Serial.println("[BOOT] setup() complete — entering loop()"); Serial.flush();
@@ -5033,6 +5042,14 @@ void saveAllSettings() {
 }
 
 void loop() {
+  // V12.5 (F3): feed the loopTask hardware watchdog at the TOP of every
+  // iteration — always reached, so an early `return` in the body (e.g. the
+  // wake-from-sleep touch path) can't skip it and cause a spurious reset. A
+  // real Core-1 freeze stalls this feed → panic reboot → recoverI2CBus() heals.
+  // Armed in setup(); harmless before that (esp_task_wdt_reset is a no-op if the
+  // task isn't subscribed yet, though loop() only runs after setup() returns).
+  esp_task_wdt_reset();
+
   // V11 deferred display-prefs save — if the tint slider was dragged and
   // 500ms has passed since the last drag sample, flush to NVS now. Avoids
   // writing flash on every drag step (which choked the UI and chewed through
@@ -5556,11 +5573,6 @@ void loop() {
     }
     lastDisplayUpdate = millis();
   }
-
-  // V12.5 (F3): feed the loopTask hardware watchdog. Reached once per iteration;
-  // if anything on Core 1 (UI/touch/wifiLoop) freezes past the WDT timeout the
-  // feed stops → panic reboot → self-heal. Subscribed in setup() (see below).
-  esp_task_wdt_reset();
 
   vTaskDelay(pdMS_TO_TICKS(1));
 }
