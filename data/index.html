@@ -5984,7 +5984,15 @@
         }
         if (g('diag-uptime')) g('diag-uptime').innerText = diagFmtUptime(s.uptimeSec) +
                               '  (boot #' + (s.bootCount || 0) + ')';
-        if (g('diag-heap'))   g('diag-heap').innerText = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
+        if (g('diag-heap')) {
+            let h = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
+            // Worst sensor-heartbeat stall this session (I2C diagnosis). >0 means
+            // sensorTask blocked that long at least once — no longer reboots.
+            const st = s.maxSensorStallMs || 0;
+            if (st > 0) h += '   stall ' + (st / 1000).toFixed(1) + 's';
+            g('diag-heap').innerText = h;
+            g('diag-heap').style.color = st >= 2000 ? '#ffaa00' : 'var(--text-primary)';
+        }
         // Ring rows
         const ring = Array.isArray(s.ring) ? s.ring : [];
         if (!ring.length) {
@@ -6013,6 +6021,7 @@
         lines.push('this boot: ' + (s.resetReasonNow || '?') + '  (boot #' + (s.bootCount || 0) + ')');
         lines.push('uptime: ' + diagFmtUptime(s.uptimeSec) +
                    '  heap now/min: ' + (s.freeHeap || 0) + 'K/' + (s.minHeap || 0) + 'K');
+        lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         lines.push('wifi: ' + (state.wifiSSID || '?') + '  ' + (state.wifiRSSI || '?') + ' dBm');
         lines.push('recent resets (newest first):');
         (s.ring || []).forEach(e => lines.push('  ' + e.reason + '  up ' + diagFmtUptime(e.uptimeSec) +

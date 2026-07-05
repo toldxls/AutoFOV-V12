@@ -1092,6 +1092,10 @@ std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wa
 // staleness means the shared I²C bus is wedged (any task stuck holding
 // i2cMutex), which a reboot heals via recoverI2CBus() at boot.
 std::atomic<uint32_t> sensorHeartbeatMs{0};
+// V12.5: worst sensorTask heartbeat stall observed this session (ms). Recorded
+// but NOT acted on — see the F3 note in loop(). Surfaced in /diag to diagnose
+// the intermittent real-hardware I²C stall without rebooting.
+std::atomic<uint32_t> sensorMaxStallMs{0};
 
 // V12: vibration-monitor cross-core scalars. vibTask (Core 0) writes them;
 // loop() (Core 1) and the wifi tab read them. Plain scalars — no struct, no
@@ -5230,18 +5234,22 @@ void loop() {
       g_rtc.lastMinHeap   = ESP.getMinFreeHeap() / 1024;
     }
 
-    // F3 — sensor-heartbeat stall = wedged I²C bus (any task stuck holding
-    // i2cMutex; all three devices share the bus). The 12 s gate lets sensorTask
-    // spin up first. Stash the reason and reboot inline (Core 1) — recoverI2CBus()
-    // at boot frees the stuck bus.
+    // F3 — sensor-heartbeat monitor. The auto-reboot is DISABLED: on real
+    // hardware the heartbeat went stale >6 s intermittently during normal
+    // operation (an I²C stall that recovers on its own), so rebooting on it
+    // dropped WiFi every ~20-30 min for no benefit. We now only RECORD the worst
+    // stall (surfaced in /diag) so the intermittent stall can be diagnosed
+    // without disrupting the device. A genuine full Core-1 freeze is still caught
+    // by the loopTask hardware watchdog. Root cause under investigation — do not
+    // re-enable the reboot without understanding why sensorTask stalls.
     uint32_t hb = sensorHeartbeatMs.load(std::memory_order_acquire);
-    if (hb && nowMs > 12000 && (nowMs - hb) > 6000) {
-      Serial.printf("[BOOT] sensor heartbeat stalled %u ms — self-heal reboot\n",
-                    (unsigned)(nowMs - hb));
-      g_rtc.pendingReasonCode = DIAG_REASON_SENSOR_WDT;
-      Serial.flush();
-      delay(200);
-      ESP.restart();
+    if (hb && nowMs > 12000) {
+      uint32_t stall = nowMs - hb;
+      if (stall > 2000 && stall > sensorMaxStallMs.load(std::memory_order_relaxed)) {
+        sensorMaxStallMs.store(stall, std::memory_order_relaxed);
+        Serial.printf("[SENSOR] heartbeat stall %u ms (max so far; not rebooting)\n",
+                      (unsigned)stall);
+      }
     }
   }
 

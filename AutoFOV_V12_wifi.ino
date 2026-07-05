@@ -1665,6 +1665,7 @@ static void startFullServer() {
         doc["uptimeSec"]  = millis() / 1000;
         doc["freeHeap"]   = ESP.getFreeHeap()    / 1024;
         doc["minHeap"]    = ESP.getMinFreeHeap() / 1024;
+        doc["maxSensorStallMs"] = sensorMaxStallMs.load(std::memory_order_relaxed);
         JsonArray ring = doc.createNestedArray("ring");
         Preferences dp;
         dp.begin("diag", true);   // read-only
