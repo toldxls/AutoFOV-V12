@@ -151,6 +151,13 @@ static size_t       otaBufCap    = 0;         // allocated capacity (bytes)
 static size_t       otaBufLen    = 0;         // .bin bytes received so far
 static bool         otaBufMode   = false;     // true = buffering this OTA to PSRAM
 static TaskHandle_t otaFlushTask = nullptr;   // Core-1 buffer -> flash writer
+// Upload generation — bumped by every /ota pre-flight (AsyncTCP task only, so
+// no cross-core concern).  The onDisconnect cleanup lambda captures its own
+// upload's generation and no-ops on mismatch: an abandoned upload with no FIN
+// (half-open TCP — e.g. a laptop that slept mid-upload) can outlive the 30 s
+// stall watchdog and disconnect only after a RETRY has taken over the buffer
+// globals — without the check it would free the retry's buffer mid-receive.
+static uint32_t     otaUploadGen = 0;
 // Async flash result for the buffered path.  The buffered /ota returns 200 as
 // soon as the body is received (before the flash runs), so the flush task's
 // outcome can't ride that response — the dashboard polls GET /ota-status instead
@@ -1912,6 +1919,7 @@ static void startFullServer() {
                 }
                 if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
                 otaBufFree();            // free any PSRAM buffer from an abandoned OTA
+                otaUploadGen++;          // invalidate stale onDisconnect cleanups (see decl)
                 otaFlashState = 0; otaFlashMsg[0] = '\0';   // clear the last flash result
                 otaInProgress       = false;
                 otaLastChunkMs      = 0;
@@ -1959,8 +1967,12 @@ static void startFullServer() {
                     // the AsyncTCP task — same task as the producer, so no race —
                     // and the !otaFlushTask guard skips it once the flush owns the
                     // buffer (a completed upload has already spawned the task).
-                    req->onDisconnect([]() {
-                        if (otaBufMode && !otaFlushTask) {
+                    // The generation check makes a LATE disconnect a no-op — an
+                    // abandoned half-open upload can disconnect only after a retry
+                    // has taken over the buffer globals (see otaUploadGen decl).
+                    const uint32_t gen = otaUploadGen;
+                    req->onDisconnect([gen]() {
+                        if (gen == otaUploadGen && otaBufMode && !otaFlushTask) {
                             Serial.println("[OTA] upload aborted before flush — freeing PSRAM buffer");
                             otaBufFree();
                             otaInProgress = false; otaLastChunkMs = 0;

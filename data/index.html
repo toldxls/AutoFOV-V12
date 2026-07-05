@@ -8677,6 +8677,10 @@
         // ping then hit the still-running OLD firmware and played the complete
         // success sequence (reload included) for a failed update.
         let sawDown = false;
+        // Consecutive /ota-status polls that came back null (fetch failed /
+        // non-200). One dropped poll during a still-running flush must not be
+        // read as "never rebooted" — see the idle/unknown branch below.
+        let statusMisses = 0;
         function otaPollDeviceBack() {
             if (otaPollAbort) return;
             // Bounded per-attempt timeout: a fetch to the mid-reboot (dead) IP
@@ -8713,14 +8717,25 @@
                             // regardless of elapsed time so a slow flush isn't
                             // misread as "never went offline".
                             if (state === 'flushing' || state === 'ok') {
+                                statusMisses = 0;
                                 setTimeout(otaPollDeviceBack, 400); return;
                             }
-                            // 'idle'/unknown and STILL up after 15 s → it never
+                            // Here: a confirmed 'idle' (the device answered — no
+                            // flash ran or is running) or null (the status fetch
+                            // failed: a WiFi blip, or 404 from older firmware).
+                            // A confirmed idle past 15 s is definitive: it never
                             // rebooted (inline path whose response dropped, or a
-                            // flash that never started). Stop pretending and, since
-                            // the upload path parked the WebSocket + locked the
-                            // controls, restore them so the dashboard isn't stranded.
-                            if (Date.now() - start > 15000) {
+                            // flash that never started). A null is NOT — a single
+                            // dropped poll during a still-running flush must not
+                            // unlock the UI (the device would then reboot
+                            // "unexpectedly" seconds later) — so nulls only count
+                            // after two in a row.
+                            const neverFlashed = (s && state === 'idle') ||
+                                                 ++statusMisses >= 2;
+                            if (neverFlashed && Date.now() - start > 15000) {
+                                // Stop pretending and, since the upload path parked
+                                // the WebSocket + locked the controls, restore them
+                                // so the dashboard isn't stranded.
                                 const msg = document.getElementById('ota-reboot-msg');
                                 if (msg) msg.textContent =
                                     'Device never went offline — the update may have ' +
