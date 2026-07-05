@@ -124,6 +124,13 @@ static WifiServerMode  wifiServerMode      = WMODE_NONE;
 static char            portalCode[9]       = {0};  // random 8-char WPA2 password shown on TFT during setup
 static bool            wifiConnected       = false;
 static uint32_t        lastReconnectMs     = 0;
+// V12.5 (F5): wrong-WiFi-password → captive-portal fallback. The STA disconnect
+// reason (wifi_err_reason_t) is captured by an onEvent handler; staConnectTask
+// inspects it after a failed connect and, on an AUTH-class failure, asks Core 1
+// (via g_portalFallbackReq) to reopen the setup portal so a friend can retype
+// the password — instead of the silent 30 s retry loop with no way back.
+static volatile uint8_t     g_lastStaDisconnReason = 0;
+static std::atomic<bool>    g_portalFallbackReq{false};
 static uint32_t        lastFastTelemMs     = 0;
 static uint32_t        lastSlowTelemMs     = 0;
 static uint32_t        lastVibPushMs       = 0;       // V12: vibration spectrum stream timer
@@ -760,6 +767,20 @@ void wifiLoop() {
         ESP.restart();
     }
 
+    // ── V12.5 (F5): wrong-password portal fallback (Core-0 → Core-1 handoff) ──
+    // staConnectTask (Core 0) detected an AUTH-class STA failure and set the
+    // flag instead of starting the STA server. startPortalMode() writes NVS and
+    // registers/starts HTTP routes — Core-1-only work — so we run it here, on
+    // Core 1, exactly as boot does, then flip the TFT to the WiFi-Info screen so
+    // the friend sees the setup AP + password. Runs once (exchange clears it).
+    if (g_portalFallbackReq.exchange(false, std::memory_order_acq_rel)) {
+        Serial.println("[WiFi] portal fallback — starting setup AP");
+        startPortalMode();
+        currentMode = WIFI_INFO;
+        drawWifiInfoUI();
+        return;
+    }
+
     // Captive portal: keep the DNS server ticking
     if (wifiServerMode == WMODE_PORTAL) {
         dnsServer.processNextRequest();
@@ -1175,28 +1196,52 @@ static void staConnectTask(void* arg) {
         }
     }
 
-    uint32_t tStart = millis();
-
-    WiFi.begin(args->ssid.c_str(), args->pass.c_str());
-
-    while (WiFi.status() != WL_CONNECTED && millis() - tStart < CONNECT_TIMEOUT_MS) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+    // V12.5 (F5): up to 2 connect attempts before giving up. A single bad 4-way
+    // handshake (reason 15/204) is often transient, so we retry once to avoid
+    // dropping a friend off their real network over a fluke; a genuinely wrong
+    // password just fails both and routes to the portal below.
+    bool connected = false;
+    for (int attempt = 0; attempt < 2 && !connected; attempt++) {
+        g_lastStaDisconnReason = 0;   // reflect only THIS attempt's failure
+        if (attempt > 0) Serial.println("[WiFi] STA connect retry…");
+        uint32_t tStart = millis();
+        WiFi.begin(args->ssid.c_str(), args->pass.c_str());
+        while (WiFi.status() != WL_CONNECTED && millis() - tStart < CONNECT_TIMEOUT_MS) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        connected = (WiFi.status() == WL_CONNECTED);
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
+    if (connected) {
         wifiConnected = true;
-        Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d  (%lu ms)\n",
+        Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d\n",
                       WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
-                      WiFi.channel(), (unsigned long)(millis() - tStart));
+                      WiFi.channel());
         // mDNS — register only after the STA interface has an IP.
         // Heads-up: Android Chrome doesn't resolve .local from the URL bar;
         // desktop browsers and iOS do.
         ensureMdns();
     } else {
+        // AUTH-class disconnect = wrong password / key exchange failure. Reopen
+        // the setup portal so the friend can fix it. Deliberately EXCLUDES
+        // NO_AP_FOUND (201) — a transiently-off/out-of-range AP should keep
+        // retrying STA, not force the user through re-setup. On fallback we do
+        // NOT start the STA server; wifiLoop (Core 1) runs startPortalMode().
+        uint8_t r = g_lastStaDisconnReason;
+        bool authFail = (r == WIFI_REASON_AUTH_FAIL          /* 202 */ ||
+                         r == WIFI_REASON_AUTH_EXPIRE        /* 2   */ ||
+                         r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT /* 15 */ ||
+                         r == WIFI_REASON_HANDSHAKE_TIMEOUT  /* 204 */);
+        if (authFail) {
+            Serial.printf("[WiFi] auth failure (reason %u) — reopening setup portal\n", r);
+            g_portalFallbackReq.store(true, std::memory_order_release);
+            delete args;
+            vTaskDelete(NULL);   // NB: does not return
+        }
         wifiConnected = false;
         lastReconnectMs = millis();
-        Serial.printf("[WiFi] Connect failed (status %d) — will retry every %u s\n",
-                      WiFi.status(), RECONNECT_INTERVAL_MS / 1000);
+        Serial.printf("[WiFi] Connect failed (status %d, reason %u) — will retry every %u s\n",
+                      WiFi.status(), r, RECONNECT_INTERVAL_MS / 1000);
     }
 
     // startFullServer registers handlers + calls httpServer.begin().
@@ -1212,6 +1257,12 @@ static void startStaMode(const String& ssid, const String& pass,
     wifiServerMode = WMODE_STA;
 
     WiFi.mode(WIFI_STA);
+    // V12.5 (F5): capture the STA disconnect reason so staConnectTask can tell a
+    // wrong password (auth failure) from a transiently-absent AP. Non-capturing
+    // lambda writing a global — runs on the WiFi event task; a single byte store.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+        g_lastStaDisconnReason = info.wifi_sta_disconnected.reason;
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     // Disable WiFi modem power-save. The Arduino default is WIFI_PS_MIN_MODEM,
     // which sleeps the radio between DTIM beacons; during a sustained OTA upload
     // those sleep windows drop incoming TCP segments, TCP backs off its
@@ -2451,6 +2502,7 @@ static void handleWifiCommand(const char* key, const char* val) {
         preferences.begin("calib", false);
         preferences.putBytes("settings", &settings, sizeof(CalibData));
         preferences.end();
+        clearCalibBackup();   // V12.5 (F4): deliberate reset — drop the custom backup
         if (currentMode == CAL_SETTINGS) refreshCalSettingsValues(true);
         // Push updated calibration state to all HTML clients
         String out; buildFullStateJson(out);

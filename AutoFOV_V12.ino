@@ -862,6 +862,23 @@ CalibData settings;
 // Devices upgrading from V16 will see a one-time return to defaults.
 #define CALIB_MAGIC 0x544F4C4D  // V12.3: bumped — ctrlX/ctrlY are now pixel-space coefficients (old FOV-coefficient calibs reset to factory)
 
+// V12.5 (F4): calibration backup so a friend's calibration survives a firmware
+// update that bumps CALIB_MAGIC. Stored in its OWN NVS namespace "calibbak"
+// with its OWN format magic — DECOUPLED from CALIB_MAGIC, so bumping the latter
+// never invalidates the backup. Holds only the layout-stable inputs (width,
+// demarcation, point pairs); the fit is always re-derived on restore
+// (finalizeCalibration), never trusted from stored coefficients. NVS survives
+// OTA (writes only the app slot), power cycles, and USB recovery.
+#define CALIBBAK_MAGIC 0x43424B31UL   // "CBK1" — bump only if THIS struct changes
+struct CalibBackup {
+  uint32_t magic;
+  float    width;    // sensorWidthPixels
+  float    demarc;   // demarcationDist (mm)
+  int32_t  n;        // point count (2..20)
+  float    dist[20];
+  float    fov[20];
+};
+
 // ─── V12.5: field-resilience state (boot-loop rollback + reset diagnostics) ───
 // RTC_NOINIT RAM survives a warm reset (SW reset, panic, task/interrupt WDT,
 // brownout — the RTC domain stays powered) but is GARBAGE after a cold
@@ -4771,6 +4788,7 @@ void setup() {
 
   preferences.begin("calib", false);
   size_t sch = preferences.getBytes("settings", &settings, sizeof(CalibData));
+  bool calibWasReset = false;   // V12.5 (F4): true if we fell back to factory
   // Require a full-length read so a struct extension that forgets to bump
   // CALIB_MAGIC can't slip through with the trailing fields uninitialised.
   if (sch == sizeof(CalibData) && settings.magic == CALIB_MAGIC) {
@@ -4859,6 +4877,7 @@ void setup() {
     currentBrightness = Config::DEFAULT_BRIGHTNESS;
     isCustomCalib = false;
     preferences.putBytes("settings", &settings, sizeof(CalibData));
+    calibWasReset = true;   // V12.5 (F4): try to restore from calibbak below
   }
   preferences.end();
 
@@ -4868,6 +4887,37 @@ void setup() {
   loadDisplayPrefs();
   loadVibPrefs();           // V12: Goertzel lock freq + last suggested wait
   refreshCachedThemeBg();   // prime THEME_BG cache before any draw runs
+
+  // V12.5 (F4): the calib struct was just reset (CALIB_MAGIC bump or corrupt
+  // NVS). If a decoupled "calibbak" backup exists and validates, re-apply it so
+  // a friend's calibration survives the firmware update. The factory defaults
+  // above already populated the non-calib fields (stack/LED/brightness);
+  // finalizeCalibration() re-fits from the restored points and overwrites the
+  // calib fields in "calib". Validation mirrors POST /calib (never trusts a
+  // stored slope). On any failure we simply stay factory.
+  if (calibWasReset) {
+    CalibBackup b = {0};
+    Preferences bp;
+    bp.begin("calibbak", true);   // read-only
+    size_t bl = bp.getBytes("bak", &b, sizeof(b));
+    bp.end();
+    bool ok = (bl == sizeof(b) && b.magic == CALIBBAK_MAGIC &&
+               b.n >= 2 && b.n <= 20 &&
+               b.width >= 100.0f && b.width <= 30000.0f &&
+               b.demarc >= 0.01f && b.demarc <= 5.0f);
+    for (int i = 0; ok && i < b.n; i++)
+      if (!isfinite(b.dist[i]) || !isfinite(b.fov[i]) || b.fov[i] <= 1e-4f) ok = false;
+    if (ok) {
+      sensorWidthPixels = b.width;  demarcationDist = b.demarc;
+      nPoints = b.n; pointsCaptured = b.n;
+      for (int i = 0; i < b.n; i++) { distPoints[i] = b.dist[i]; fovPoints[i] = b.fov[i]; }
+      finalizeCalibration();   // re-fit + re-save "calib" under the NEW magic
+      currentMode = MAIN;      // finalizeCalibration()→drawSuccessScreen() set CAL_SUCCESS
+      Serial.printf("[calib] restored %d pts from NVS calibbak after reset\n", (int)b.n);
+    } else if (bl > 0) {
+      Serial.println("[calib] calibbak present but invalid — staying factory");
+    }
+  }
 
   // V11 fix: pre-load factory calibration points into distPoints/fovPoints
   // when no custom calibration exists. Previously these arrays were only
@@ -6012,6 +6062,34 @@ void computeCalStats() {
   gCalSpx = (nn > 2) ? sqrtf(sse / (nn - 2)) : 0.0f;   // pixel residual SD
 }
 
+// V12.5 (F4): mirror the current custom calibration into the "calibbak" NVS
+// namespace (its own Preferences handle — no collision with the "calib" one).
+// Stores exactly the points the fit used (fitN = min(pointsCaptured, nPoints)),
+// matching how finalizeCalibration derives its line.
+static void saveCalibBackup() {
+  int n = (pointsCaptured < nPoints) ? pointsCaptured : nPoints;
+  n = constrain(n, 0, 20);
+  CalibBackup b = {0};
+  b.magic  = CALIBBAK_MAGIC;
+  b.width  = sensorWidthPixels;
+  b.demarc = demarcationDist;
+  b.n      = n;
+  for (int i = 0; i < n; i++) { b.dist[i] = distPoints[i]; b.fov[i] = fovPoints[i]; }
+  Preferences p;
+  p.begin("calibbak", false);
+  p.putBytes("bak", &b, sizeof(b));
+  p.end();
+  Serial.printf("[calib] backup saved (%d pts) to NVS calibbak\n", n);
+}
+// Drop the backup — the current cal is the built-in default (nothing custom to
+// keep) or the user explicitly reset to factory.
+static void clearCalibBackup() {
+  Preferences p;
+  p.begin("calibbak", false);
+  p.clear();
+  p.end();
+}
+
 void finalizeCalibration() {
   tft.fillRect(0, 305, 240, 15, THEME_BG);
   setSmoothFont(1); tft.setTextColor(0x07FF);
@@ -6090,7 +6168,13 @@ void finalizeCalibration() {
   preferences.begin("calib", false);
   preferences.putBytes("settings", &settings, sizeof(CalibData));
   preferences.end();
-  
+
+  // V12.5 (F4): keep the decoupled backup in sync — save a genuine custom cal,
+  // drop it when this fit is the built-in default (so a later magic bump doesn't
+  // resurrect a stale custom cal the user has since abandoned).
+  if (!matchesDefault) saveCalibBackup();
+  else                 clearCalibBackup();
+
   isCustomCalib = !matchesDefault;
   computeCalStats();            // refresh prediction-interval stats from the new fit
   drawSuccessScreen();
@@ -7000,6 +7084,7 @@ void resetToFactory() {
   preferences.begin("calib", false);
   preferences.putBytes("settings", &settings, sizeof(CalibData));
   preferences.end();
+  clearCalibBackup();   // V12.5 (F4): deliberate reset — drop the custom backup
 
   refreshCalSettingsValues(true);
 }
