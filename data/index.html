@@ -5762,8 +5762,14 @@
         const stEl = document.getElementById('sensor-status');
         if (stEl) {
             const code = state.sensorStatusCode;
-            if (typeof code === 'number') {
-                const ok = code === 0 || code === 3 || code === 6;
+            // Match the device screen: an asleep sensor and the 255 no-data
+            // sentinel are NOT faults — show them grey/neutral, not red "ERR".
+            if (state.sensorSleeping) {
+                stEl.innerText = 'asleep';  stEl.style.color = '#787878';
+            } else if (code === 255) {
+                stEl.innerText = 'no data'; stEl.style.color = '#787878';
+            } else if (typeof code === 'number') {
+                const ok = code === 0 || code === 3 || code === 6;   // valid range statuses
                 stEl.innerText   = (ok ? 'OK (' : 'ERR (') + code + ')';
                 stEl.style.color = ok ? '#00FF00' : '#FF0000';
             } else {
