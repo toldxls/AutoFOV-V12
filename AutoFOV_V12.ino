@@ -25,6 +25,8 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #include <esp_ota_ops.h>   // esp_ota_get_running_partition() — real app-slot size for the Flash readout
+#include <esp_system.h>    // V12.5: esp_reset_reason() — boot diagnostics + boot-loop rollback
+#include <esp_task_wdt.h>  // V12.5: loopTask hardware watchdog (Core-1 freeze backstop)
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -39,6 +41,10 @@
 #include <Fonts/FreeSans18pt7b.h>
 #include <Fonts/FreeSans24pt7b.h>
 #include "data/FreeSans7pt7b.h"   // local — used for the main-screen CALIBRATE button
+// V12.5: pulled in here (main) as well as the wifi tab so BUILD_VERSION is
+// defined for setup()'s early diag block. #pragma once makes the wifi tab's
+// include (data/web_ui.h) a no-op — the gzip PROGMEM array is emitted once.
+#include "data/web_ui.h"
 
 #define TFT_BLACK         0x0000
 #define TFT_WHITE         0xFFFF
@@ -856,6 +862,74 @@ CalibData settings;
 // Devices upgrading from V16 will see a one-time return to defaults.
 #define CALIB_MAGIC 0x544F4C4D  // V12.3: bumped — ctrlX/ctrlY are now pixel-space coefficients (old FOV-coefficient calibs reset to factory)
 
+// ─── V12.5: field-resilience state (boot-loop rollback + reset diagnostics) ───
+// RTC_NOINIT RAM survives a warm reset (SW reset, panic, task/interrupt WDT,
+// brownout — the RTC domain stays powered) but is GARBAGE after a cold
+// power-on. `sentinel` is the discriminator: on a mismatch we zero the struct,
+// so a cold boot correctly starts bootCount=0. A deep brownout that also sags
+// the RTC domain simply looks like a cold boot (counter reset → never a false
+// rollback), which is the safe failure direction.
+#define RTC_RESIL_SENTINEL 0xAF0FB007UL
+struct RtcResilience {
+  uint32_t sentinel;          // == RTC_RESIL_SENTINEL once initialised
+  uint32_t bootCount;         // F1: consecutive un-healthy boots (reset after 30 s uptime)
+  uint8_t  rollbackAttempted; // F1: partition already flipped this streak (anti-ping-pong)
+  uint8_t  _pad[3];
+  uint32_t lastUptimeSec;     // F2: snapshot updated ~5 s in loop(), read next boot
+  uint32_t lastMinHeap;       // F2: snapshot (KB) updated with lastUptimeSec
+  uint32_t pendingReasonCode; // F2: synthetic reason to fold into the ring next boot (0 = none)
+};
+RTC_NOINIT_ATTR RtcResilience g_rtc;
+
+// Synthetic reason codes (>= 100) that our own code stashes in
+// g_rtc.pendingReasonCode before a self-initiated restart, so the post-reboot
+// diag ring shows WHY rather than a generic SW reset. Codes < 100 are raw
+// esp_reset_reason_t values.
+#define DIAG_REASON_ROLLBACK    100   // F1 auto-rollback flipped the boot partition
+#define DIAG_REASON_SENSOR_WDT  101   // F3 sensor-heartbeat stall → self-heal reboot
+
+// F2: persisted ring of recent boot/crash records (NVS namespace "diag").
+struct DiagEntry {
+  uint8_t  reason;      // esp_reset_reason() code, or a DIAG_REASON_* synthetic
+  uint8_t  _pad;
+  uint16_t bootSlot;    // running OTA subtype at the time (0 = ota_0, 1 = ota_1)
+  uint32_t uptimeSec;   // g_rtc.lastUptimeSec captured just before the reset
+  uint32_t minHeap;     // g_rtc.lastMinHeap (KB) captured just before the reset
+  char     version[12]; // BUILD_VERSION of the image that was running
+};
+#define DIAG_RING_LEN 8
+
+// F2: compact "last reset" line for the device MEM_INFO screen, built once in
+// the early-setup block (e.g. "BROWNOUT 8h/40K"). Global so drawMemInfoUI can
+// show it without re-reading NVS.
+char g_bootReasonLine[28] = {0};
+
+// Map an esp_reset_reason_t (or a DIAG_REASON_* synthetic) to a short label for
+// the diag ring / dashboard. Kept compact — these strings ship in the binary.
+static const char* diagReasonStr(uint8_t r) {
+  switch (r) {
+    case DIAG_REASON_ROLLBACK:   return "AUTO-ROLLBACK";
+    case DIAG_REASON_SENSOR_WDT: return "SENSOR-STALL WDT";
+    case ESP_RST_POWERON:  return "POWERON";
+    case ESP_RST_EXT:      return "EXT-RESET";
+    case ESP_RST_SW:       return "SW-RESTART";
+    case ESP_RST_PANIC:    return "PANIC";
+    case ESP_RST_INT_WDT:  return "INT-WDT";
+    case ESP_RST_TASK_WDT: return "TASK-WDT";
+    case ESP_RST_WDT:      return "OTHER-WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO:     return "SDIO";
+    default:               return "UNKNOWN";
+  }
+}
+
+// NOTE: appending to the ring is inlined in setup()'s early block rather than a
+// helper — a free function taking `const DiagEntry&` trips the Arduino
+// auto-prototype generator (the generated prototype lands before DiagEntry is
+// defined). Reading the ring happens in the wifi tab's GET /diag handler, which
+// is compiled after this struct so a local DiagEntry there is fine.
+
 bool isCustomCalib = false;
 int currentBrightness = Config::DEFAULT_BRIGHTNESS;
 int currentLedDuty = TRIGGER_LED_DUTY;  // V17b: persisted LED brightness (0=off,255=full on-duty)
@@ -946,6 +1020,12 @@ std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 
 // capture points keep sub-mm resolution. Bit 31 = valid (mirrors sensorState).
 std::atomic<uint32_t> sensorDistTenths{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
+// V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
+// every poll iteration (the sleep path still loops ~100 ms, so a fresh value
+// means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
+// staleness means the shared I²C bus is wedged (any task stuck holding
+// i2cMutex), which a reboot heals via recoverI2CBus() at boot.
+std::atomic<uint32_t> sensorHeartbeatMs{0};
 
 // V12: vibration-monitor cross-core scalars. vibTask (Core 0) writes them;
 // loop() (Core 1) and the wifi tab read them. Plain scalars — no struct, no
@@ -1547,6 +1627,14 @@ void drawMemInfoUI() {
     snprintf(buf, sizeof(buf), "%luK/%luK",
              (unsigned long)(sk/1024), (unsigned long)(slot/1024));
     infoRow("Flash:", buf, themedText(COLOR_LIGHTGREY));
+  }
+  // V12.5 (F2): why the previous session ended (see g_bootReasonLine). Amber for
+  // crash-class resets (WDT / panic / brownout / rollback), grey for clean ones.
+  if (g_bootReasonLine[0]) {
+    bool clean = strncmp(g_bootReasonLine, "POWERON", 7) == 0 ||
+                 strncmp(g_bootReasonLine, "SW-RESTART", 10) == 0 ||
+                 strncmp(g_bootReasonLine, "EXT-RESET", 9) == 0;
+    infoRow("Last:", g_bootReasonLine, clean ? themedText(COLOR_LIGHTGREY) : 0xFD40 /* amber */);
   }
 }
 
@@ -3821,6 +3909,12 @@ void sensorTask(void *pvParameters) {
   const float SIGNAL_EMA_ALPHA = 0.05;
 
   for (;;) {
+    // V12.5 (F3): liveness heartbeat, stamped at the TOP of every iteration
+    // (including the sleep path's continue). loop() (Core 1) treats a stale
+    // value as a wedged I²C bus and self-heal-reboots. Stored before any
+    // i2cMutex take, so a task blocked on the mutex/Wire never refreshes it.
+    sensorHeartbeatMs.store(millis(), std::memory_order_release);
+
     // V17b: reset EMA state after a sleep/wake cycle
     if (sensorEmaReset.load(std::memory_order_acquire)) {
       emaDistance = -1.0;
@@ -4559,6 +4653,80 @@ void setup() {
   Serial.begin(115200);
   delay(3000);
 
+  // ─── V12.5: field-resilience early block (boot-loop rollback + diagnostics) ──
+  // Runs FIRST, before wifiSetup()/peripherals, so a rollback restart wastes no
+  // init. NVS is available this early (the core mounts it before setup()).
+  {
+    esp_reset_reason_t rr = esp_reset_reason();
+    if (g_rtc.sentinel != RTC_RESIL_SENTINEL) {   // cold power-on → RTC RAM is garbage
+      memset(&g_rtc, 0, sizeof(g_rtc));
+      g_rtc.sentinel = RTC_RESIL_SENTINEL;
+    }
+    g_rtc.bootCount++;
+
+    // F1 — boot-loop auto-rollback. Three consecutive boots that never reached
+    // 30 s of healthy uptime → flip to the previous firmware in the inactive
+    // OTA slot (still intact thanks to dual-OTA). Guarded so we never brick:
+    // only if the inactive slot holds a valid image (first byte 0xE9), and only
+    // once per streak (rollbackAttempted) so two bad slots don't ping-pong.
+    if (g_rtc.bootCount >= 3 && !g_rtc.rollbackAttempted) {
+      const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
+      uint8_t imgMagic = 0;
+      if (next && esp_partition_read(next, 0, &imgMagic, 1) == ESP_OK && imgMagic == 0xE9) {
+        Serial.printf("[BOOT] boot-loop detected (%u) — rolling back to %s\n",
+                      (unsigned)g_rtc.bootCount, next->label);
+        Serial.flush();
+        g_rtc.rollbackAttempted = 1;
+        g_rtc.pendingReasonCode = DIAG_REASON_ROLLBACK;   // labels the NEXT boot's ring entry
+        if (esp_ota_set_boot_partition(next) == ESP_OK) {
+          delay(200);
+          ESP.restart();
+        }
+        // set_boot_partition failed — fall through and boot this image anyway.
+        Serial.println("[BOOT] rollback set_boot_partition failed — booting current");
+      } else {
+        Serial.println("[BOOT] boot-loop detected but no valid rollback slot — booting current");
+      }
+      g_rtc.bootCount = 0;   // don't re-trigger every subsequent boot
+    }
+
+    // F2 — record why the LAST run ended. Prefer a synthetic reason our own code
+    // stashed (rollback / sensor-WDT); else the hardware reset reason. Uptime +
+    // min-heap come from the periodic snapshot loop() wrote during that run.
+    uint8_t reason = g_rtc.pendingReasonCode ? (uint8_t)g_rtc.pendingReasonCode : (uint8_t)rr;
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    DiagEntry e = {0};
+    e.reason    = reason;
+    e.bootSlot  = (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1) ? 1 : 0;
+    e.uptimeSec = g_rtc.lastUptimeSec;
+    e.minHeap   = g_rtc.lastMinHeap;
+    strncpy(e.version, BUILD_VERSION, sizeof(e.version) - 1);
+    Serial.printf("[BOOT] reset reason: %s (last run up %us, minHeap %uKB)\n",
+                  diagReasonStr(reason), (unsigned)e.uptimeSec, (unsigned)e.minHeap);
+    Serial.flush();
+    // Compact uptime for the TFT line: 45s / 12m / 8h.
+    char up[8];
+    if      (e.uptimeSec < 60)    snprintf(up, sizeof(up), "%us", (unsigned)e.uptimeSec);
+    else if (e.uptimeSec < 3600)  snprintf(up, sizeof(up), "%um", (unsigned)(e.uptimeSec / 60));
+    else                          snprintf(up, sizeof(up), "%uh", (unsigned)(e.uptimeSec / 3600));
+    snprintf(g_bootReasonLine, sizeof(g_bootReasonLine), "%s %s/%uK",
+             diagReasonStr(reason), up, (unsigned)e.minHeap);
+    preferences.begin("diag", false);
+    {   // append e to the fixed-length ring (inlined — see note by DiagEntry)
+      uint8_t head = preferences.getUChar("head", 0);
+      char key[8]; snprintf(key, sizeof(key), "e%u", head % DIAG_RING_LEN);
+      preferences.putBytes(key, &e, sizeof(DiagEntry));
+      preferences.putUChar("head", (head + 1) % DIAG_RING_LEN);
+      preferences.putUChar("count", min<uint8_t>(DIAG_RING_LEN, preferences.getUChar("count", 0) + 1));
+    }
+    preferences.end();
+
+    // New session — clear the consumed synthetic reason and the stale snapshot.
+    g_rtc.pendingReasonCode = 0;
+    g_rtc.lastUptimeSec = 0;
+    g_rtc.lastMinHeap   = 0;
+  }
+
   // Allocate sprite buffers now that PSRAM is fully initialised.
   // (Constructor is a no-op — see PSRAMCanvas16::begin() comment.)
   fovSprite.begin(); distSprite.begin(); menuSprite.begin();
@@ -4775,6 +4943,20 @@ void setup() {
     drawMainScreen();
   }
 
+  // V12.5 (F3): subscribe THIS task (loopTask, Core 1) to the hardware task
+  // watchdog, fed once per loop() iteration. A UI/touch/wifiLoop freeze past the
+  // timeout stops the feed → panic reboot (shows as TASK-WDT in the diag ring) →
+  // recoverI2CBus() heals at boot. IDF 5.1.x pre-initialises the TWDT, so
+  // init() returns INVALID_STATE and we reconfigure the timeout instead of a
+  // fresh init. Done LAST, after the 3 s boot delay and all blocking init.
+  {
+    esp_task_wdt_config_t wdtCfg = { .timeout_ms = 15000, .idle_core_mask = 0, .trigger_panic = true };
+    esp_err_t we = esp_task_wdt_init(&wdtCfg);
+    if (we == ESP_ERR_INVALID_STATE) esp_task_wdt_reconfigure(&wdtCfg);  // raise core default (5 s) → 15 s
+    esp_task_wdt_add(NULL);   // subscribe loopTask; INVALID_ARG if already added — harmless
+    Serial.println("[BOOT] loopTask watchdog armed (15 s)");
+  }
+
   Serial.println("[BOOT] setup() complete — entering loop()"); Serial.flush();
 }
 
@@ -4886,6 +5068,47 @@ void loop() {
   if (displayNeedsRedraw && (millis() - lastTintDragMs) > 500) {
     redrawCurrentScreen();
     displayNeedsRedraw = false;
+  }
+
+  // ─── V12.5: field-resilience periodic checks (Core 1) ───────────────────────
+  {
+    uint32_t nowMs = millis();
+
+    // F1 — once we've survived 30 s, this boot is "healthy": clear the boot-loop
+    // counter so an intentional reboot (OTA, forget-wifi) never accumulates, and
+    // mark the running image valid. The mark is a cheap no-op unless bootloader
+    // rollback is ever enabled in menuconfig, in which case it's required.
+    static bool healthyMarked = false;
+    if (!healthyMarked && nowMs > 30000) {
+      g_rtc.bootCount = 0;
+      g_rtc.rollbackAttempted = 0;
+      healthyMarked = true;
+      esp_ota_mark_app_valid_cancel_rollback();
+      Serial.println("[BOOT] 30 s healthy — boot-loop counter cleared");
+    }
+
+    // F2 — snapshot uptime + min-heap to RTC every ~5 s, so the NEXT boot can
+    // report "was up 8 h / 40 KB then BROWNOUT" even after an uncontrolled reset.
+    static uint32_t lastSnapMs = 0;
+    if (nowMs - lastSnapMs > 5000) {
+      lastSnapMs = nowMs;
+      g_rtc.lastUptimeSec = nowMs / 1000;
+      g_rtc.lastMinHeap   = ESP.getMinFreeHeap() / 1024;
+    }
+
+    // F3 — sensor-heartbeat stall = wedged I²C bus (any task stuck holding
+    // i2cMutex; all three devices share the bus). The 12 s gate lets sensorTask
+    // spin up first. Stash the reason and reboot inline (Core 1) — recoverI2CBus()
+    // at boot frees the stuck bus.
+    uint32_t hb = sensorHeartbeatMs.load(std::memory_order_acquire);
+    if (hb && nowMs > 12000 && (nowMs - hb) > 6000) {
+      Serial.printf("[BOOT] sensor heartbeat stalled %u ms — self-heal reboot\n",
+                    (unsigned)(nowMs - hb));
+      g_rtc.pendingReasonCode = DIAG_REASON_SENSOR_WDT;
+      Serial.flush();
+      delay(200);
+      ESP.restart();
+    }
   }
 
   uint32_t currentState = sensorState.load(std::memory_order_acquire);
@@ -5333,8 +5556,13 @@ void loop() {
     }
     lastDisplayUpdate = millis();
   }
-  
-  vTaskDelay(pdMS_TO_TICKS(1)); 
+
+  // V12.5 (F3): feed the loopTask hardware watchdog. Reached once per iteration;
+  // if anything on Core 1 (UI/touch/wifiLoop) freezes past the WDT timeout the
+  // feed stops → panic reboot → self-heal. Subscribed in setup() (see below).
+  esp_task_wdt_reset();
+
+  vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 // --- Touch Handlers ---

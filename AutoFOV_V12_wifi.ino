@@ -1560,6 +1560,45 @@ static void startFullServer() {
         req->send(200, "application/json", out);
     });
 
+    // GET /diag — V12.5 boot/crash diagnostics. Its OWN JSON doc, deliberately
+    // NOT folded into buildFullStateJson (keeps that 4096 budget untouched).
+    // Reading g_rtc here (Core 0/AsyncTCP) is a plain memory read; the ring is a
+    // read-only NVS open. apiAuthed-gated like /state — reveals only reset
+    // history + live heap, nothing sensitive.
+    httpServer.on("/diag", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        DynamicJsonDocument doc(2048);
+        doc["resetReasonNow"] = diagReasonStr((uint8_t)esp_reset_reason());
+        doc["bootCount"]  = g_rtc.bootCount;
+        doc["uptimeSec"]  = millis() / 1000;
+        doc["freeHeap"]   = ESP.getFreeHeap()    / 1024;
+        doc["minHeap"]    = ESP.getMinFreeHeap() / 1024;
+        JsonArray ring = doc.createNestedArray("ring");
+        Preferences dp;
+        dp.begin("diag", true);   // read-only
+        uint8_t head  = dp.getUChar("head", 0);
+        uint8_t count = dp.getUChar("count", 0);
+        // Walk newest → oldest so the dashboard shows the most recent reset first.
+        for (int i = 0; i < count; i++) {
+            int idx = (head - 1 - i + 2 * DIAG_RING_LEN) % DIAG_RING_LEN;
+            char key[8]; snprintf(key, sizeof(key), "e%d", idx);
+            DiagEntry e;
+            if (dp.getBytes(key, &e, sizeof(e)) != sizeof(e)) continue;
+            char ver[13]; memcpy(ver, e.version, 12); ver[12] = '\0';
+            JsonObject o = ring.createNestedObject();
+            o["reason"]    = diagReasonStr(e.reason);
+            o["uptimeSec"] = e.uptimeSec;
+            o["minHeap"]   = e.minHeap;
+            o["slot"]      = e.bootSlot ? "ota_1" : "ota_0";
+            o["ver"]       = ver;
+        }
+        dp.end();
+        String out; serializeJson(doc, out);
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
+        r->addHeader("Cache-Control", "no-store");
+        req->send(r);
+    });
+
     // POST /cmd — fallback for commands when WebSocket is not yet open.
     //
     // patched3 (CRITICAL): AsyncWebServer dispatches ALL HTTP body callbacks

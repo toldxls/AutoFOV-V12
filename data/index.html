@@ -1169,6 +1169,10 @@
             <!-- ===================== MEMORY & INFO ===================== -->
             <div id="screen-memory" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 115px; background-color: #006400;">MEMORY &amp; INFO</div>
+                <!-- V12.5: web-only diagnostics (reset history) — the friend in a
+                     browser is exactly who needs it; the device has no such screen. -->
+                <div class="gfx-btn" style="left: 143px; top: 6px; width: 58px; height: 24px;
+                     background-color: #5a3a00; font-size: 11px;" onclick="switchScreen('screen-diag')">DIAG</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
 
                 <!-- Heap bar -->
@@ -1265,6 +1269,37 @@
                      title="Firmware used / running app-slot capacity. The matching 1.8 MB slot isn't counted — it holds the OTA rollback image (see the partition bars above).">—</div>
                 <div class="gfx-text" style="left:15px; top:292px; color:var(--text-disabled);">Die temp:</div>
                 <div id="mem-die" class="gfx-text" style="right:15px; top:292px; color:var(--accent-cyan);">—</div>
+            </div>
+
+            <!-- ===================== DIAGNOSTICS (V12.5, web-only) =====================
+                 Reset/crash history from GET /diag. A friend copies this blob into a
+                 message when something misbehaves — brownout vs panic vs WiFi drop
+                 vs an auto-rollback, without a serial cable. -->
+            <div id="screen-diag" class="screen">
+                <div class="title-stripe" style="left:5px; top:5px; width:130px; background-color:#5a3a00;">DIAGNOSTICS</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-memory')">X</div>
+
+                <!-- Live summary -->
+                <div class="gfx-text" style="left:15px; top:44px; color:var(--text-disabled);">This boot:</div>
+                <div id="diag-now" class="gfx-text" style="right:15px; top:44px; color:var(--accent-green);">—</div>
+                <div class="gfx-text" style="left:15px; top:64px; color:var(--text-disabled);">Uptime:</div>
+                <div id="diag-uptime" class="gfx-text" style="right:15px; top:64px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:84px; color:var(--text-disabled);">Heap now / min:</div>
+                <div id="diag-heap" class="gfx-text" style="right:15px; top:84px; color:var(--text-primary);">—</div>
+
+                <div style="position:absolute; left:10px; top:104px; width:220px; height:1px; background:#333;"></div>
+                <div class="gfx-text" style="left:15px; top:112px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
+
+                <!-- Scrollable ring list -->
+                <div id="diag-list" style="position:absolute; left:8px; top:130px; width:224px; height:138px; overflow-y:auto; font-size:10px;">
+                    <div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">Loading…</div>
+                </div>
+
+                <div id="diag-status" class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled); font-size:10px;">&nbsp;</div>
+                <div class="gfx-btn" style="left:15px; top:286px; width:100px; height:28px;
+                     background-color:#00568a;" onclick="copyDiagnostics()">COPY</div>
+                <div class="gfx-btn" style="left:125px; top:286px; width:100px; height:28px;
+                     background-color:#2a5a2a;" onclick="updateDiagUI()">REFRESH</div>
             </div>
 
             <!-- ===================== CAL REVIEW ===================== -->
@@ -2842,6 +2877,7 @@
         if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { state.calGraphSel = null; updateFovInfoUI(); drawCalGraph(); }
         if (id === 'screen-memory')      updateMemoryUI();
+        if (id === 'screen-diag')        updateDiagUI();
         if (id === 'screen-about')       updateAboutUI();
         if (id === 'screen-vibration')   vibEnter();
         else if (prevScreen === 'screen-vibration') vibLeave();
@@ -5907,6 +5943,82 @@
             } else {
                 g('mem-die').innerText = '—';
             }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DIAGNOSTICS SCREEN (V12.5) — reset/crash history from GET /diag
+    // ─────────────────────────────────────────────────────────────────────────
+    let diagLast = null;   // last /diag payload, for copyDiagnostics()
+    // Reset reasons that mean the device did NOT shut down cleanly — highlighted
+    // amber/red so a friend (and you) spot a real fault vs a normal power cycle.
+    const DIAG_BAD = { 'PANIC':1, 'INT-WDT':1, 'TASK-WDT':1, 'OTHER-WDT':1,
+                       'SENSOR-STALL WDT':1, 'BROWNOUT':1, 'AUTO-ROLLBACK':1 };
+    function diagFmtUptime(s) {
+        s = s || 0;
+        if (s < 60)   return s + 's';
+        if (s < 3600) return Math.floor(s / 60) + 'm';
+        return (s / 3600).toFixed(1) + 'h';
+    }
+    async function updateDiagUI() {
+        const list = document.getElementById('diag-list');
+        const status = document.getElementById('diag-status');
+        if (status) { status.innerText = 'Loading…'; status.style.color = 'var(--text-disabled)'; }
+        let s;
+        try {
+            const r = await calioAuthedFetch('/diag', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            s = await r.json();
+        } catch (e) {
+            if (status) { status.innerText = 'Fetch failed: ' + e.message; status.style.color = '#ff6666'; }
+            return;
+        }
+        diagLast = s;
+        const g = (id) => document.getElementById(id);
+        if (g('diag-now'))    g('diag-now').innerText = s.resetReasonNow || '—';
+        if (g('diag-uptime')) g('diag-uptime').innerText = diagFmtUptime(s.uptimeSec) +
+                              '  (boot #' + (s.bootCount || 0) + ')';
+        if (g('diag-heap'))   g('diag-heap').innerText = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
+        // Ring rows
+        const ring = Array.isArray(s.ring) ? s.ring : [];
+        if (!ring.length) {
+            list.innerHTML = '<div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">No history yet</div>';
+        } else {
+            list.innerHTML = ring.map(e => {
+                const bad = DIAG_BAD[e.reason];
+                const col = bad ? '#ffaa00' : 'var(--text-primary)';
+                return '<div style="display:flex; justify-content:space-between; gap:6px; padding:3px 6px; border-bottom:1px solid #222;">' +
+                       '<span style="color:' + col + '; font-weight:' + (bad ? 'bold' : 'normal') + ';">' + e.reason + '</span>' +
+                       '<span style="color:#888; white-space:nowrap;">' + diagFmtUptime(e.uptimeSec) +
+                       ' · ' + (e.minHeap || 0) + 'K · ' + (e.ver || '?') + '</span>' +
+                       '</div>';
+            }).join('');
+        }
+        if (status) { status.innerHTML = '&nbsp;'; }
+    }
+    async function copyDiagnostics() {
+        const status = document.getElementById('diag-status');
+        if (!diagLast) { await updateDiagUI(); }
+        if (!diagLast) return;
+        const s = diagLast;
+        const lines = [];
+        lines.push('AutoFOV diagnostics');
+        lines.push('firmware: ' + (state.buildVersion || '?') + '  commit: ' + (state.buildCommit || '?'));
+        lines.push('this boot: ' + (s.resetReasonNow || '?') + '  (boot #' + (s.bootCount || 0) + ')');
+        lines.push('uptime: ' + diagFmtUptime(s.uptimeSec) +
+                   '  heap now/min: ' + (s.freeHeap || 0) + 'K/' + (s.minHeap || 0) + 'K');
+        lines.push('wifi: ' + (state.wifiSSID || '?') + '  ' + (state.wifiRSSI || '?') + ' dBm');
+        lines.push('recent resets (newest first):');
+        (s.ring || []).forEach(e => lines.push('  ' + e.reason + '  up ' + diagFmtUptime(e.uptimeSec) +
+                   '  minHeap ' + (e.minHeap || 0) + 'K  ' + e.slot + '  ' + (e.ver || '?')));
+        const text = lines.join('\n');
+        try {
+            await navigator.clipboard.writeText(text);
+            if (status) { status.innerText = 'Copied to clipboard'; status.style.color = 'var(--accent-green)'; }
+        } catch (e) {
+            // Clipboard API needs a secure context / permission; fall back to a prompt.
+            window.prompt('Copy diagnostics:', text);
+            if (status) { status.innerHTML = '&nbsp;'; }
         }
     }
 
