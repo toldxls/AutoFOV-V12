@@ -5244,11 +5244,16 @@ void loop() {
     // re-enable the reboot without understanding why sensorTask stalls.
     uint32_t hb = sensorHeartbeatMs.load(std::memory_order_acquire);
     if (hb && nowMs > 12000) {
-      uint32_t stall = nowMs - hb;
-      if (stall > 2000 && stall > sensorMaxStallMs.load(std::memory_order_relaxed)) {
-        sensorMaxStallMs.store(stall, std::memory_order_relaxed);
-        Serial.printf("[SENSOR] heartbeat stall %u ms (max so far; not rebooting)\n",
-                      (unsigned)stall);
+      // SIGNED diff, freshly sampled: sensorTask (Core 0) and loop() (Core 1)
+      // read millis() independently, so hb can be a millisecond or two NEWER than
+      // us — an unsigned (millis()-hb) then underflows to ~2^32 and reads as an
+      // absurd multi-billion-ms "stall". Treat a momentarily-ahead heartbeat as
+      // no stall. (This same unsigned underflow was what tripped the removed F3
+      // auto-reboot on a phantom stall.)
+      int32_t stall = (int32_t)(millis() - hb);
+      if (stall > 2000 && (uint32_t)stall > sensorMaxStallMs.load(std::memory_order_relaxed)) {
+        sensorMaxStallMs.store((uint32_t)stall, std::memory_order_relaxed);
+        Serial.printf("[SENSOR] heartbeat stall %d ms (max so far; not rebooting)\n", stall);
       }
     }
   }

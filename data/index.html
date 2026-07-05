@@ -1286,12 +1286,14 @@
                 <div id="diag-uptime" class="gfx-text" style="right:15px; top:64px; color:var(--text-primary);">—</div>
                 <div class="gfx-text" style="left:15px; top:84px; color:var(--text-disabled);">Heap now / min:</div>
                 <div id="diag-heap" class="gfx-text" style="right:15px; top:84px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:102px; color:var(--text-disabled);">Max sensor stall:</div>
+                <div id="diag-stall" class="gfx-text" style="right:15px; top:102px; color:var(--text-primary);">—</div>
 
-                <div style="position:absolute; left:10px; top:104px; width:220px; height:1px; background:#333;"></div>
-                <div class="gfx-text" style="left:15px; top:112px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
+                <div style="position:absolute; left:10px; top:120px; width:220px; height:1px; background:#333;"></div>
+                <div class="gfx-text" style="left:15px; top:126px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
 
                 <!-- Scrollable ring list -->
-                <div id="diag-list" style="position:absolute; left:8px; top:130px; width:224px; height:138px; overflow-y:auto; font-size:10px;">
+                <div id="diag-list" style="position:absolute; left:8px; top:140px; width:224px; height:126px; overflow-y:auto; font-size:10px;">
                     <div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">Loading…</div>
                 </div>
 
@@ -5984,14 +5986,15 @@
         }
         if (g('diag-uptime')) g('diag-uptime').innerText = diagFmtUptime(s.uptimeSec) +
                               '  (boot #' + (s.bootCount || 0) + ')';
-        if (g('diag-heap')) {
-            let h = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
-            // Worst sensor-heartbeat stall this session (I2C diagnosis). >0 means
-            // sensorTask blocked that long at least once — no longer reboots.
+        if (g('diag-heap')) g('diag-heap').innerText = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
+        if (g('diag-stall')) {
+            // Worst sensorTask heartbeat stall this session (I2C diagnosis). It no
+            // longer reboots; a healthy device should read ~0. A few seconds means
+            // sensorTask was briefly starved/blocked and recovered on its own.
             const st = s.maxSensorStallMs || 0;
-            if (st > 0) h += '   stall ' + (st / 1000).toFixed(1) + 's';
-            g('diag-heap').innerText = h;
-            g('diag-heap').style.color = st >= 2000 ? '#ffaa00' : 'var(--text-primary)';
+            g('diag-stall').innerText = st > 0 ? (st / 1000).toFixed(1) + 's' : 'none';
+            g('diag-stall').style.color = st >= 2000 ? '#ffaa00' :
+                                          st > 0     ? 'var(--text-primary)' : 'var(--text-disabled)';
         }
         // Ring rows
         const ring = Array.isArray(s.ring) ? s.ring : [];
