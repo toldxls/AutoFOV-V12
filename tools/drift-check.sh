@@ -45,7 +45,10 @@ if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
                | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 fi
 
-commit_count=$(git rev-list --count HEAD)
+# Count only REAL commits — the `build: regenerate web_ui.h` bookkeeping
+# commits are excluded from the version formula (mirrors tools/embed_html.py's
+# REGEN_SUBJECT; keep the two patterns identical).
+commit_count=$(git rev-list --count --invert-grep --grep='^build: regenerate web_ui\.h' HEAD)
 
 # Mirror tools/embed_html.py's version formula. Reading the constants out of
 # that file keeps the two in lockstep — bumping VERSION_MINOR or rebasing
@@ -120,19 +123,11 @@ elif [ "$rel_score" -lt "$cur_score" ]; then
         [ "$CHECK" = 1 ] && exit 1
         exit 0
     fi
-    gap=$((patch - released_patch))
-
-    # Suppress the false positive every release naturally produces: release.sh
-    # regenerates web_ui.h (because BUILD_COMMIT changed) and that artifact
-    # commit lands on main *after* the version it documents went to gh-pages.
-    # If every commit since the release is one of those regen commits, the
-    # firmware behaviour is identical to what's already shipped — not drift.
-    real_commits=$(git log --pretty=%s "HEAD~${gap}..HEAD" 2>/dev/null \
-                   | grep -vc '^build: regenerate web_ui\.h' || true)
-    if [ "$real_commits" -eq 0 ]; then
-        [ "$QUIET" = 1 ] || echo "${GRN}gh-pages in sync${RST} — v$released ${DIM}(+ release-artifact regen)${RST}"
-        exit 0
-    fi
+    # The patch counter only advances on real commits (regen commits are
+    # excluded from the formula above), so the version gap IS the real-commit
+    # gap — the old post-release "(+ release-artifact regen)" false positive
+    # can no longer occur.
+    real_commits=$((patch - released_patch))
 
     plural=""; [ "$real_commits" -ne 1 ] && plural="s"
     echo "${YEL}gh-pages is $real_commits real commit$plural behind main${RST}"
