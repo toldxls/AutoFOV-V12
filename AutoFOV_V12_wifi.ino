@@ -1703,12 +1703,29 @@ static void startFullServer() {
         // cached — a crashPc + crashTask here pins where the device last crashed;
         // decode with: xtensa-esp32s3-elf-addr2line -e <build>.elf <crashPc>.
         static esp_core_dump_summary_t cds;
-        static int cdsState = 0;   // 0 = untried, 1 = have summary, 2 = none stored
-        if (cdsState == 0) cdsState = (esp_core_dump_get_summary(&cds) == ESP_OK) ? 1 : 2;
+        static int cdsState = 0;   // 0 = untried, 1 = have summary, 2 = no valid dump
+        if (cdsState == 0) {
+            // Gate the (expensive) parse on a cheap validity check first. If no
+            // valid dump is stored, cache "none" (2). If a dump IS present but
+            // the parse hiccups (e.g. transient mmap OOM), leave state 0 so the
+            // next /diag retries instead of caching a false "none" for the session.
+            if (esp_core_dump_image_check() != ESP_OK) cdsState = 2;
+            else if (esp_core_dump_get_summary(&cds) == ESP_OK) cdsState = 1;
+        }
         if (cdsState == 1) {
             char pc[12]; snprintf(pc, sizeof(pc), "0x%08x", (unsigned)cds.exc_pc);
             doc["crashPc"]   = pc;
             doc["crashTask"] = cds.exc_task;
+            // Flag a crash left over from a DIFFERENT build so its PC isn't
+            // decoded against the wrong ELF. Compare the coredump's app ELF-SHA
+            // prefix to the running app's.
+            // app_elf_sha256 is a hex STRING stored in a uint8_t[] (cast needed).
+            const char* crashSha = (const char*)cds.app_elf_sha256;
+            char runSha[17] = {0};
+            esp_app_get_elf_sha256(runSha, sizeof(runSha));
+            size_t n = strnlen(crashSha, sizeof(cds.app_elf_sha256));
+            if (n > 16) n = 16;
+            doc["crashStale"] = (n == 0) || (strncmp(crashSha, runSha, n) != 0);
             JsonArray bt = doc.createNestedArray("crashBt");
             for (uint32_t i = 0; i < cds.exc_bt_info.depth && i < 12; i++) {
                 char a[12]; snprintf(a, sizeof(a), "0x%08x", (unsigned)cds.exc_bt_info.bt[i]);
@@ -2142,6 +2159,7 @@ static void startFullServer() {
                 if (cl > 0 && freeP > OTA_PSRAM_MARGIN && cl <= freeP - OTA_PSRAM_MARGIN) {
                     otaBuf = (uint8_t*)heap_caps_malloc(cl, MALLOC_CAP_SPIRAM);
                     if (otaBuf) { otaBufCap = cl; otaBufLen = 0; otaBufMode = true; }
+                    else allocFailCount.fetch_add(1, std::memory_order_relaxed);  // #5: PSRAM couldn't hold the image → inline fallback
                 }
                 if (otaBufMode) {
                     // SHA + Update.* run in the flush task; nothing to set up here.

@@ -163,19 +163,33 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
       && git push -u origin gh-pages )
     # Deploy via the Actions workflow (Pages Source must be "GitHub Actions").
     # Replaces the legacy branch auto-deploy, which kept failing on GitHub's
-    # backend. Best-effort: if gh/workflow is missing the push still landed.
+    # backend. gh workflow run is now the SOLE publish mechanism, so a failure
+    # here means the push landed but NOTHING deployed — surface it loudly rather
+    # than the pipe-masked false success we had before. Capture status directly
+    # (no pipe), not the pipe's exit code, and warn hard if gh is missing.
+    DEPLOYED=0
     if command -v gh >/dev/null 2>&1; then
         echo "Triggering Pages deploy workflow…"
-        gh workflow run pages.yml 2>&1 | sed 's/^/  /' || \
-            echo "  (workflow trigger failed — run: gh workflow run pages.yml)"
+        if gh workflow run pages.yml; then
+            DEPLOYED=1
+        else
+            echo "  !! gh workflow run FAILED — gh-pages is pushed but NOT deployed."
+            echo "  !! Fix gh auth / ensure pages.yml is on origin/main, then run:"
+            echo "  !!   gh workflow run pages.yml"
+        fi
+    else
+        echo "  !! gh CLI not found — gh-pages is pushed but NOT deployed."
+        echo "  !! Install gh (or set Pages Source back to a branch), then run:"
+        echo "  !!   gh workflow run pages.yml"
     fi
     echo ""
-    echo "=== Published ==="
-    echo "Live at: $PAGES_URL/"
-    echo "Manifest: $PAGES_URL/manifest.json"
-    echo "Recovery: $PAGES_URL/"
-    echo ""
-    echo "Deploy status: gh run watch \$(gh run list --workflow=pages.yml -L1 --json databaseId -q '.[0].databaseId')"
+    if [ "$DEPLOYED" = 1 ]; then
+        echo "=== Deploy triggered (v$VERSION) ==="
+        echo "Watch: gh run watch \$(gh run list --workflow=pages.yml -L1 --json databaseId -q '.[0].databaseId')"
+    else
+        echo "=== Pushed to gh-pages, but DEPLOY NOT triggered (see above) ==="
+    fi
+    echo "Live at: $PAGES_URL/   (verify: curl -s $PAGES_URL/manifest.json)"
 else
     echo "Aborted — nothing pushed."
     # The worktree is cleaned up by the EXIT trap. It must NOT be kept: a

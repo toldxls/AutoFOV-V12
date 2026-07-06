@@ -28,6 +28,7 @@
 #include <esp_system.h>    // V12.5: esp_reset_reason() — boot diagnostics + boot-loop rollback
 #include <esp_task_wdt.h>  // V12.5: loopTask hardware watchdog (Core-1 freeze backstop)
 #include <esp_core_dump.h> // V12.5.x: read the last panic's PC/task/backtrace (flash coredump)
+#include <esp_app_desc.h>  // V12.5.x: esp_app_get_elf_sha256() — flag a crash from a different build
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -892,10 +893,13 @@ struct CalibBackup {
 // so a cold boot correctly starts bootCount=0. A deep brownout that also sags
 // the RTC domain simply looks like a cold boot (counter reset → never a false
 // rollback), which is the safe failure direction.
-// Bump the sentinel whenever RtcResilience GROWS — a warm reboot into the new
-// firmware would otherwise keep the old (shorter) struct's bytes and read the
-// new trailing fields as RTC garbage. A changed sentinel forces one clean init.
-#define RTC_RESIL_SENTINEL 0xAF0FB008UL   // V12.5.x: +lastMinStack/lastMaxAllocKB
+// Bump the sentinel whenever RtcResilience GROWS. But do NOT blindly memset on a
+// bumped sentinel — MIGRATE instead (zero only the appended fields), so the
+// F1 anti-ping-pong guard (rollbackAttempted) and the AUTO-ROLLBACK marker
+// survive a rollback across the version boundary. Only a truly unknown sentinel
+// (cold-boot garbage) gets a full wipe. Keep the prior sentinel value(s) here.
+#define RTC_RESIL_SENTINEL    0xAF0FB008UL   // current: +lastMinStack/lastMaxAllocKB
+#define RTC_RESIL_SENTINEL_V1 0xAF0FB007UL   // pre-.54 (24-byte layout, no stack/frag tail)
 struct RtcResilience {
   uint32_t sentinel;          // == RTC_RESIL_SENTINEL once initialised
   uint32_t bootCount;         // F1: consecutive un-healthy boots (reset after 30 s uptime)
@@ -992,17 +996,19 @@ static bool diagIsCrash(esp_reset_reason_t rr) {
     case ESP_RST_INT_WDT:
     case ESP_RST_TASK_WDT:
     case ESP_RST_WDT:
-    case ESP_RST_BROWNOUT:
     case ESP_RST_UNKNOWN:
-#ifdef ESP_RST_PWR_GLITCH
-    case ESP_RST_PWR_GLITCH:
-#endif
 #ifdef ESP_RST_CPU_LOCKUP
     case ESP_RST_CPU_LOCKUP:
 #endif
-      return true;
+      return true;   // firmware faults — a rollback to older firmware can help
     default:
-      return false;   // POWERON / EXT / SW (deliberate) / DEEPSLEEP / SDIO / USB / JTAG / EFUSE
+      // M2: BROWNOUT / PWR_GLITCH are POWER faults, deliberately NOT counted —
+      // rolling back firmware can't fix a failing PSU, and counting them would
+      // let a brownouting supply trigger a spurious downgrade (and, across the
+      // sentinel boundary, a slot ping-pong). Still logged in the ring as
+      // BROWNOUT via diagReasonStr, so remote diagnosis is unaffected.
+      // Also POWERON / EXT / SW (deliberate) / DEEPSLEEP / SDIO / USB / JTAG / EFUSE.
+      return false;
   }
 }
 
@@ -1121,8 +1127,9 @@ std::atomic<uint32_t> stackFreeVib{0};
 std::atomic<uint32_t> stackFreeLoop{0};
 // #3 smallest largest-contiguous-free internal-heap block seen (KB) — fragmentation.
 std::atomic<uint32_t> minMaxAllocKB{0xFFFFFFFFUL};
-// #5 count of ps_malloc/malloc failures (sprites, vib buffers, OTA PSRAM buffer,
-//    transient canvases). Non-zero = memory pressure degraded a feature.
+// #5 count of ps_malloc/malloc failures: the 7 sprites + any transient info
+//    canvas (all via PSRAMCanvas16::begin), the vib DSP buffers, and the OTA
+//    PSRAM buffer. Non-zero = memory pressure degraded a feature.
 std::atomic<uint32_t> allocFailCount{0};
 // #6 count of IMU/Wire I²C transaction errors (imuReadRegs/imuWriteReg failures) —
 //    a bus-health proxy that complements sensorMaxStallMs.
@@ -4011,9 +4018,11 @@ void sensorTask(void *pvParameters) {
 
   for (;;) {
     // V12.5 (F3): liveness heartbeat, stamped at the TOP of every iteration
-    // (including the sleep path's continue). loop() (Core 1) treats a stale
-    // value as a wedged I²C bus and self-heal-reboots. Stored before any
-    // i2cMutex take, so a task blocked on the mutex/Wire never refreshes it.
+    // (including the sleep path's continue). loop() (Core 1) records the worst
+    // staleness in sensorMaxStallMs for /diag — the auto-reboot was REMOVED
+    // (it false-fired on transient stalls; see the F3 note in loop()). Stored
+    // before any i2cMutex take, so a task blocked on the mutex/Wire never
+    // refreshes it.
     sensorHeartbeatMs.store(millis(), std::memory_order_release);
 
     // V17b: reset EMA state after a sleep/wake cycle
@@ -4766,7 +4775,19 @@ void setup() {
   // init. NVS is available this early (the core mounts it before setup()).
   {
     esp_reset_reason_t rr = esp_reset_reason();
-    if (g_rtc.sentinel != RTC_RESIL_SENTINEL) {   // cold power-on → RTC RAM is garbage
+    if (g_rtc.sentinel == RTC_RESIL_SENTINEL) {
+      // current layout — nothing to init
+    } else if (g_rtc.sentinel == RTC_RESIL_SENTINEL_V1) {
+      // M1: warm reboot from the pre-.54 (24-byte) layout — the old fields
+      // through pendingReasonCode are valid; only the appended stack/frag tail
+      // is garbage. MIGRATE (don't wipe) so bootCount / rollbackAttempted /
+      // pendingReasonCode carry across the version boundary — preserving the
+      // anti-ping-pong guard and the AUTO-ROLLBACK ring marker on a rollback.
+      g_rtc.lastMinStack   = 0;
+      g_rtc.lastMaxAllocKB = 0;
+      g_rtc.sentinel       = RTC_RESIL_SENTINEL;
+    } else {
+      // unknown sentinel = cold power-on (RTC RAM is garbage) → clean init
       memset(&g_rtc, 0, sizeof(g_rtc));
       g_rtc.sentinel = RTC_RESIL_SENTINEL;
     }
@@ -5282,16 +5303,25 @@ void loop() {
       g_rtc.lastMinHeap   = ESP.getMinFreeHeap() / 1024;
 
       // uxTaskGetStackHighWaterMark returns the min free stack in WORDS (×4 = B).
-      uint32_t sSensor = uxTaskGetStackHighWaterMark(sensorTaskHandle) * 4;
-      uint32_t sVib    = vibTaskHandle ? uxTaskGetStackHighWaterMark(vibTaskHandle) * 4 : 0;
-      uint32_t sLoop   = uxTaskGetStackHighWaterMark(NULL) * 4;   // loopTask (this task)
-      stackFreeSensor.store(sSensor, std::memory_order_relaxed);
-      if (sVib) stackFreeVib.store(sVib, std::memory_order_relaxed);
+      // Only sample tasks whose HANDLE exists — a NULL handle would make
+      // FreeRTOS report the CALLING (loop) task, mislabeling it. Guarding on the
+      // handle (not the value) also lets a genuine 0-word watermark — the exact
+      // "overflow imminent" moment the metric is for — count toward the minimum.
+      uint32_t minStk = 0xFFFFFFFFUL;
+      uint32_t sLoop = uxTaskGetStackHighWaterMark(NULL) * 4;   // loopTask (this task) — always valid
       stackFreeLoop.store(sLoop, std::memory_order_relaxed);
-      uint32_t minStk = sSensor;
-      if (sVib && sVib < minStk) minStk = sVib;
-      if (sLoop < minStk)        minStk = sLoop;
-      g_rtc.lastMinStack = minStk;
+      if (sLoop < minStk) minStk = sLoop;
+      if (sensorTaskHandle) {
+        uint32_t s = uxTaskGetStackHighWaterMark(sensorTaskHandle) * 4;
+        stackFreeSensor.store(s, std::memory_order_relaxed);
+        if (s < minStk) minStk = s;
+      }
+      if (vibTaskHandle) {
+        uint32_t s = uxTaskGetStackHighWaterMark(vibTaskHandle) * 4;
+        stackFreeVib.store(s, std::memory_order_relaxed);
+        if (s < minStk) minStk = s;
+      }
+      if (minStk != 0xFFFFFFFFUL) g_rtc.lastMinStack = minStk;
 
       uint32_t maxBlockKB = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024;
       if (maxBlockKB < minMaxAllocKB.load(std::memory_order_relaxed))

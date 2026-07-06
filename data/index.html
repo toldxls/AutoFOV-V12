@@ -1296,7 +1296,7 @@
                 <div id="diag-crash" class="gfx-text" style="right:15px; top:134px; color:var(--text-disabled); font-size:11px;">—</div>
 
                 <div style="position:absolute; left:10px; top:152px; width:220px; height:1px; background:#333;"></div>
-                <div class="gfx-text" style="left:15px; top:158px; color:#888; font-size:10px;">RECENT RESETS (a=alloc i=i2c w=wifi faults)</div>
+                <div class="gfx-text" style="left:15px; top:158px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
 
                 <!-- Scrollable ring list -->
                 <div id="diag-list" style="position:absolute; left:8px; top:172px; width:224px; height:94px; overflow-y:auto; font-size:10px;">
@@ -6004,7 +6004,9 @@
         if (g('diag-stackfrag')) {
             const stk = s.minStack || 0, frag = s.maxAllocKB || 0;
             const kb = (b) => b >= 1024 ? (b / 1024).toFixed(1) + 'K' : b + 'B';
-            g('diag-stackfrag').innerText = (stk ? kb(stk) : '—') + ' / ' + frag + 'K';
+            // frag 0 = not sampled yet (first ~5 s), not an OOM — show '—' rather
+            // than an alarming '0K'.
+            g('diag-stackfrag').innerText = (stk ? kb(stk) : '—') + ' / ' + (frag ? frag + 'K' : '—');
             g('diag-stackfrag').style.color = (stk && stk < 512)  ? '#ff5050' :
                                               (stk && stk < 1024) ? '#ffaa00' : 'var(--text-primary)';
         }
@@ -6015,10 +6017,13 @@
             g('diag-faults').style.color = (a || ii || w) ? '#ffaa00' : 'var(--text-disabled)';
         }
         // Last crash location (from the flash coredump) — the smoking gun for a PANIC.
+        // crashStale = the dump is from a DIFFERENT build, so the PC won't decode
+        // against the current ELF; flag it rather than mislead.
         if (g('diag-crash')) {
             if (s.crashPc) {
-                g('diag-crash').innerText = (s.crashTask || '?') + ' @ ' + s.crashPc;
-                g('diag-crash').style.color = '#ff6666';
+                g('diag-crash').innerText = (s.crashTask || '?') + ' @ ' + s.crashPc +
+                                            (s.crashStale ? ' (old build)' : '');
+                g('diag-crash').style.color = s.crashStale ? '#ffaa00' : '#ff6666';
             } else {
                 g('diag-crash').innerText = 'none';
                 g('diag-crash').style.color = 'var(--text-disabled)';
@@ -6034,9 +6039,11 @@
                 const bad = DIAG_BAD[e.reason];
                 const col = bad ? '#ffaa00' : 'var(--text-primary)';
                 const stk = e.minStack ? ' · stk ' + (e.minStack >= 1024 ? (e.minStack/1024).toFixed(1)+'K' : e.minStack+'B') : '';
+                // Reason truncates with ellipsis (flex:1; min-width:0) so a long
+                // reason + the stk segment can't push the version off the row.
                 return '<div style="display:flex; justify-content:space-between; gap:6px; padding:3px 6px; border-bottom:1px solid #222;">' +
-                       '<span style="color:' + col + '; font-weight:' + (bad ? 'bold' : 'normal') + ';">' + e.reason + '</span>' +
-                       '<span style="color:#888; white-space:nowrap;">' + diagFmtUptime(e.uptimeSec) +
+                       '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:' + col + '; font-weight:' + (bad ? 'bold' : 'normal') + ';">' + e.reason + '</span>' +
+                       '<span style="flex:none; color:#888; white-space:nowrap;">' + diagFmtUptime(e.uptimeSec) +
                        ' · ' + (e.minHeap || 0) + 'K' + stk + ' · ' + (e.ver || '?') + '</span>' +
                        '</div>';
             }).join('');
@@ -6054,14 +6061,18 @@
         lines.push('this boot: ' + (s.resetReasonNow || '?') + '  (boot #' + (s.bootCount || 0) + ')');
         lines.push('uptime: ' + diagFmtUptime(s.uptimeSec) +
                    '  heap now/min: ' + (s.freeHeap || 0) + 'K/' + (s.minHeap || 0) + 'K');
-        lines.push('stacks free (sensor/vib/loop): ' + (s.stackSensor || 0) + '/' +
-                   (s.stackVib || 0) + '/' + (s.stackLoop || 0) + 'B  (min ' + (s.minStack || 0) + 'B)');
+        // A 0 for sensor/vib means that task doesn't exist (e.g. no IMU → no vib);
+        // show 'n/a' so it doesn't read as "0 bytes free stack".
+        const stkB = v => v ? v + 'B' : 'n/a';
+        lines.push('stacks free (sensor/vib/loop): ' + stkB(s.stackSensor) + '/' +
+                   stkB(s.stackVib) + '/' + stkB(s.stackLoop) + '  (min ' + (s.minStack || 0) + 'B)');
         lines.push('largest free block (min): ' + (s.maxAllocKB || 0) + 'K');
         lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
                    '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')');
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         if (s.crashPc) {
             lines.push('LAST CRASH: ' + (s.crashTask || '?') + ' @ pc ' + s.crashPc +
+                       (s.crashStale ? ' (DIFFERENT BUILD — decode against that .elf)' : '') +
                        (s.crashBt ? '  bt ' + s.crashBt.join(' ') : ''));
         }
         lines.push('wifi: ' + (state.wifiSSID || '?') + '  ' + (state.wifiRSSI || '?') + ' dBm');
@@ -6106,11 +6117,15 @@
         box.style.cssText = 'background:#1a1a1a; border:1px solid #555; border-radius:6px; padding:12px; width:90%; max-width:460px;';
         const ta = document.createElement('textarea');
         ta.value = text; ta.readOnly = true;
-        ta.style.cssText = 'width:100%; height:240px; background:#000; color:#ddd; border:1px solid #444; font-family:monospace; font-size:11px; white-space:pre; resize:none;';
+        // 16px font: below 16px, iOS Safari auto-zooms on focus and mangles the
+        // 240px mirror. The textarea scrolls, so wrapping doesn't matter for copy.
+        ta.style.cssText = 'width:100%; height:240px; background:#000; color:#ddd; border:1px solid #444; font-family:monospace; font-size:16px; white-space:pre; resize:none;';
         const btn = document.createElement('div');
         btn.className = 'gfx-btn'; btn.textContent = 'CLOSE';
         btn.style.cssText = 'position:relative; margin:10px auto 0; width:100px; height:30px; background:#00568a;';
-        btn.onclick = () => document.body.removeChild(ov);
+        const close = () => ov.remove();   // idempotent — no throw on a double-close
+        btn.onclick = close;
+        ov.onclick = (ev) => { if (ev.target === ov) close(); };   // backdrop dismiss
         box.appendChild(ta); box.appendChild(btn); ov.appendChild(box);
         document.body.appendChild(ov);
         ta.focus(); ta.select();
