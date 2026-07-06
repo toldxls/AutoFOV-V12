@@ -1171,7 +1171,7 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 115px; background-color: #006400;">MEMORY &amp; INFO</div>
                 <!-- V12.5: web-only diagnostics (reset history) — the friend in a
                      browser is exactly who needs it; the device has no such screen. -->
-                <div class="gfx-btn" style="left: 143px; top: 6px; width: 58px; height: 24px;
+                <div class="gfx-btn" style="left: 132px; top: 4px; width: 60px; height: 29px;
                      background-color: #5a3a00; font-size: 11px;" onclick="switchScreen('screen-diag')">DIAG</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
 
@@ -1282,18 +1282,22 @@
                 <!-- Live summary -->
                 <div class="gfx-text" style="left:15px; top:44px; color:var(--text-disabled);">This boot:</div>
                 <div id="diag-now" class="gfx-text" style="right:15px; top:44px; color:var(--accent-green);">—</div>
-                <div class="gfx-text" style="left:15px; top:64px; color:var(--text-disabled);">Uptime:</div>
-                <div id="diag-uptime" class="gfx-text" style="right:15px; top:64px; color:var(--text-primary);">—</div>
-                <div class="gfx-text" style="left:15px; top:84px; color:var(--text-disabled);">Heap now / min:</div>
-                <div id="diag-heap" class="gfx-text" style="right:15px; top:84px; color:var(--text-primary);">—</div>
-                <div class="gfx-text" style="left:15px; top:102px; color:var(--text-disabled);">Max sensor stall:</div>
-                <div id="diag-stall" class="gfx-text" style="right:15px; top:102px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:63px; color:var(--text-disabled);">Uptime:</div>
+                <div id="diag-uptime" class="gfx-text" style="right:15px; top:63px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:82px; color:var(--text-disabled);">Heap now / min:</div>
+                <div id="diag-heap" class="gfx-text" style="right:15px; top:82px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:101px; color:var(--text-disabled);"
+                     title="Smallest free task stack (any task) / smallest largest-contiguous free heap block this session. Low stack = overflow risk.">Min stack / frag:</div>
+                <div id="diag-stackfrag" class="gfx-text" style="right:15px; top:101px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:120px; color:var(--text-disabled);"
+                     title="This session: alloc failures / I2C errors / WiFi drops (+ last drop reason). Non-zero worth noting.">Faults a·i·w:</div>
+                <div id="diag-faults" class="gfx-text" style="right:15px; top:120px; color:var(--text-primary);">—</div>
 
-                <div style="position:absolute; left:10px; top:120px; width:220px; height:1px; background:#333;"></div>
-                <div class="gfx-text" style="left:15px; top:126px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
+                <div style="position:absolute; left:10px; top:138px; width:220px; height:1px; background:#333;"></div>
+                <div class="gfx-text" style="left:15px; top:144px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
 
                 <!-- Scrollable ring list -->
-                <div id="diag-list" style="position:absolute; left:8px; top:140px; width:224px; height:126px; overflow-y:auto; font-size:10px;">
+                <div id="diag-list" style="position:absolute; left:8px; top:158px; width:224px; height:108px; overflow-y:auto; font-size:10px;">
                     <div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">Loading…</div>
                 </div>
 
@@ -5993,16 +5997,25 @@
         if (g('diag-uptime')) g('diag-uptime').innerText = diagFmtUptime(s.uptimeSec) +
                               '  (boot #' + (s.bootCount || 0) + ')';
         if (g('diag-heap')) g('diag-heap').innerText = (s.freeHeap || 0) + 'K / ' + (s.minHeap || 0) + 'K';
-        if (g('diag-stall')) {
-            // Worst sensorTask heartbeat stall this session (I2C diagnosis). It no
-            // longer reboots; a healthy device should read ~0. A few seconds means
-            // sensorTask was briefly starved/blocked and recovered on its own.
-            const st = s.maxSensorStallMs || 0;
-            g('diag-stall').innerText = st > 0 ? (st / 1000).toFixed(1) + 's' : 'none';
-            g('diag-stall').style.color = st >= 2000 ? '#ffaa00' :
-                                          st > 0     ? 'var(--text-primary)' : 'var(--text-disabled)';
+        // Min free task stack (bytes) / worst heap fragmentation (KB). Low stack
+        // = overflow risk (amber < 1KB, red < 512B).
+        if (g('diag-stackfrag')) {
+            const stk = s.minStack || 0, frag = s.maxAllocKB || 0;
+            const kb = (b) => b >= 1024 ? (b / 1024).toFixed(1) + 'K' : b + 'B';
+            g('diag-stackfrag').innerText = (stk ? kb(stk) : '—') + ' / ' + frag + 'K';
+            g('diag-stackfrag').style.color = (stk && stk < 512)  ? '#ff5050' :
+                                              (stk && stk < 1024) ? '#ffaa00' : 'var(--text-primary)';
         }
-        // Ring rows
+        // Session fault counters: alloc failures / I2C errors / WiFi drops (+ reason).
+        if (g('diag-faults')) {
+            const a = s.allocFails || 0, ii = s.i2cErrs || 0, w = s.wifiDrops || 0;
+            let t = a + ' · ' + ii + ' · ' + w;
+            if (w > 0 && s.lastDropReason) t += ' (r' + s.lastDropReason + ')';
+            g('diag-faults').innerText = t;
+            g('diag-faults').style.color = (a || ii || w) ? '#ffaa00' : 'var(--text-disabled)';
+        }
+        // Ring rows — reason + uptime · minHeap · minStack · version. A PANIC row
+        // with a tiny stk value points straight at a stack overflow.
         const ring = Array.isArray(s.ring) ? s.ring : [];
         if (!ring.length) {
             list.innerHTML = '<div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">No history yet</div>';
@@ -6010,10 +6023,11 @@
             list.innerHTML = ring.map(e => {
                 const bad = DIAG_BAD[e.reason];
                 const col = bad ? '#ffaa00' : 'var(--text-primary)';
+                const stk = e.minStack ? ' · stk ' + (e.minStack >= 1024 ? (e.minStack/1024).toFixed(1)+'K' : e.minStack+'B') : '';
                 return '<div style="display:flex; justify-content:space-between; gap:6px; padding:3px 6px; border-bottom:1px solid #222;">' +
                        '<span style="color:' + col + '; font-weight:' + (bad ? 'bold' : 'normal') + ';">' + e.reason + '</span>' +
                        '<span style="color:#888; white-space:nowrap;">' + diagFmtUptime(e.uptimeSec) +
-                       ' · ' + (e.minHeap || 0) + 'K · ' + (e.ver || '?') + '</span>' +
+                       ' · ' + (e.minHeap || 0) + 'K' + stk + ' · ' + (e.ver || '?') + '</span>' +
                        '</div>';
             }).join('');
         }
@@ -6030,11 +6044,17 @@
         lines.push('this boot: ' + (s.resetReasonNow || '?') + '  (boot #' + (s.bootCount || 0) + ')');
         lines.push('uptime: ' + diagFmtUptime(s.uptimeSec) +
                    '  heap now/min: ' + (s.freeHeap || 0) + 'K/' + (s.minHeap || 0) + 'K');
+        lines.push('stacks free (sensor/vib/loop): ' + (s.stackSensor || 0) + '/' +
+                   (s.stackVib || 0) + '/' + (s.stackLoop || 0) + 'B  (min ' + (s.minStack || 0) + 'B)');
+        lines.push('largest free block (min): ' + (s.maxAllocKB || 0) + 'K');
+        lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
+                   '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')');
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         lines.push('wifi: ' + (state.wifiSSID || '?') + '  ' + (state.wifiRSSI || '?') + ' dBm');
         lines.push('recent resets (newest first):');
         (s.ring || []).forEach(e => lines.push('  ' + e.reason + '  up ' + diagFmtUptime(e.uptimeSec) +
-                   '  minHeap ' + (e.minHeap || 0) + 'K  ' + e.slot + '  ' + (e.ver || '?')));
+                   '  minHeap ' + (e.minHeap || 0) + 'K  minStack ' + (e.minStack || 0) + 'B  frag ' +
+                   (e.maxAllocKB || 0) + 'K  ' + e.slot + '  ' + (e.ver || '?')));
         const text = lines.join('\n');
         try {
             await navigator.clipboard.writeText(text);

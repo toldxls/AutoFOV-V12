@@ -306,6 +306,10 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 // do not depend on the library exposing a FIFO API. See vibTask below.
 Adafruit_LSM6DSOX lsm;
 
+// Forward decl so PSRAMCanvas16::begin() (defined above the metrics block) can
+// count a hard allocation failure. Defined with the other health metrics below.
+extern std::atomic<uint32_t> allocFailCount;
+
 // ─── PSRAMCanvas16 — drop-in GFXcanvas16 replacement using PSRAM ─────────────
 // On ESP32-S3 with 2 MB PSRAM the 6 sprites below occupy ~91 KB.  Moving them
 // to PSRAM frees that internal heap for the WiFi / AsyncTCP / lwIP stack.
@@ -333,6 +337,7 @@ public:
       _buf = (uint16_t*)malloc(bytes);
     }
     if (_buf) memset(_buf, 0, bytes);
+    else allocFailCount.fetch_add(1, std::memory_order_relaxed);   // #5 hard fail (sprite disabled)
   }
   ~PSRAMCanvas16() { free(_buf); }
 
@@ -886,7 +891,10 @@ struct CalibBackup {
 // so a cold boot correctly starts bootCount=0. A deep brownout that also sags
 // the RTC domain simply looks like a cold boot (counter reset → never a false
 // rollback), which is the safe failure direction.
-#define RTC_RESIL_SENTINEL 0xAF0FB007UL
+// Bump the sentinel whenever RtcResilience GROWS — a warm reboot into the new
+// firmware would otherwise keep the old (shorter) struct's bytes and read the
+// new trailing fields as RTC garbage. A changed sentinel forces one clean init.
+#define RTC_RESIL_SENTINEL 0xAF0FB008UL   // V12.5.x: +lastMinStack/lastMaxAllocKB
 struct RtcResilience {
   uint32_t sentinel;          // == RTC_RESIL_SENTINEL once initialised
   uint32_t bootCount;         // F1: consecutive un-healthy boots (reset after 30 s uptime)
@@ -895,6 +903,8 @@ struct RtcResilience {
   uint32_t lastUptimeSec;     // F2: snapshot updated ~5 s in loop(), read next boot
   uint32_t lastMinHeap;       // F2: snapshot (KB) updated with lastUptimeSec
   uint32_t pendingReasonCode; // F2: synthetic reason to fold into the ring next boot (0 = none)
+  uint32_t lastMinStack;      // smallest free task stack (bytes) seen this session
+  uint32_t lastMaxAllocKB;    // smallest largest-contiguous-free block (KB) — fragmentation
 };
 RTC_NOINIT_ATTR RtcResilience g_rtc;
 
@@ -906,6 +916,8 @@ RTC_NOINIT_ATTR RtcResilience g_rtc;
 #define DIAG_REASON_SENSOR_WDT  101   // F3 sensor-heartbeat stall → self-heal reboot
 
 // F2: persisted ring of recent boot/crash records (NVS namespace "diag").
+// NOTE: growing this struct changes sizeof — the reader skips size-mismatched
+// (older-format) entries, so the ring self-heals over the next few boots.
 struct DiagEntry {
   uint8_t  reason;      // esp_reset_reason() code, or a DIAG_REASON_* synthetic
   uint8_t  _pad;
@@ -913,6 +925,9 @@ struct DiagEntry {
   uint32_t uptimeSec;   // g_rtc.lastUptimeSec captured just before the reset
   uint32_t minHeap;     // g_rtc.lastMinHeap (KB) captured just before the reset
   char     version[12]; // BUILD_VERSION of the image that was running
+  uint16_t minStack;    // smallest free task stack (bytes) before the reset — a
+                        //   near-zero value alongside a PANIC implicates a stack overflow
+  uint16_t maxAllocKB;  // smallest largest-free block (KB) — fragmentation before the reset
 };
 #define DIAG_RING_LEN 8
 
@@ -1096,6 +1111,21 @@ std::atomic<uint32_t> sensorHeartbeatMs{0};
 // but NOT acted on — see the F3 note in loop(). Surfaced in /diag to diagnose
 // the intermittent real-hardware I²C stall without rebooting.
 std::atomic<uint32_t> sensorMaxStallMs{0};
+
+// V12.5.x: session-level health metrics (all reset each boot; surfaced in /diag).
+// #1 per-task free-stack high-water (bytes); a value near 0 = stack-overflow risk.
+// 0 = not yet sampled. Written by loop()'s 5 s snapshot (Core 1), read by /diag.
+std::atomic<uint32_t> stackFreeSensor{0};
+std::atomic<uint32_t> stackFreeVib{0};
+std::atomic<uint32_t> stackFreeLoop{0};
+// #3 smallest largest-contiguous-free internal-heap block seen (KB) — fragmentation.
+std::atomic<uint32_t> minMaxAllocKB{0xFFFFFFFFUL};
+// #5 count of ps_malloc/malloc failures (sprites, vib buffers, OTA PSRAM buffer,
+//    transient canvases). Non-zero = memory pressure degraded a feature.
+std::atomic<uint32_t> allocFailCount{0};
+// #6 count of IMU/Wire I²C transaction errors (imuReadRegs/imuWriteReg failures) —
+//    a bus-health proxy that complements sensorMaxStallMs.
+std::atomic<uint32_t> i2cErrCount{0};
 
 // V12: vibration-monitor cross-core scalars. vibTask (Core 0) writes them;
 // loop() (Core 1) and the wifi tab read them. Plain scalars — no struct, no
@@ -4125,14 +4155,20 @@ static bool imuWriteReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(imuAddr);
   Wire.write(reg);
   Wire.write(val);
-  return Wire.endTransmission() == 0;
+  bool ok = (Wire.endTransmission() == 0);
+  if (!ok) i2cErrCount.fetch_add(1, std::memory_order_relaxed);   // #6 bus-health
+  return ok;
 }
 static uint8_t imuReadRegs(uint8_t reg, uint8_t *buf, uint8_t len) {
   Wire.beginTransmission(imuAddr);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return 0;   // repeated start
+  if (Wire.endTransmission(false) != 0) {          // repeated start failed
+    i2cErrCount.fetch_add(1, std::memory_order_relaxed);
+    return 0;
+  }
   uint8_t got = Wire.requestFrom(imuAddr, len);
   for (uint8_t i = 0; i < got && i < len; i++) buf[i] = Wire.read();
+  if (got != len) i2cErrCount.fetch_add(1, std::memory_order_relaxed);   // partial read
   return got;
 }
 
@@ -4184,6 +4220,7 @@ void vibBegin() {
     vibHann[n] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * n / (VIB_FFT_SIZE - 1)));
 
   vibReady = (vibRaw != nullptr && vibWF != nullptr);
+  if (!vibReady) allocFailCount.fetch_add(1, std::memory_order_relaxed);   // #5 vib buffers
   Serial.printf("[vib] vibBegin: raw=%s waterfall=%s\n",
                 vibRaw ? "ok" : "FAIL", vibWF ? "ok" : "FAIL");
 }
@@ -4775,6 +4812,8 @@ void setup() {
     e.bootSlot  = (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1) ? 1 : 0;
     e.uptimeSec = g_rtc.lastUptimeSec;
     e.minHeap   = g_rtc.lastMinHeap;
+    e.minStack  = (g_rtc.lastMinStack   > 0xFFFF) ? 0xFFFF : (uint16_t)g_rtc.lastMinStack;
+    e.maxAllocKB= (g_rtc.lastMaxAllocKB > 0xFFFF) ? 0xFFFF : (uint16_t)g_rtc.lastMaxAllocKB;
     strncpy(e.version, BUILD_VERSION, sizeof(e.version) - 1);
     Serial.printf("[BOOT] reset reason: %s (last run up %us, minHeap %uKB)\n",
                   diagReasonStr(reason), (unsigned)e.uptimeSec, (unsigned)e.minHeap);
@@ -4816,6 +4855,8 @@ void setup() {
     g_rtc.pendingReasonCode = 0;
     g_rtc.lastUptimeSec = 0;
     g_rtc.lastMinHeap   = 0;
+    g_rtc.lastMinStack  = 0;
+    g_rtc.lastMaxAllocKB = 0;
   }
 
   // Allocate sprite buffers now that PSRAM is fully initialised.
@@ -5227,11 +5268,34 @@ void loop() {
 
     // F2 — snapshot uptime + min-heap to RTC every ~5 s, so the NEXT boot can
     // report "was up 8 h / 40 KB then BROWNOUT" even after an uncontrolled reset.
+    // V12.5.x: also sample the health metrics here (once, cheaply, on Core 1) —
+    // #1 per-task free-stack high-water (predicts a stack-overflow PANIC and
+    // names the culprit) and #3 the largest contiguous free block (fragmentation,
+    // predicts an OOM despite "free heap OK"). The task-stack minimum and the
+    // worst fragmentation are folded into the RTC snapshot so the NEXT boot's
+    // ring entry records the pre-crash state.
     static uint32_t lastSnapMs = 0;
     if (nowMs - lastSnapMs > 5000) {
       lastSnapMs = nowMs;
       g_rtc.lastUptimeSec = nowMs / 1000;
       g_rtc.lastMinHeap   = ESP.getMinFreeHeap() / 1024;
+
+      // uxTaskGetStackHighWaterMark returns the min free stack in WORDS (×4 = B).
+      uint32_t sSensor = uxTaskGetStackHighWaterMark(sensorTaskHandle) * 4;
+      uint32_t sVib    = vibTaskHandle ? uxTaskGetStackHighWaterMark(vibTaskHandle) * 4 : 0;
+      uint32_t sLoop   = uxTaskGetStackHighWaterMark(NULL) * 4;   // loopTask (this task)
+      stackFreeSensor.store(sSensor, std::memory_order_relaxed);
+      if (sVib) stackFreeVib.store(sVib, std::memory_order_relaxed);
+      stackFreeLoop.store(sLoop, std::memory_order_relaxed);
+      uint32_t minStk = sSensor;
+      if (sVib && sVib < minStk) minStk = sVib;
+      if (sLoop < minStk)        minStk = sLoop;
+      g_rtc.lastMinStack = minStk;
+
+      uint32_t maxBlockKB = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024;
+      if (maxBlockKB < minMaxAllocKB.load(std::memory_order_relaxed))
+        minMaxAllocKB.store(maxBlockKB, std::memory_order_relaxed);
+      g_rtc.lastMaxAllocKB = minMaxAllocKB.load(std::memory_order_relaxed);
     }
 
     // F3 — sensor-heartbeat monitor. The auto-reboot is DISABLED: on real

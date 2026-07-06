@@ -131,6 +131,11 @@ static uint32_t        lastReconnectMs     = 0;
 // the password — instead of the silent 30 s retry loop with no way back.
 static volatile uint8_t     g_lastStaDisconnReason = 0;
 static std::atomic<bool>    g_portalFallbackReq{false};
+// V12.5.x (#4): runtime WiFi link health, surfaced in /diag. Count of drops
+// AFTER a successful connect (a flaky link), plus the reason of the most recent
+// runtime drop — the initial-connect reason above is separate (F5 portal logic).
+static std::atomic<uint32_t> wifiDropCount{0};
+static volatile uint8_t      g_lastRuntimeDisconnReason = 0;
 // True while staConnectTask (Core 0) owns the WiFi association during its
 // connect attempts. wifiLoop's reconnect logic (Core 1) checks it so the two
 // cores never command the WiFi driver at once — the 2-attempt connect can run
@@ -848,7 +853,12 @@ void wifiLoop() {
     if (WiFi.status() != WL_CONNECTED) {
         wifiConnected = false;
         lastReconnectMs = millis();
-        Serial.println("[WiFi] Connection lost — will retry");
+        // #4: a drop AFTER a good connect = flaky link. Count it + stash the
+        // reason (the onEvent handler captured it in g_lastStaDisconnReason).
+        wifiDropCount.fetch_add(1, std::memory_order_relaxed);
+        g_lastRuntimeDisconnReason = g_lastStaDisconnReason;
+        Serial.printf("[WiFi] Connection lost (reason %u) — will retry\n",
+                      g_lastRuntimeDisconnReason);
         if (currentMode == MAIN) drawWifiIndicator();   // patched3: show disconnected bars
         return;
     }
@@ -1659,13 +1669,29 @@ static void startFullServer() {
     // history + live heap, nothing sensitive.
     httpServer.on("/diag", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
-        DynamicJsonDocument doc(2048);
+        DynamicJsonDocument doc(3072);
         doc["resetReasonNow"] = diagReasonStr((uint8_t)esp_reset_reason());
         doc["bootCount"]  = g_rtc.bootCount;
         doc["uptimeSec"]  = millis() / 1000;
         doc["freeHeap"]   = ESP.getFreeHeap()    / 1024;
         doc["minHeap"]    = ESP.getMinFreeHeap() / 1024;
         doc["maxSensorStallMs"] = sensorMaxStallMs.load(std::memory_order_relaxed);
+        // V12.5.x health metrics (this session). #1 per-task free-stack bytes +
+        // #3 fragmentation + #4/#5/#6 fault counters.
+        uint32_t ss = stackFreeSensor.load(std::memory_order_relaxed);
+        uint32_t sv = stackFreeVib.load(std::memory_order_relaxed);
+        uint32_t sl = stackFreeLoop.load(std::memory_order_relaxed);
+        doc["stackSensor"] = ss;
+        doc["stackVib"]    = sv;
+        doc["stackLoop"]   = sl;
+        uint32_t mn = ss; if (sv && sv < mn) mn = sv; if (sl && sl < mn) mn = sl;
+        doc["minStack"]    = mn;                                   // smallest live free stack (bytes)
+        uint32_t mab = minMaxAllocKB.load(std::memory_order_relaxed);
+        doc["maxAllocKB"]  = (mab == 0xFFFFFFFFUL) ? 0 : mab;      // smallest largest-free block (KB)
+        doc["allocFails"]  = allocFailCount.load(std::memory_order_relaxed);
+        doc["i2cErrs"]     = i2cErrCount.load(std::memory_order_relaxed);
+        doc["wifiDrops"]   = wifiDropCount.load(std::memory_order_relaxed);
+        doc["lastDropReason"] = g_lastRuntimeDisconnReason;       // wifi_err_reason_t code
         JsonArray ring = doc.createNestedArray("ring");
         Preferences dp;
         dp.begin("diag", true);   // read-only
@@ -1682,6 +1708,8 @@ static void startFullServer() {
             o["reason"]    = diagReasonStr(e.reason);
             o["uptimeSec"] = e.uptimeSec;
             o["minHeap"]   = e.minHeap;
+            o["minStack"]  = e.minStack;
+            o["maxAllocKB"]= e.maxAllocKB;
             o["slot"]      = e.bootSlot ? "ota_1" : "ota_0";
             o["ver"]       = ver;
         }
