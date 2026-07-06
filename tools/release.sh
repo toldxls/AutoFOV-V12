@@ -27,6 +27,12 @@ AUTO_YES=0
 
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
 PAGES_URL="https://toldxls.github.io/AutoFOV-V12"
+# gh-pages is a deploy target, not an archive — every release adds a fresh
+# ~1.5 MB firmware.bin that git keeps forever (binaries don't delta-compress).
+# After each release we prune gh-pages history to the last N releases so the
+# branch stays flat: recent firmware.bin kept as a backup, older blobs dropped
+# (reclaimed by GitHub's server-side gc). The real history lives on main.
+KEEP_RELEASES=5
 
 # Refuse a dirty tree: the version is stamped from HEAD's commit count, so a
 # dirty build publishes a binary that corresponds to no commit — and two
@@ -158,9 +164,35 @@ else
     read -r ans
 fi
 if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-    ( cd "$WT" \
-      && git commit -m "release v$VERSION" \
-      && git push -u origin gh-pages )
+    (
+      cd "$WT"
+      git commit -qm "release v$VERSION"
+      REL=$(git rev-parse HEAD)
+      # Prune gh-pages to the last $KEEP_RELEASES releases (see note above). Rebuild
+      # a fresh linear history of just those commits' TREES via plumbing — no
+      # rebase, no conflicts. Best-effort with a hard safety gate: the pruned tip
+      # MUST serve the exact release tree, else we keep full history. bash-3.2 safe.
+      set +e
+      n=$(git rev-list --count HEAD)
+      if [ "$n" -gt "$KEEP_RELEASES" ]; then
+        prev=""
+        for c in $(git rev-list -n "$KEEP_RELEASES" HEAD | awk '{a[NR]=$0} END{for(i=NR;i>=1;i--)print a[i]}'); do
+          t=$(git rev-parse "$c^{tree}"); m=$(git log -1 --format=%s "$c")
+          if [ -z "$prev" ]; then prev=$(git commit-tree "$t" -m "$m")
+          else                    prev=$(git commit-tree "$t" -p "$prev" -m "$m"); fi
+        done
+        if [ -n "$prev" ] && [ "$(git rev-parse "$prev^{tree}" 2>/dev/null)" = "$(git rev-parse "$REL^{tree}")" ]; then
+          git checkout -qB gh-pages "$prev"
+          echo "gh-pages history pruned to the last $KEEP_RELEASES releases (was $n commits)"
+        else
+          echo "(history prune skipped — content safety check failed; full history kept)"
+        fi
+      fi
+      set -e
+      # Force needed after a prune (history rewrite); a no-prune push is a
+      # fast-forward so -f is harmless. Content is guaranteed correct by the gate.
+      git push -f origin gh-pages
+    )
     # Deploy via the Actions workflow (Pages Source must be "GitHub Actions").
     # Replaces the legacy branch auto-deploy, which kept failing on GitHub's
     # backend. gh workflow run is now the SOLE publish mechanism, so a failure
