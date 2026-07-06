@@ -47,11 +47,14 @@ fi
 
 # Count only REAL commits — non-firmware bookkeeping commits are excluded from
 # the version formula: release.sh's `build: regenerate web_ui.h` artifact
-# commits plus ci:/chore:/docs: tooling & docs commits. Mirrors
-# tools/embed_html.py's EXCLUDED_SUBJECTS; keep the two lists identical.
-commit_count=$(git rev-list --count --invert-grep \
-    --grep='^build: regenerate web_ui\.h' \
-    --grep='^ci[:(]' --grep='^chore[:(]' --grep='^docs[:(]' HEAD)
+# commits plus ci:/chore:/docs: tooling & docs commits. Match the SUBJECT only
+# (git --grep also matches body lines via REG_NEWLINE, which would wrongly drop
+# a firmware commit whose body merely mentions one of these prefixes). Mirrors
+# tools/embed_html.py's EXCLUDED_SUBJECTS; keep the patterns identical.
+total_count=$(git rev-list --count HEAD)
+excluded_count=$(git log --pretty=%s HEAD \
+    | grep -cE '^(build: regenerate web_ui\.h|ci[:(]|chore[:(]|docs[:(])' || true)
+commit_count=$((total_count - excluded_count))
 
 # Mirror tools/embed_html.py's version formula. Reading the constants out of
 # that file keeps the two in lockstep — bumping VERSION_MINOR or rebasing
@@ -86,6 +89,26 @@ if [ -n "$bin" ] && [ -n "$slot_hex" ]; then
         elif [ "$QUIET" = 0 ]; then
             echo "${DIM}${flash_msg}${RST}"
         fi
+    fi
+fi
+
+# ── Repo-size check ─────────────────────────────────────────────────────────
+# Warn (even under --quiet) when .git grows large enough to be worth a
+# DELIBERATE history prune. Detection only — never auto-rewrites: a history
+# rewrite forces a force-push and invalidates every other clone, so it stays a
+# manual, intentional action. Normal state is well under the threshold (~30 MB),
+# so this is silent unless something genuinely bloated slipped in. build/ is
+# gitignored and the pre-push hook guards new large blobs, so this is a
+# backstop, not a routine nag.
+GIT_WARN_MB=150
+# --git-common-dir (not --git-dir) so the measurement targets the shared object
+# store even when sourced from inside a linked worktree (--git-dir would return
+# the tiny per-worktree metadata dir and never trip the warning).
+git_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ -n "$git_dir" ]; then
+    git_mb=$(du -sm "$git_dir" 2>/dev/null | awk '{print $1}')
+    if [ -n "$git_mb" ] && [ "$git_mb" -ge "$GIT_WARN_MB" ]; then
+        echo "${YEL}.git is ${git_mb} MB${RST} — consider a deliberate history prune (build/ artifacts or gh-pages firmware.bin history)"
     fi
 fi
 

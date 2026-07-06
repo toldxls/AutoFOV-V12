@@ -53,10 +53,22 @@ def git(cmd):
     except Exception:
         return '?'
 
-_grep = []
-for _pat in EXCLUDED_SUBJECTS:
-    _grep += ['--grep', _pat]
-count  = git(['git', 'rev-list', '--count', '--invert-grep', *_grep, 'HEAD'])
+# Count only REAL commits toward the patch number. Match EXCLUDED_SUBJECTS
+# against each commit's SUBJECT only: `git rev-list --grep` anchors ^ at every
+# line of the message (REG_NEWLINE), so a firmware commit whose *body* merely
+# mentions one of these prefixes would be wrongly dropped from the count — and a
+# firmware change that doesn't bump the version reintroduces the phantom
+# "no update available" bug this whole scheme exists to prevent. Subjects (%s)
+# are single-line, so matching them is exact.
+_total    = git(['git', 'rev-list', '--count', 'HEAD'])
+_subjects = git(['git', 'log', '--pretty=%s', 'HEAD'])
+try:
+    _pats = [re.compile(p) for p in EXCLUDED_SUBJECTS]
+    _excl = sum(1 for s in _subjects.split('\n')
+                if s and any(p.match(s) for p in _pats))
+    count = int(_total) - _excl
+except (ValueError, TypeError):
+    count = _total   # git unavailable — leave whatever git() returned
 commit = git(['git', 'rev-parse', '--short', 'HEAD'])
 try:
     patch = max(0, int(count) - VERSION_PATCH_BASE)

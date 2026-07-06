@@ -3,31 +3,80 @@
 #     git config core.hooksPath tools/hooks
 # (or run tools/install-hooks.sh).
 #
-#   1. The dashboard's inline JS must pass `node --check` — checks the file AS
+#   1. Large-blob guard — rejects any pushed commit that adds a file over 1 MB
+#      to history (a stray firmware.bin, .elf, image, or archive). History bloat
+#      is only removable with a force-push that invalidates every clone, so it's
+#      cheapest to stop at the source. The two large hand-written/generated text
+#      files (data/index.html, data/web_ui.h) are exempt.
+#   2. The dashboard's inline JS must pass `node --check` — checks the file AS
 #      COMMITTED at the TIP of each pushed ref (not the working tree: a
 #      dirty-tree fix used to let a broken commit through, and a dirty-tree
 #      breakage used to block pushing perfectly good commits). Intermediate
 #      commits of a multi-commit push are not checked — builds/OTA images come
 #      from tips, so that's the surface that matters here.
-#   2. Prints drift / flash-usage status afterwards (informational, never blocks
-#      — main is normally ahead of gh-pages between releases).
+#   3. Prints drift / flash-usage / repo-size status afterwards (informational,
+#      never blocks — main is normally ahead of gh-pages between releases).
 #
 # Refs without data/index.html (e.g. the gh-pages worktree release.sh pushes
-# from) are skipped, so it never blocks a release.
+# from) are skipped entirely, so it never blocks a release's firmware.bin.
 # Override in a pinch with:  git push --no-verify
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$root" || exit 0
 
-# 1) Dashboard JS must parse, for every commit being pushed. Syntax-only —
-#    node --check ignores the undefined browser globals (document, WebSocket,
-#    …), it just validates the grammar.
-if command -v node >/dev/null 2>&1; then
-    while read -r local_ref local_sha remote_ref remote_sha; do
-        # Branch deletion (local sha all zeros) — nothing to check.
-        case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-        # Ref without a dashboard (gh-pages) — skip.
-        git cat-file -e "$local_sha:data/index.html" 2>/dev/null || continue
+# Buffer the pushed-ref list from stdin ONCE — both per-ref checks below iterate
+# it, and git feeds the ref list on stdin which can only be consumed a single
+# time. (`|| [ -n "$line" ]` catches a final line with no trailing newline.)
+refs=()
+while read -r line || [ -n "$line" ]; do refs+=("$line"); done
+
+have_node=0
+command -v node >/dev/null 2>&1 && have_node=1
+
+# 1 MB — comfortably above the two large hand-written/generated text files
+# (data/index.html, data/web_ui.h, both ~0.6 MB and growing) yet below a stray
+# firmware.bin (~1.5 MB), .elf, image, or archive. Those are the blobs that
+# bloat history irreversibly.
+MAX_BLOB_BYTES=$((1024 * 1024))
+
+for line in "${refs[@]}"; do
+    read -r local_ref local_sha remote_ref remote_sha <<<"$line"
+
+    # Branch deletion (local sha all zeros) — nothing to check.
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+    # Ref without a dashboard (the gh-pages worktree release.sh pushes from) —
+    # skip BOTH checks: it legitimately carries firmware.bin and has no JS.
+    git cat-file -e "$local_sha:data/index.html" 2>/dev/null || continue
+
+    # (1) Large-blob guard. Scans the commit RANGE being pushed (not just the
+    #     tip) so a big file added then deleted across commits — still in the
+    #     packfile — is caught. A brand-new ref (remote sha all zeros) is bounded
+    #     with `--not --remotes` so it never rescans all of history.
+    case "$remote_sha" in
+        *[!0]*) rl_range=("$remote_sha..$local_sha") ;;
+        *)      rl_range=("$local_sha" --not --remotes) ;;
+    esac
+    big=$(git rev-list --objects "${rl_range[@]}" 2>/dev/null \
+        | git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' 2>/dev/null \
+        | awk -v lim="$MAX_BLOB_BYTES" '
+            $1 == "blob" && $2 + 0 > lim {
+                path = ""
+                for (i = 3; i <= NF; i++) path = path (i > 3 ? " " : "") $i
+                if (path == "data/index.html" || path == "data/web_ui.h") next
+                printf "  %.1f MB  %s\n", $2 / 1048576, path
+            }')
+    if [ -n "$big" ]; then
+        echo "pre-push: commit ${local_sha:0:8} adds file(s) over $((MAX_BLOB_BYTES / 1048576)) MB — push blocked:" >&2
+        echo "$big" >&2
+        echo "  large binaries bloat git history irreversibly (removal needs a force-push)." >&2
+        echo "  remove them from the pushed commits, or override with: git push --no-verify" >&2
+        exit 1
+    fi
+
+    # (2) Dashboard inline JS must parse. Syntax-only — node --check ignores the
+    #     undefined browser globals (document, WebSocket, …), just the grammar.
+    #     Checks the file AS COMMITTED at the ref tip, not the working tree.
+    if [ "$have_node" = 1 ]; then
         # Temp DIR with a .js file inside — node --check rejects files whose
         # extension it doesn't recognise, and mktemp can't guarantee a .js suffix.
         tmpd=$(mktemp -d -t autofov_js.XXXXXX) || exit 0
@@ -49,9 +98,9 @@ PY
             exit 1
         fi
         rm -rf "$tmpd"
-    done
-fi
+    fi
+done
 
-# 2) Release drift + flash usage (informational only).
+# Release drift + flash usage + repo size (informational only).
 bash tools/drift-check.sh 2>/dev/null || true
 exit 0
