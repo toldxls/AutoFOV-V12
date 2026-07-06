@@ -214,6 +214,24 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
         echo "  !! Install gh (or set Pages Source back to a branch), then run:"
         echo "  !!   gh workflow run pages.yml"
     fi
+    # Publish a GitHub Release: tag v$VERSION + downloadable firmware.bin, for
+    # version-pinned manual flashing (dashboard → FIRMWARE UPDATE file-picker, or
+    # USB recovery). The dashboard's auto-update still fetches from Pages — release
+    # assets don't send CORS headers, so they can't be browser-fetched. Additive,
+    # best-effort. Tags main's current tip (the firmware's source commit).
+    if command -v gh >/dev/null 2>&1; then
+        if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "GitHub Release v$VERSION already exists — skipping."
+        elif gh release create "v$VERSION" "$WT/firmware.bin" --target main \
+                --title "AutoFOV v$VERSION" \
+                --notes "Firmware $VERSION — sha256 \`$SHA\`
+
+Flash via the dashboard (WiFi Info → FIRMWARE UPDATE, device on WiFi) or the USB recovery flasher at $PAGES_URL/. Download firmware.bin below to pin a specific version for manual OTA upload."; then
+            echo "GitHub Release v$VERSION published (firmware.bin attached)"
+        else
+            echo "  (gh release create failed — non-fatal; firmware is live on Pages)"
+        fi
+    fi
     echo ""
     if [ "$DEPLOYED" = 1 ]; then
         echo "=== Deploy triggered (v$VERSION) ==="
