@@ -1171,8 +1171,8 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 115px; background-color: #006400;">MEMORY &amp; INFO</div>
                 <!-- V12.5: web-only diagnostics (reset history) — the friend in a
                      browser is exactly who needs it; the device has no such screen. -->
-                <div class="gfx-btn" style="left: 132px; top: 4px; width: 60px; height: 29px;
-                     background-color: #5a3a00; font-size: 11px;" onclick="switchScreen('screen-diag')">DIAG</div>
+                <div class="gfx-btn" style="left: 93px; top: 290px; width: 54px; height: 22px;
+                     background-color: #5a3a00; font-size: 10px;" onclick="switchScreen('screen-diag')">DIAG</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
 
                 <!-- Heap bar -->
@@ -1253,22 +1253,22 @@
                 <!-- Separator -->
                 <div id="mem-separator" style="position:absolute; left:10px; top:184px; width:220px; height:1px; background:#333;"></div>
 
-                <!-- System info rows — 18 px row pitch (was 22) to free a row
-                     for die temp without overflowing the 320 px screen. -->
+                <!-- System info rows — 16 px row pitch, tightened to free space at
+                     the bottom for the centred DIAG button below Die temp. -->
                 <div class="gfx-text" style="left:15px; top:192px; color:var(--text-disabled);">Firmware:</div>
                 <div class="gfx-text" style="right:15px; top:192px; color:var(--accent-green);">Auto FOV V12</div>
-                <div class="gfx-text" style="left:15px; top:212px; color:var(--text-disabled);">CPU:</div>
-                <div id="mem-cpu" class="gfx-text" style="right:15px; top:212px; color:var(--text-primary);">240 MHz</div>
-                <div class="gfx-text" style="left:15px; top:232px; color:var(--text-disabled);">SDK:</div>
-                <div id="mem-sdk" class="gfx-text" style="right:15px; top:232px; color:var(--text-disabled);">5.1.2</div>
-                <div class="gfx-text" style="left:15px; top:252px; color:var(--text-disabled);">Source:</div>
-                <div id="mem-source" class="gfx-text" style="right:15px; top:252px; color:var(--text-disabled);">—</div>
-                <div class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled);"
+                <div class="gfx-text" style="left:15px; top:208px; color:var(--text-disabled);">CPU:</div>
+                <div id="mem-cpu" class="gfx-text" style="right:15px; top:208px; color:var(--text-primary);">240 MHz</div>
+                <div class="gfx-text" style="left:15px; top:224px; color:var(--text-disabled);">SDK:</div>
+                <div id="mem-sdk" class="gfx-text" style="right:15px; top:224px; color:var(--text-disabled);">5.1.2</div>
+                <div class="gfx-text" style="left:15px; top:240px; color:var(--text-disabled);">Source:</div>
+                <div id="mem-source" class="gfx-text" style="right:15px; top:240px; color:var(--text-disabled);">—</div>
+                <div class="gfx-text" style="left:15px; top:256px; color:var(--text-disabled);"
                      title="Firmware used / running app-slot capacity. The matching 1.8 MB slot isn't counted — it holds the OTA rollback image (see the partition bars above).">Flash:</div>
-                <div id="mem-flash" class="gfx-text" style="right:15px; top:272px; color:var(--text-disabled);"
+                <div id="mem-flash" class="gfx-text" style="right:15px; top:256px; color:var(--text-disabled);"
                      title="Firmware used / running app-slot capacity. The matching 1.8 MB slot isn't counted — it holds the OTA rollback image (see the partition bars above).">—</div>
-                <div class="gfx-text" style="left:15px; top:292px; color:var(--text-disabled);">Die temp:</div>
-                <div id="mem-die" class="gfx-text" style="right:15px; top:292px; color:var(--accent-cyan);">—</div>
+                <div class="gfx-text" style="left:15px; top:272px; color:var(--text-disabled);">Die temp:</div>
+                <div id="mem-die" class="gfx-text" style="right:15px; top:272px; color:var(--accent-cyan);">—</div>
             </div>
 
             <!-- ===================== DIAGNOSTICS (V12.5, web-only) =====================
