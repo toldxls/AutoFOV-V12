@@ -826,7 +826,13 @@ void wifiLoop() {
     // ── Reconnect logic ──────────────────────────────────────────────────────
     // Skip while staConnectTask (Core 0) still owns the association during its
     // initial connect attempts — otherwise both cores drive the WiFi driver.
-    if (!wifiConnected && !g_staConnecting.load(std::memory_order_acquire)) {
+    if (!wifiConnected) {
+        // staConnectTask (Core 0) owns the association during its connect
+        // attempts — return early so we neither drive WiFi from Core 1 NOR run
+        // the drop-detection below (which, unguarded, fired every loop iteration
+        // during the connect window: spurious drop-count, "Connection lost" spam,
+        // and an indicator redraw ~1000×/s).
+        if (g_staConnecting.load(std::memory_order_acquire)) return;
         if (millis() - lastReconnectMs >= RECONNECT_INTERVAL_MS) {
             lastReconnectMs = millis();
             if (WiFi.status() == WL_CONNECTED) {
@@ -849,7 +855,8 @@ void wifiLoop() {
         return;
     }
 
-    // Check for drop since last loop
+    // Check for drop since last loop (only reached when wifiConnected == true, so
+    // this is a genuine drop after a good connect — not the initial-connect churn)
     if (WiFi.status() != WL_CONNECTED) {
         wifiConnected = false;
         lastReconnectMs = millis();
@@ -1692,6 +1699,22 @@ static void startFullServer() {
         doc["i2cErrs"]     = i2cErrCount.load(std::memory_order_relaxed);
         doc["wifiDrops"]   = wifiDropCount.load(std::memory_order_relaxed);
         doc["lastDropReason"] = g_lastRuntimeDisconnReason;       // wifi_err_reason_t code
+        // Last panic's location, from the flash coredump (ELF). Parsed once and
+        // cached — a crashPc + crashTask here pins where the device last crashed;
+        // decode with: xtensa-esp32s3-elf-addr2line -e <build>.elf <crashPc>.
+        static esp_core_dump_summary_t cds;
+        static int cdsState = 0;   // 0 = untried, 1 = have summary, 2 = none stored
+        if (cdsState == 0) cdsState = (esp_core_dump_get_summary(&cds) == ESP_OK) ? 1 : 2;
+        if (cdsState == 1) {
+            char pc[12]; snprintf(pc, sizeof(pc), "0x%08x", (unsigned)cds.exc_pc);
+            doc["crashPc"]   = pc;
+            doc["crashTask"] = cds.exc_task;
+            JsonArray bt = doc.createNestedArray("crashBt");
+            for (uint32_t i = 0; i < cds.exc_bt_info.depth && i < 12; i++) {
+                char a[12]; snprintf(a, sizeof(a), "0x%08x", (unsigned)cds.exc_bt_info.bt[i]);
+                bt.add(a);
+            }
+        }
         JsonArray ring = doc.createNestedArray("ring");
         Preferences dp;
         dp.begin("diag", true);   // read-only

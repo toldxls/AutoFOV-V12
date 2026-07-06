@@ -27,6 +27,7 @@
 #include <esp_ota_ops.h>   // esp_ota_get_running_partition() — real app-slot size for the Flash readout
 #include <esp_system.h>    // V12.5: esp_reset_reason() — boot diagnostics + boot-loop rollback
 #include <esp_task_wdt.h>  // V12.5: loopTask hardware watchdog (Core-1 freeze backstop)
+#include <esp_core_dump.h> // V12.5.x: read the last panic's PC/task/backtrace (flash coredump)
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 

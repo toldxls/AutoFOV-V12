@@ -1282,22 +1282,24 @@
                 <!-- Live summary -->
                 <div class="gfx-text" style="left:15px; top:44px; color:var(--text-disabled);">This boot:</div>
                 <div id="diag-now" class="gfx-text" style="right:15px; top:44px; color:var(--accent-green);">—</div>
-                <div class="gfx-text" style="left:15px; top:63px; color:var(--text-disabled);">Uptime:</div>
-                <div id="diag-uptime" class="gfx-text" style="right:15px; top:63px; color:var(--text-primary);">—</div>
-                <div class="gfx-text" style="left:15px; top:82px; color:var(--text-disabled);">Heap now / min:</div>
-                <div id="diag-heap" class="gfx-text" style="right:15px; top:82px; color:var(--text-primary);">—</div>
-                <div class="gfx-text" style="left:15px; top:101px; color:var(--text-disabled);"
+                <div class="gfx-text" style="left:15px; top:62px; color:var(--text-disabled);">Uptime:</div>
+                <div id="diag-uptime" class="gfx-text" style="right:15px; top:62px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:80px; color:var(--text-disabled);">Heap now / min:</div>
+                <div id="diag-heap" class="gfx-text" style="right:15px; top:80px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:98px; color:var(--text-disabled);"
                      title="Smallest free task stack (any task) / smallest largest-contiguous free heap block this session. Low stack = overflow risk.">Min stack / frag:</div>
-                <div id="diag-stackfrag" class="gfx-text" style="right:15px; top:101px; color:var(--text-primary);">—</div>
-                <div class="gfx-text" style="left:15px; top:120px; color:var(--text-disabled);"
-                     title="This session: alloc failures / I2C errors / WiFi drops (+ last drop reason). Non-zero worth noting.">Faults a·i·w:</div>
-                <div id="diag-faults" class="gfx-text" style="right:15px; top:120px; color:var(--text-primary);">—</div>
+                <div id="diag-stackfrag" class="gfx-text" style="right:15px; top:98px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:116px; color:var(--text-disabled);">Faults:</div>
+                <div id="diag-faults" class="gfx-text" style="right:15px; top:116px; color:var(--text-primary); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:15px; top:134px; color:var(--text-disabled);"
+                     title="Program counter + task of the LAST panic, from the flash coredump.">Last crash:</div>
+                <div id="diag-crash" class="gfx-text" style="right:15px; top:134px; color:var(--text-disabled); font-size:11px;">—</div>
 
-                <div style="position:absolute; left:10px; top:138px; width:220px; height:1px; background:#333;"></div>
-                <div class="gfx-text" style="left:15px; top:144px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
+                <div style="position:absolute; left:10px; top:152px; width:220px; height:1px; background:#333;"></div>
+                <div class="gfx-text" style="left:15px; top:158px; color:#888; font-size:10px;">RECENT RESETS (a=alloc i=i2c w=wifi faults)</div>
 
                 <!-- Scrollable ring list -->
-                <div id="diag-list" style="position:absolute; left:8px; top:158px; width:224px; height:108px; overflow-y:auto; font-size:10px;">
+                <div id="diag-list" style="position:absolute; left:8px; top:172px; width:224px; height:94px; overflow-y:auto; font-size:10px;">
                     <div class="gfx-text" style="position:static; color:var(--text-disabled); padding:6px;">Loading…</div>
                 </div>
 
@@ -6006,13 +6008,21 @@
             g('diag-stackfrag').style.color = (stk && stk < 512)  ? '#ff5050' :
                                               (stk && stk < 1024) ? '#ffaa00' : 'var(--text-primary)';
         }
-        // Session fault counters: alloc failures / I2C errors / WiFi drops (+ reason).
+        // Session fault counters, spelled out (no hover tooltip needed on touch).
         if (g('diag-faults')) {
             const a = s.allocFails || 0, ii = s.i2cErrs || 0, w = s.wifiDrops || 0;
-            let t = a + ' · ' + ii + ' · ' + w;
-            if (w > 0 && s.lastDropReason) t += ' (r' + s.lastDropReason + ')';
-            g('diag-faults').innerText = t;
+            g('diag-faults').innerText = 'alloc ' + a + '·i2c ' + ii + '·wifi ' + w;
             g('diag-faults').style.color = (a || ii || w) ? '#ffaa00' : 'var(--text-disabled)';
+        }
+        // Last crash location (from the flash coredump) — the smoking gun for a PANIC.
+        if (g('diag-crash')) {
+            if (s.crashPc) {
+                g('diag-crash').innerText = (s.crashTask || '?') + ' @ ' + s.crashPc;
+                g('diag-crash').style.color = '#ff6666';
+            } else {
+                g('diag-crash').innerText = 'none';
+                g('diag-crash').style.color = 'var(--text-disabled)';
+            }
         }
         // Ring rows — reason + uptime · minHeap · minStack · version. A PANIC row
         // with a tiny stk value points straight at a stack overflow.
@@ -6050,20 +6060,60 @@
         lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
                    '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')');
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
+        if (s.crashPc) {
+            lines.push('LAST CRASH: ' + (s.crashTask || '?') + ' @ pc ' + s.crashPc +
+                       (s.crashBt ? '  bt ' + s.crashBt.join(' ') : ''));
+        }
         lines.push('wifi: ' + (state.wifiSSID || '?') + '  ' + (state.wifiRSSI || '?') + ' dBm');
         lines.push('recent resets (newest first):');
         (s.ring || []).forEach(e => lines.push('  ' + e.reason + '  up ' + diagFmtUptime(e.uptimeSec) +
                    '  minHeap ' + (e.minHeap || 0) + 'K  minStack ' + (e.minStack || 0) + 'B  frag ' +
                    (e.maxAllocKB || 0) + 'K  ' + e.slot + '  ' + (e.ver || '?')));
         const text = lines.join('\n');
+        const ok = () => { if (status) { status.innerText = 'Copied to clipboard'; status.style.color = 'var(--accent-green)'; } };
         try {
+            // Preferred path — needs a secure context (https / localhost).
             await navigator.clipboard.writeText(text);
-            if (status) { status.innerText = 'Copied to clipboard'; status.style.color = 'var(--accent-green)'; }
+            ok();
         } catch (e) {
-            // Clipboard API needs a secure context / permission; fall back to a prompt.
-            window.prompt('Copy diagnostics:', text);
-            if (status) { status.innerHTML = '&nbsp;'; }
+            // Plain-HTTP LAN: the Clipboard API is blocked. Fall back to a hidden
+            // <textarea> + execCommand('copy'), which works on http AND preserves
+            // the newlines (window.prompt flattened everything onto one line).
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed'; ta.style.left = '-9999px';
+                ta.setAttribute('readonly', '');
+                document.body.appendChild(ta);
+                ta.select(); ta.setSelectionRange(0, text.length);
+                const copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (copied) ok();
+                else throw new Error('execCommand failed');
+            } catch (e2) {
+                // Last resort — a multi-line textarea modal to hand-copy from.
+                showDiagCopyModal(text);
+                if (status) { status.innerHTML = '&nbsp;'; }
+            }
         }
+    }
+    // Last-resort copy UI: a real multi-line textarea (keeps line breaks, unlike
+    // window.prompt) the user can select-all and copy manually.
+    function showDiagCopyModal(text) {
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:9999; display:flex; align-items:center; justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#1a1a1a; border:1px solid #555; border-radius:6px; padding:12px; width:90%; max-width:460px;';
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.readOnly = true;
+        ta.style.cssText = 'width:100%; height:240px; background:#000; color:#ddd; border:1px solid #444; font-family:monospace; font-size:11px; white-space:pre; resize:none;';
+        const btn = document.createElement('div');
+        btn.className = 'gfx-btn'; btn.textContent = 'CLOSE';
+        btn.style.cssText = 'position:relative; margin:10px auto 0; width:100px; height:30px; background:#00568a;';
+        btn.onclick = () => document.body.removeChild(ov);
+        box.appendChild(ta); box.appendChild(btn); ov.appendChild(box);
+        document.body.appendChild(ov);
+        ta.focus(); ta.select();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
