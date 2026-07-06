@@ -161,14 +161,21 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
     ( cd "$WT" \
       && git commit -m "release v$VERSION" \
       && git push -u origin gh-pages )
+    # Deploy via the Actions workflow (Pages Source must be "GitHub Actions").
+    # Replaces the legacy branch auto-deploy, which kept failing on GitHub's
+    # backend. Best-effort: if gh/workflow is missing the push still landed.
+    if command -v gh >/dev/null 2>&1; then
+        echo "Triggering Pages deploy workflow…"
+        gh workflow run pages.yml 2>&1 | sed 's/^/  /' || \
+            echo "  (workflow trigger failed — run: gh workflow run pages.yml)"
+    fi
     echo ""
     echo "=== Published ==="
     echo "Live at: $PAGES_URL/"
     echo "Manifest: $PAGES_URL/manifest.json"
     echo "Recovery: $PAGES_URL/"
     echo ""
-    echo "First release? Enable Pages once:"
-    echo "  GitHub → repo Settings → Pages → Source: branch 'gh-pages' / root"
+    echo "Deploy status: gh run watch \$(gh run list --workflow=pages.yml -L1 --json databaseId -q '.[0].databaseId')"
 else
     echo "Aborted — nothing pushed."
     # The worktree is cleaned up by the EXIT trap. It must NOT be kept: a

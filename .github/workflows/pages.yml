@@ -1,0 +1,46 @@
+# Deploy the gh-pages branch to GitHub Pages via the modern Actions pipeline.
+#
+# This REPLACES the legacy "Deploy from a branch" backend, which became
+# unreliable for this repo — recurring "Deployment failed, try again later" at
+# the deploy step even though the content and Jekyll build were fine. The
+# firmware / manifest / recovery files are still produced by tools/release.sh
+# and pushed to the gh-pages branch; release.sh then triggers this workflow
+# (`gh workflow run pages.yml`) to publish them.
+#
+# One-time setup: repo Settings -> Pages -> Source = "GitHub Actions".
+name: Deploy Pages
+
+on:
+  workflow_dispatch:      # release.sh triggers this after pushing gh-pages
+  push:
+    branches: [main]      # also redeploy if the workflow itself changes
+    paths: ['.github/workflows/pages.yml']
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two deploys at once; let an in-flight one finish (don't cancel).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout gh-pages content
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
