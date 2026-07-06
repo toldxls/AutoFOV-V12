@@ -12,25 +12,34 @@ VERSION_MINOR = 4   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
 # REAL commit count at the bump commit so patch = real_count - base.  Without
 # this, each new series would inherit the old running count instead of starting
-# at .0.  "Real" excludes the `build: regenerate web_ui.h` bookkeeping commits:
-# counting them inflated the patch number (~38% of history), skipped version
-# numbers between releases, and — whenever the test build's regen commit landed
-# before release.sh ran — stamped the release one higher than the
-# hardware-tested build, so devices saw a phantom "update available" for
-# identical source.  With them excluded, the test build and the release carry
-# the SAME version (they differ only in BUILD_COMMIT).  JS semver compare
-# orders by minor first, so the OTA update gate sees 12.2.x > 12.1.y
-# regardless of patch.
+# at .0.  "Real" excludes non-firmware bookkeeping commits (see EXCLUDED_SUBJECTS
+# below): counting them inflated the patch number, skipped version numbers
+# between releases, and — whenever a test build's regen commit landed before
+# release.sh ran — stamped the release one higher than the hardware-tested
+# build, so devices saw a phantom "update available" for identical source.
+# With them excluded, the test build and the release carry the SAME version
+# (they differ only in BUILD_COMMIT).  JS semver compare orders by minor first,
+# so the OTA update gate sees 12.2.x > 12.1.y regardless of patch.
 # 12.2: the bug-sweep series — calibration sync, vib inStack latch, OTA reboot
 # overlay, auth reconnect, TOF signal smoothing.
 # 12.3: photo-assisted calibration — measure the pixel count from a micrometer
 # JPEG (auto tick detection, deskew, in-focus region, contrast-profile review).
 # 2026-07-05: base rebased 293 -> 166 when the formula switched to real-commit
 # counting (211 real commits at released v12.4.45: 211 - 166 = 45).
-VERSION_PATCH_BASE = 166
-# The subject prefix excluded from the count — release.sh's follow-up artifact
-# commits. drift-check.sh greps this SAME pattern out; keep them identical.
-REGEN_SUBJECT = r'^build: regenerate web_ui\.h'
+# 2026-07-06: base rebased 166 -> 155 when ci:/chore:/docs: tooling & docs
+# commits were also excluded (they don't change firmware, so they must not bump
+# the patch). 212 real commits at v12.4.57: 212 - 155 = 57.
+VERSION_PATCH_BASE = 155
+# Subject prefixes excluded from the version count — commits that don't change
+# firmware behaviour, so they must not bump the patch number:
+#   * release.sh's follow-up `build: regenerate web_ui.h` artifact commits
+#   * ci:/chore:/docs: tooling & documentation commits (conventional-commit
+#     prefix, with or without a "(scope)")
+# drift-check.sh greps this SAME set out; keep the two lists identical.
+EXCLUDED_SUBJECTS = [
+    r'^build: regenerate web_ui\.h',
+    r'^ci[:(]', r'^chore[:(]', r'^docs[:(]',
+]
 # ─────────────────────────────────────────────────────────────────────────────
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
@@ -44,8 +53,10 @@ def git(cmd):
     except Exception:
         return '?'
 
-count  = git(['git', 'rev-list', '--count',
-              '--invert-grep', '--grep', REGEN_SUBJECT, 'HEAD'])
+_grep = []
+for _pat in EXCLUDED_SUBJECTS:
+    _grep += ['--grep', _pat]
+count  = git(['git', 'rev-list', '--count', '--invert-grep', *_grep, 'HEAD'])
 commit = git(['git', 'rev-parse', '--short', 'HEAD'])
 try:
     patch = max(0, int(count) - VERSION_PATCH_BASE)

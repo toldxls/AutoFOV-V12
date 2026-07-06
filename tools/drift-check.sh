@@ -45,10 +45,13 @@ if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
                | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 fi
 
-# Count only REAL commits — the `build: regenerate web_ui.h` bookkeeping
-# commits are excluded from the version formula (mirrors tools/embed_html.py's
-# REGEN_SUBJECT; keep the two patterns identical).
-commit_count=$(git rev-list --count --invert-grep --grep='^build: regenerate web_ui\.h' HEAD)
+# Count only REAL commits — non-firmware bookkeeping commits are excluded from
+# the version formula: release.sh's `build: regenerate web_ui.h` artifact
+# commits plus ci:/chore:/docs: tooling & docs commits. Mirrors
+# tools/embed_html.py's EXCLUDED_SUBJECTS; keep the two lists identical.
+commit_count=$(git rev-list --count --invert-grep \
+    --grep='^build: regenerate web_ui\.h' \
+    --grep='^ci[:(]' --grep='^chore[:(]' --grep='^docs[:(]' HEAD)
 
 # Mirror tools/embed_html.py's version formula. Reading the constants out of
 # that file keeps the two in lockstep — bumping VERSION_MINOR or rebasing
