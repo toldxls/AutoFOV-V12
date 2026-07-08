@@ -1023,6 +1023,8 @@ void wifiLoop() {
     static int      lastTint         = -1;
     static uint32_t lastDimMs        = 0xFFFFFFFFUL;
     static uint32_t lastSleepMs      = 0xFFFFFFFFUL;
+    static bool     lastTofHot       = false;    // cold-start cure state → web TOF tag
+    static bool     lastRelocking    = false;    // cure cycle in progress → web feedback
     static bool     stateSnapInit    = false;
 
     if (currentobj      != lastObj          ||
@@ -1031,6 +1033,8 @@ void wifiLoop() {
         currentLedDuty  != lastLedDuty      ||
         sensorSleeping  != lastSensorSleep  ||
         highReflMode    != lastHighRefl     ||
+        tofHot          != lastTofHot       ||
+        (tofRelockPhase != TOF_RELOCK_IDLE) != lastRelocking ||
         stackStepIndex  != lastStepIndex    ||
         stackTotalImgs  != lastImgs         ||
         fabsf(stackTimePerStep - lastSecStep) > 0.01f ||
@@ -1047,6 +1051,8 @@ void wifiLoop() {
         lastLedDuty     = currentLedDuty;
         lastSensorSleep = sensorSleeping;
         lastHighRefl    = highReflMode;
+        lastTofHot      = tofHot;
+        lastRelocking   = (tofRelockPhase != TOF_RELOCK_IDLE);
         lastStepIndex   = stackStepIndex;
         lastImgs        = stackTotalImgs;
         lastSecStep     = stackTimePerStep;
@@ -2414,6 +2420,16 @@ static void handleWifiCommand(const char* key, const char* val) {
         }
         if (currentMode == SENSOR_INFO) drawSensorInfoUI();
 
+    // ── TOF cold-start re-lock (web RE-LOCK button) ──────────────────────────
+    // Kicks the config-cycle cure in loop() (flip ROI/timing → dwell → flip
+    // back). Guarded like the on-device RE-LOCK button: ignored while asleep or
+    // while a cycle is already running.
+    } else if (strcmp(key, "tofRelock") == 0) {
+        if (!sensorSleeping && tofRelockPhase == TOF_RELOCK_IDLE) {
+            tofRelockDueMs = millis();          // fire on the next loop() pass
+            if (tofRelockDueMs == 0) tofRelockDueMs = 1;
+        }
+
     // ── Screen dim timeout ───────────────────────────────────────────────────
     } else if (strcmp(key, "dimMs") == 0) {
         dimTimeoutMs = constrain((unsigned long)fVal, DIM_MIN_MS, DIM_MAX_MS);
@@ -2922,6 +2938,8 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["ledDuty"]       = currentLedDuty;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
     doc["highReflMode"]  = highReflMode ? 1 : 0;
+    doc["tofHot"]        = tofHot ? 1 : 0;                              // cold-start bias cured?
+    doc["tofRelocking"]  = (tofRelockPhase != TOF_RELOCK_IDLE) ? 1 : 0; // cure cycle running?
     doc["dimMs"]         = (uint32_t)dimTimeoutMs;
     doc["sleepMs"]       = (uint32_t)sleepTimeoutMs;
     doc["theme"]         = currentThemeIndex;
@@ -3199,6 +3217,8 @@ static void buildSettingsJson(String& out) {
     doc["ledDuty"]       = currentLedDuty;
     doc["sensorSleeping"]= sensorSleeping ? 1 : 0;
     doc["highReflMode"]  = highReflMode ? 1 : 0;
+    doc["tofHot"]        = tofHot ? 1 : 0;                              // cold-start bias cured?
+    doc["tofRelocking"]  = (tofRelockPhase != TOF_RELOCK_IDLE) ? 1 : 0; // cure cycle running?
     doc["dimMs"]         = (uint32_t)dimTimeoutMs;
     doc["sleepMs"]       = (uint32_t)sleepTimeoutMs;
     doc["theme"]         = currentThemeIndex;

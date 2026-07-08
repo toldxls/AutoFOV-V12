@@ -479,7 +479,7 @@
                         <!-- in front of the bar: front-bottom edge + right end connector -->
                         <path d="M1,17 H37 M37,17 L43,11" fill="none" stroke="#565656" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
                     </svg>
-                    <div class="gfx-text" style="left: 12px; top: 30px; width: 46px; text-align: center; color: var(--accent-yellow); font-size: 9px;">TOF</div>
+                    <div id="tof-label" class="gfx-text" style="left: 7px; top: 30px; width: 56px; text-align: center; color: var(--accent-yellow); font-size: 8px; white-space: nowrap;">TOF</div>
                 </div>
 
                 <!-- Vibration analyzer shortcut — centered in the x=93..152
@@ -866,6 +866,10 @@
                 <div id="btn-sensor-hiref" class="gfx-btn"
                      style="left: 10px; top: 210px; width: 220px; height: 38px; background-color: var(--text-disabled);"
                      onclick="toggleHighRefl()">HIGH REFLECTIVITY: OFF</div>
+
+                <div id="btn-sensor-relock" class="gfx-btn"
+                     style="left: 10px; top: 254px; width: 220px; height: 38px; background-color: #8a5a00;"
+                     onclick="relockTof()">RE-LOCK TOF (COLD)</div>
 
             </div>
 
@@ -2785,6 +2789,8 @@
         trigger: false,       // patched3: shutter active (mirrors firmware shutterActive)
         sensorSleeping: false,
         highReflMode: false,
+        tofHot: true,         // cold-start bias cured? (from telemetry; true avoids a COLD flash on load)
+        tofRelocking: false,  // cure cycle currently running?
         dimMs: 120000,        // 2 min
         sleepMs: 300000,      // 5 min
         themeIndex: 0,
@@ -5741,6 +5747,23 @@
     // ─────────────────────────────────────────────────────────────────────────
     // TOF SENSOR TOGGLES + REFRESH
     // ─────────────────────────────────────────────────────────────────────────
+
+    // Main-screen "TOF" tag: cold-start bias state, driven by telemetry.
+    //   cold  → "cold TOF" light blue   (bias present; a re-lock will clear it)
+    //   re-lock→ "re-lock"  amber        (cure cycle running)
+    //   hot   → "hot TOF"  orange-red   (cured — matches the manual hi-refl toggle)
+    function updateTofLabel() {
+        const el = document.getElementById('tof-label');
+        if (!el) return;
+        if (state.tofRelocking)      { el.textContent = 're-lock';  el.style.color = '#ffd166'; }
+        else if (state.tofHot)       { el.textContent = 'hot TOF';  el.style.color = '#ff4500'; }
+        else                         { el.textContent = 'cold TOF'; el.style.color = '#6db4ff'; }
+    }
+
+    // One-press cold-start cure — same config-cycle as a manual HIGH REFLECTIVITY
+    // on→off toggle, run on the device. Firmware guards it (asleep / mid-cycle).
+    function relockTof() { sendCommand('tofRelock', 1); }
+
     function refreshSensorInfoUI() {
         // patched3: tolerate undefined fields — the loose `!== null` checks
         // used to be the silent-throw culprit when state.sensorSignal was
@@ -5754,6 +5777,12 @@
         if (hr) {
             hr.innerText        = state.highReflMode ? 'HIGH REFLECTIVITY: ON' : 'HIGH REFLECTIVITY: OFF';
             hr.style.background = state.highReflMode ? '#006800' : '#787878';
+        }
+        const rl = document.getElementById('btn-sensor-relock');
+        if (rl) {
+            if (state.tofRelocking)  { rl.innerText = 'RE-LOCKING TOF…';    rl.style.background = '#003a66'; }
+            else if (state.tofHot)   { rl.innerText = 'TOF LOCKED (HOT)';   rl.style.background = '#006400'; }
+            else                     { rl.innerText = 'RE-LOCK TOF (COLD)'; rl.style.background = '#8a5a00'; }
         }
         const sigEl = document.getElementById('sensor-signal');
         if (sigEl) {
@@ -9746,6 +9775,8 @@
         // ── Sensor state & live readings ──
         if (data.sensorSleeping !== undefined) { state.sensorSleeping = !!data.sensorSleeping; if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.highReflMode   !== undefined) { state.highReflMode   = !!data.highReflMode;   if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
+        if (data.tofHot         !== undefined) { state.tofHot         = !!data.tofHot;         updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
+        if (data.tofRelocking   !== undefined) { state.tofRelocking   = !!data.tofRelocking;   updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.sensorSignal !== undefined) {
             state.sensorSignal = data.sensorSignal;
             setTofBar(Math.min(100, data.sensorSignal / 50 * 100));
