@@ -56,8 +56,10 @@
 #define COLOR_PUREGREEN   0x07E0 
 #define COLOR_DARKGREEN   0x0320
 #define COLOR_YELLOW      0xFFE0 
-#define COLOR_ORANGE      0xFD20 
-#define COLOR_RED         0xF800 
+#define COLOR_ORANGE      0xFD20
+#define COLOR_RED         0xF800
+#define COLOR_LIGHTBLUE   0x6D9F   // cold-TOF tag (RGB ~107,180,255)
+#define COLOR_ORANGERED   0xFA20   // hot-TOF tag (OrangeRed #FF4500)
 #define COLOR_MAROON      0x7800
 #define COLOR_BLUEGREEN   0x0452 
 #define COLOR_DARKBLUE    0x0019 
@@ -782,6 +784,7 @@ Button btnTheme3(180, 235, 50, 35, "");
 // --- SENSOR_INFO screen ---
 Button btnSensorToggle(10, 162, 220, 40, "SLEEP SENSOR",          COLOR_MAROON,     TFT_WHITE, 1, true);
 Button btnSensorHiRef (10, 210, 220, 38, "HIGH REFLECTIVITY: OFF", COLOR_DARKGREY,   TFT_WHITE, 1, false);
+Button btnSensorRelock(10, 254, 220, 38, "RE-LOCK TOF",           COLOR_DARKBLUE,   TFT_WHITE, 1, true);
 // patched3: X close (was the "GO BACK" button) — steps back to MAIN.
 Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 
@@ -1109,26 +1112,27 @@ std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 
 std::atomic<uint32_t> sensorDistTenths{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
 
-// ── TOF thermal warm-up re-lock ──────────────────────────────────────────────
-// The VL53L4CX captures its VHV / reference-timing calibration ONCE, at
-// VL53L4CX_StartMeasurement(), and holds it for the whole ranging session. That
-// reference is the "zero" for every distance it reports and it drifts with die
-// temperature. When we start ranging cold (boot / wake / idle-resume) the
-// reference locks to the cold die, biasing every reading long (~7-10 mm at max
-// bellows) until a fresh Stop→Start re-captures it — exactly what the manual
-// high-refl toggle does once the sensor has warmed. The ULD exposes no
-// standalone temperature-update call, so a Stop→Start is the only re-lock.
+// ── TOF cold-start re-lock (config-cycle) ────────────────────────────────────
+// The VL53L4CX starts every ranging session with a stale reference when it was
+// last stopped cold (boot / wake / idle-resume), biasing every distance long
+// (~7-10 mm at max bellows). The ONLY thing that clears it is a full hi-refl
+// ROI/timing change and back WHILE RANGING — i.e. a manual "HIGH REFLECTIVITY"
+// on→off toggle. A same-config Stop→Start does NOT cure it (proven on hardware),
+// so the fix packages the exact toggle sequence: flip to the opposite ROI +
+// timing budget, range through a short dwell, then flip back. Run entirely on
+// Core 1 in loop() under i2cMutex — the same pattern the hi-refl toggle uses,
+// so it's atomic w.r.t. sensorTask's polling.
 //
-// After each cold start we run a short STAGED series of automatic Stop→Start
-// re-locks as the die heats (the offset converges within the first few seconds
-// instead of after a lone late re-lock), then stop. Handled on Core 1 in loop()
-// under i2cMutex — the same pattern the hi-refl toggle uses, so it's atomic
-// w.r.t. sensorTask's polling. tofWarmStartMs = millis() of the cold start
-// (0 = warm-up tracking inactive); tofRelockStage = next schedule entry to fire.
-const unsigned long TOF_RELOCK_AT_MS[] = { 8000UL, 30000UL, 90000UL };  // since cold start
-const uint8_t       TOF_RELOCK_COUNT   = sizeof(TOF_RELOCK_AT_MS) / sizeof(TOF_RELOCK_AT_MS[0]);
-unsigned long tofWarmStartMs = 0;
-uint8_t       tofRelockStage = 0;
+// A cold start (armTofRelock) marks the sensor COLD and schedules ONE automatic
+// cure cycle; the Sensor-Info RE-LOCK button (or a scheduled fire) drops
+// tofRelockDueMs to "now". tofHot drives the main-screen COLD/HOT tag.
+enum TofRelockPhase : uint8_t { TOF_RELOCK_IDLE, TOF_RELOCK_DWELL };
+TofRelockPhase tofRelockPhase   = TOF_RELOCK_IDLE;  // IDLE, or mid-cycle in opposite mode
+unsigned long  tofRelockPhaseMs = 0;                // millis() the dwell (opposite mode) began
+unsigned long  tofRelockDueMs   = 0;                // 0 = none pending; else millis() to start a cycle
+bool           tofHot           = false;            // false = cold (biased), true = re-lock cured it
+const unsigned long TOF_RELOCK_DELAY_MS = 15000UL;  // auto-cure this long after a cold start
+const unsigned long TOF_RELOCK_DWELL_MS = 1500UL;   // range in the opposite mode for this long
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
 // means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
@@ -3397,6 +3401,7 @@ void drawSensorInfoUI() {
     highReflMode ? "HIGH REFLECTIVITY: ON" : "HIGH REFLECTIVITY: OFF",
     highReflMode ? 0x0340 : COLOR_DARKGREY,   // dark teal when active
     TFT_WHITE);
+  btnSensorRelock.draw(tft);   // one-press cold-start cure (config-cycle)
   btnSensorBack.draw(tft);
 }
 
@@ -3413,7 +3418,7 @@ void handleSensorInfoTouch(TS_Point p) {
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
         sensorEmaReset.store(true, std::memory_order_release);
-        armTofWarmup();         // cold wake → schedule warm-up re-locks
+        armTofRelock();         // cold wake → mark cold + schedule auto cure
         sensorSleeping = false;
         tofAutoSlept = false;   // manually woken — the idle-resume branch must
                                 // not re-configure the now-ranging sensor
@@ -3446,13 +3451,22 @@ void handleSensorInfoTouch(TS_Point p) {
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
         sensorEmaReset.store(true, std::memory_order_release);
-        armTofWarmup();          // fresh Start → re-arm warm-up re-locks in case
-                                 // this toggle happened while the die was cold
       }
     } else {
       highReflMode = !highReflMode;   // asleep: config is applied on wake
     }
     drawSensorInfoUI();
+    return;
+  }
+  // RE-LOCK: one-press cure for the cold-start long-bias. Kicks the config-cycle
+  // state machine in loop() (flip ROI/timing → dwell ranging → flip back), the
+  // same net effect as a manual hi-refl on→off toggle. Ignored while asleep or
+  // while a cycle is already running.
+  if (btnSensorRelock.contains(p.x, p.y)) {
+    if (!sensorSleeping && tofRelockPhase == TOF_RELOCK_IDLE) {
+      tofRelockDueMs = millis();          // fire on the next loop() pass
+      if (tofRelockDueMs == 0) tofRelockDueMs = 1;
+    }
     return;
   }
   if (btnSensorBack.contains(p.x, p.y)) {
@@ -4007,7 +4021,7 @@ void recoverI2CBus() {
 volatile bool touchDetected = false;
 void IRAM_ATTR touchISR() { touchDetected = true; }
 
-// Apply the timing budget and SPAD ROI that match the current highReflMode.
+// Apply the timing budget and SPAD ROI for a given reflectivity mode.
 // Must be called with i2cMutex held and measurement already stopped.
 //
 // Normal mode  : 33 ms budget, full 16×16 ROI  → baseline sensitivity
@@ -4015,9 +4029,11 @@ void IRAM_ATTR touchISR() { touchDetected = true; }
 //   8 ms  vs 33 ms = 4.1× less photon accumulation
 //   8×8   vs 16×16 = 4×   fewer active SPADs
 //   Combined ≈ 16× — brings a 300 Mcps gold-silicon target to ~19 Mcps
-void applyHighReflConfig() {
+// Split from applyHighReflConfig so the cold-start re-lock can apply the
+// OPPOSITE mode transiently without mutating the user's highReflMode setting.
+void applyReflConfig(bool hi) {
   VL53L4CX_UserRoi_t roi;
-  if (highReflMode) {
+  if (hi) {
     roi.TopLeftX  = 4;  roi.TopLeftY  = 4;
     roi.BotRightX = 11; roi.BotRightY = 11;   // centre 8×8 of 16×16 array
     sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(8000);
@@ -4029,13 +4045,18 @@ void applyHighReflConfig() {
   sensor.VL53L4CX_SetUserROI(&roi);
 }
 
-// Arm the staged TOF warm-up re-lock (see tofWarmStartMs decl). Call right after
-// any cold-start VL53L4CX_StartMeasurement (boot / manual wake / idle-resume /
-// hi-refl toggle) so loop() re-captures the VHV reference as the die warms.
-void armTofWarmup() {
-  tofWarmStartMs = millis();
-  if (tofWarmStartMs == 0) tofWarmStartMs = 1;   // 0 is the "inactive" sentinel
-  tofRelockStage = 0;
+// Apply the config matching the current user-selected highReflMode.
+void applyHighReflConfig() { applyReflConfig(highReflMode); }
+
+// Mark the TOF cold and schedule its automatic cure cycle. Call right after any
+// cold-start VL53L4CX_StartMeasurement (boot / manual wake / idle-resume). Not
+// called from the cure cycle itself (that would loop), nor from the hi-refl
+// toggle (a manual toggle IS a cure, so it sets tofHot directly).
+void armTofRelock() {
+  tofHot          = false;                        // biased until a cure cycle runs
+  tofRelockPhase  = TOF_RELOCK_IDLE;              // cancel any half-done cycle
+  tofRelockDueMs  = millis() + TOF_RELOCK_DELAY_MS;
+  if (tofRelockDueMs == 0) tofRelockDueMs = 1;    // 0 is the "none pending" sentinel
 }
 
 void sensorTask(void *pvParameters) {
@@ -5128,7 +5149,7 @@ void setup() {
     delay(100);
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
-    armTofWarmup();          // cold boot → schedule warm-up re-locks
+    armTofRelock();          // cold boot → mark cold + schedule auto cure
     imuSetup();              // V12: bring up the LSM6DSOX on the same I²C bus
     xSemaphoreGive(i2cMutex);
   }
@@ -5448,7 +5469,7 @@ void loop() {
           sensor.VL53L4CX_StartMeasurement();
           xSemaphoreGive(i2cMutex);
           sensorEmaReset.store(true, std::memory_order_release);
-          armTofWarmup();      // cold idle-resume → schedule warm-up re-locks
+          armTofRelock();      // cold idle-resume → mark cold + schedule auto cure
           sensorSleeping = false;
           tofAutoSlept = false;
         } else {
@@ -5463,29 +5484,45 @@ void loop() {
     }
   }
 
-  // ── TOF thermal warm-up re-lock (see tofWarmStartMs decl) ──
-  // As each scheduled offset elapses, do one Stop→reconfig→Start so the
-  // VL53L4CX re-captures its VHV reference at the now-warmer die temperature,
-  // walking out the cold-start long-bias. Single series per cold start: the
-  // stage counter advances until the schedule is exhausted, then tracking goes
-  // idle (tofWarmStartMs = 0) until the next cold start re-arms it.
-  if (tofWarmStartMs != 0 && tofRelockStage < TOF_RELOCK_COUNT &&
-      (long)(millis() - (tofWarmStartMs + TOF_RELOCK_AT_MS[tofRelockStage])) >= 0) {
+  // ── TOF cold-start re-lock config-cycle (see tofRelockPhase decl) ──
+  // Two-phase, non-blocking (loop() can't dwell): DWELL means we've flipped to
+  // the opposite ROI/timing and are ranging through it; when the dwell elapses
+  // we flip back — the completed change-and-return is what clears the cold
+  // long-bias (a plain same-config restart does not). Otherwise, if a cure is
+  // due (auto after wake, or RE-LOCK button), flip out and begin the dwell.
+  if (tofRelockPhase == TOF_RELOCK_DWELL) {
+    if ((long)(millis() - (tofRelockPhaseMs + TOF_RELOCK_DWELL_MS)) >= 0) {
+      if (sensorSleeping.load(std::memory_order_acquire)) {
+        tofRelockPhase = TOF_RELOCK_IDLE; // slept mid-cycle: sensor is stopped and
+                                          // the wake path reconfigs — nothing to undo
+      } else if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        sensor.VL53L4CX_StopMeasurement();
+        applyHighReflConfig();            // back to the user's real mode
+        sensor.VL53L4CX_StartMeasurement();
+        xSemaphoreGive(i2cMutex);
+        sensorEmaReset.store(true, std::memory_order_release);
+        tofRelockPhase = TOF_RELOCK_IDLE;
+        tofHot = true;                    // cured — main-screen tag flips to HOT
+        Serial.println("[tof] cold-start re-lock complete");
+      }
+      // mutex busy → retry next loop iteration
+    }
+  } else if (tofRelockDueMs != 0 && (long)(millis() - tofRelockDueMs) >= 0) {
     if (sensorSleeping.load(std::memory_order_acquire)) {
-      tofWarmStartMs = 0;                 // slept/powered-down before the series
-                                          // finished; the next wake re-arms cold
+      tofRelockDueMs = 0;                 // slept before the cure ran; wake re-arms
     } else if (currentMode == CAL_SAMPLING) {
-      // Never glitch a calibration capture — hold this stage until sampling ends
-      // (the 2 s window is short, so at most one boundary is ever deferred).
+      // Never glitch a calibration capture — hold until the 2 s window ends.
     } else if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
       sensor.VL53L4CX_StopMeasurement();
-      applyHighReflConfig();
-      sensor.VL53L4CX_StartMeasurement();
+      applyReflConfig(!highReflMode);     // into the OPPOSITE ROI/timing, without
+      sensor.VL53L4CX_StartMeasurement(); //   disturbing the user's highReflMode
       xSemaphoreGive(i2cMutex);
       sensorEmaReset.store(true, std::memory_order_release);
-      if (++tofRelockStage >= TOF_RELOCK_COUNT) tofWarmStartMs = 0;   // series done
+      tofRelockDueMs   = 0;
+      tofRelockPhase   = TOF_RELOCK_DWELL;
+      tofRelockPhaseMs = millis();
     }
-    // mutex busy → leave state; retry next loop iteration
+    // mutex busy → retry next loop iteration
   }
 
   if (currentMode == CAL_SAMPLING) {
@@ -6430,6 +6467,20 @@ void finalizeEarly() {
   finalizeCalibration();
 }
 
+// Main-screen TOF thermal-state tag (top-left at x=44,y=26 — replaces the old
+// static "TOF int"). COLD (light blue) = the cold-start reference bias has not
+// been cured yet; HOT (orange-red) = a re-lock cycle re-captured it. Redrawn on
+// full repaint by drawMainScreen and live by updateDisplay() when tofHot flips.
+bool lastDrawnTofHot = false;
+void drawTofTag() {
+  tft.fillRect(44, 26, 56, 9, THEME_BG);   // clear widest label ("cold TOF")
+  tft.setFont(); tft.setTextSize(1);
+  tft.setTextColor(tofHot ? COLOR_ORANGERED : COLOR_LIGHTBLUE);
+  tft.setCursor(44, 26);
+  tft.print(tofHot ? "hot TOF" : "cold TOF");
+  lastDrawnTofHot = tofHot;
+}
+
 void drawMainScreen() {
   tft.fillScreen(THEME_BG);
   updateObjectiveButtons();
@@ -6438,12 +6489,8 @@ void drawMainScreen() {
   centerStaticText("AVG FOV:", avgFovLabelY, 2);
   centerStaticText("DISTANCE:", distanceLabelY, 1); 
 
-  tft.setFont(); 
-  tft.setTextSize(1);
-  tft.setTextColor(0xFFE0); 
-  tft.setCursor(44, 26); 
-  tft.print("TOF int");
-  
+  drawTofTag();   // top-left "cold TOF" / "hot TOF" thermal-state tag
+
   // Calib + version block — now a tappable region that opens the ABOUT screen.
   // Subtle dark-grey rectangle hints it's interactive without dominating the
   // main view. Touch zone is registered in handleMainTouch.
@@ -7384,6 +7431,11 @@ void updateSensorAverages() {
 }
 
 void updateDisplay() {
+  // Live-flip the COLD/HOT TOF tag the moment a re-lock cures the bias, without
+  // waiting for a full main-screen repaint. drawMainScreen already draws it
+  // fresh on entry, keeping lastDrawnTofHot in sync across screen changes.
+  if (tofHot != lastDrawnTofHot) drawTofTag();
+
   uint32_t currentState = sensorState.load(std::memory_order_acquire);
   bool rangeValid = (currentState >> 31) & 0x1;
   int currentRange = currentState & 0x7FFFFFFF;
