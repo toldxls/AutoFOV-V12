@@ -41,7 +41,13 @@ if ! python3 -c "import rjsmin, rcssmin" 2>/dev/null; then
 fi
 
 echo "=== Step 1: embed HTML ==="
-python3 tools/embed_html.py
+EMBED_OUT="$(python3 tools/embed_html.py)"
+echo "$EMBED_OUT"
+# Pull the "vMAJOR.MINOR.PATCH" embed_html.py just stamped so we can name the
+# output .bin after it — the OTA picker shows the filename, so a versioned copy
+# makes it obvious which build is being uploaded. (|| true: grep miss must not
+# trip set -e.)
+VERSION="$(printf '%s\n' "$EMBED_OUT" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
 
 echo "=== Step 2: compile ==="
 "$ARDUINO_CLI" compile \
@@ -55,5 +61,13 @@ echo "=== Step 2: compile ==="
 
 echo ""
 echo "=== Done ==="
-echo "Binary: $BUILD_DIR/AutoFOV_V12.ino.bin"
+BIN="$BUILD_DIR/AutoFOV_V12.ino.bin"
+if [ -n "$VERSION" ] && [ -f "$BIN" ]; then
+    VERSIONED="$BUILD_DIR/AutoFOV_V12_${VERSION}.bin"
+    cp "$BIN" "$VERSIONED"
+    echo "Binary: $VERSIONED"
+    echo "        (also $BIN)"
+else
+    echo "Binary: $BIN"
+fi
 echo "OTA flash via web UI → WiFi Info → FIRMWARE UPDATE"

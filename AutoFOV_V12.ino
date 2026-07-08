@@ -1131,8 +1131,8 @@ TofRelockPhase tofRelockPhase   = TOF_RELOCK_IDLE;  // IDLE, or mid-cycle in opp
 unsigned long  tofRelockPhaseMs = 0;                // millis() the dwell (opposite mode) began
 unsigned long  tofRelockDueMs   = 0;                // 0 = none pending; else millis() to start a cycle
 bool           tofHot           = false;            // false = cold (biased), true = re-lock cured it
-const unsigned long TOF_RELOCK_DELAY_MS = 15000UL;  // auto-cure this long after a cold start
-const unsigned long TOF_RELOCK_DWELL_MS = 1500UL;   // range in the opposite mode for this long
+const unsigned long TOF_RELOCK_DELAY_MS = 5000UL;   // auto-cure this long after a cold start
+const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mode for this long
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
 // means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
@@ -3390,6 +3390,23 @@ void refreshSensorInfoValues() {
   sensorRow("Status:", statusDesc, statusCol, 124);
 }
 
+// Sensor-Info RE-LOCK button, drawn to reflect the cure state so it's visible on
+// the screen you operate the sensor from: COLD (amber — tap to cure) → RE-LOCKING
+// (blue — cycle running) → HOT (green — cured). `force` repaints even when the
+// state is unchanged (initial paint); otherwise it only repaints on a change so
+// the 500 ms Sensor-Info refresh doesn't flicker the button.
+int lastRelockUiState = -1;
+void drawRelockButton(bool force) {
+  int st = (tofRelockPhase == TOF_RELOCK_DWELL) ? 1 : (tofHot ? 2 : 0);
+  if (!force && st == lastRelockUiState) return;
+  lastRelockUiState = st;
+  const char* lbl; uint16_t col;
+  if      (st == 1) { lbl = "RE-LOCKING TOF..."; col = COLOR_DARKBLUE;  }
+  else if (st == 2) { lbl = "TOF LOCKED (HOT)";  col = COLOR_DARKGREEN; }
+  else              { lbl = "RE-LOCK TOF (COLD)"; col = COLOR_ORANGE;   }
+  btnSensorRelock.draw(tft, lbl, col, TFT_WHITE);
+}
+
 void drawSensorInfoUI() {
   tft.fillScreen(THEME_BG);
   drawLeftBoxedText("TOF SENSOR", 5, 5, COLOR_DARKBLUE);
@@ -3401,7 +3418,7 @@ void drawSensorInfoUI() {
     highReflMode ? "HIGH REFLECTIVITY: ON" : "HIGH REFLECTIVITY: OFF",
     highReflMode ? 0x0340 : COLOR_DARKGREY,   // dark teal when active
     TFT_WHITE);
-  btnSensorRelock.draw(tft);   // one-press cold-start cure (config-cycle)
+  drawRelockButton(true);      // one-press cold-start cure, colored by state
   btnSensorBack.draw(tft);
 }
 
@@ -5521,6 +5538,7 @@ void loop() {
       tofRelockDueMs   = 0;
       tofRelockPhase   = TOF_RELOCK_DWELL;
       tofRelockPhaseMs = millis();
+      Serial.println("[tof] cold-start re-lock cycle begin");
     }
     // mutex busy → retry next loop iteration
   }
@@ -5818,6 +5836,7 @@ void loop() {
   
   if (currentMode == SENSOR_INFO && ((unsigned long)(millis() - lastSensorInfoUpdate) > 500)) {
     refreshSensorInfoValues();
+    drawRelockButton(false);   // live COLD → RE-LOCKING → HOT on the button
     lastSensorInfoUpdate = millis();
   }
 
