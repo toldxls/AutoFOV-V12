@@ -5755,7 +5755,8 @@
     function updateTofLabel() {
         const el = document.getElementById('tof-label');
         if (!el) return;
-        if (state.tofRelocking)      { el.textContent = 're-locking';  el.style.color = '#ffd166'; }
+        if (state.sensorSleeping)    { el.textContent = 'TOF sleep';   el.style.color = '#787878'; }
+        else if (state.tofRelocking) { el.textContent = 're-locking';  el.style.color = '#ffd166'; }
         else if (state.tofHot)       { el.textContent = 'TOF is hot';  el.style.color = '#ff4500'; }
         else                         { el.textContent = 'TOF is cold'; el.style.color = '#6db4ff'; }
     }
@@ -9773,7 +9774,7 @@
         if (data.tint    !== undefined && activeSlider !== 'tint') { state.tintPct = data.tint; updateTimeoutUI(); }
 
         // ── Sensor state & live readings ──
-        if (data.sensorSleeping !== undefined) { state.sensorSleeping = !!data.sensorSleeping; if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
+        if (data.sensorSleeping !== undefined) { state.sensorSleeping = !!data.sensorSleeping; updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.highReflMode   !== undefined) { state.highReflMode   = !!data.highReflMode;   if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.tofHot         !== undefined) { state.tofHot         = !!data.tofHot;         updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.tofRelocking   !== undefined) { state.tofRelocking   = !!data.tofRelocking;   updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }

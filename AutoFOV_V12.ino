@@ -6487,17 +6487,26 @@ void finalizeEarly() {
 }
 
 // Main-screen TOF thermal-state tag (top-left at x=44,y=26 — replaces the old
-// static "TOF int"). COLD (light blue) = the cold-start reference bias has not
-// been cured yet; HOT (orange-red) = a re-lock cycle re-captured it. Redrawn on
-// full repaint by drawMainScreen and live by updateDisplay() when tofHot flips.
-bool lastDrawnTofHot = false;
+// static "TOF int"). ASLEEP (grey) = not ranging, so hot/cold is meaningless;
+// COLD (light blue) = cold-start reference bias not yet cured; HOT (orange-red)
+// = a re-lock re-captured it. Redrawn on full repaint by drawMainScreen and live
+// by updateDisplay() when tofHot or the sleep state flips.
+bool lastDrawnTofHot   = false;
+bool lastDrawnTofSleep = false;
 void drawTofTag() {
+  bool slp = sensorSleeping.load(std::memory_order_acquire);
   tft.fillRect(44, 26, 56, 9, THEME_BG);   // clear widest label ("cold TOF")
   tft.setFont(); tft.setTextSize(1);
-  tft.setTextColor(tofHot ? COLOR_ORANGERED : COLOR_LIGHTBLUE);
   tft.setCursor(44, 26);
-  tft.print(tofHot ? "hot TOF" : "cold TOF");
-  lastDrawnTofHot = tofHot;
+  if (slp) {
+    tft.setTextColor(COLOR_DARKGREY);
+    tft.print("TOF sleep");
+  } else {
+    tft.setTextColor(tofHot ? COLOR_ORANGERED : COLOR_LIGHTBLUE);
+    tft.print(tofHot ? "hot TOF" : "cold TOF");
+  }
+  lastDrawnTofHot   = tofHot;
+  lastDrawnTofSleep = slp;
 }
 
 void drawMainScreen() {
@@ -7453,7 +7462,8 @@ void updateDisplay() {
   // Live-flip the COLD/HOT TOF tag the moment a re-lock cures the bias, without
   // waiting for a full main-screen repaint. drawMainScreen already draws it
   // fresh on entry, keeping lastDrawnTofHot in sync across screen changes.
-  if (tofHot != lastDrawnTofHot) drawTofTag();
+  if (tofHot != lastDrawnTofHot ||
+      sensorSleeping.load(std::memory_order_acquire) != lastDrawnTofSleep) drawTofTag();
 
   uint32_t currentState = sensorState.load(std::memory_order_acquire);
   bool rangeValid = (currentState >> 31) & 0x1;
