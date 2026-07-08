@@ -479,7 +479,7 @@
                         <!-- in front of the bar: front-bottom edge + right end connector -->
                         <path d="M1,17 H37 M37,17 L43,11" fill="none" stroke="#565656" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
                     </svg>
-                    <div id="tof-label" class="gfx-text" style="left: 7px; top: 30px; width: 56px; text-align: center; color: var(--accent-yellow); font-size: 8px; white-space: nowrap;">TOF</div>
+                    <div id="tof-label" class="gfx-text" style="left: 0px; top: 30px; width: 60px; text-align: center; color: var(--accent-yellow); font-size: 8px; white-space: nowrap;">TOF</div>
                 </div>
 
                 <!-- Vibration analyzer shortcut — centered in the x=93..152
@@ -5755,9 +5755,9 @@
     function updateTofLabel() {
         const el = document.getElementById('tof-label');
         if (!el) return;
-        if (state.tofRelocking)      { el.textContent = 're-lock';  el.style.color = '#ffd166'; }
-        else if (state.tofHot)       { el.textContent = 'hot TOF';  el.style.color = '#ff4500'; }
-        else                         { el.textContent = 'cold TOF'; el.style.color = '#6db4ff'; }
+        if (state.tofRelocking)      { el.textContent = 're-locking';  el.style.color = '#ffd166'; }
+        else if (state.tofHot)       { el.textContent = 'TOF is hot';  el.style.color = '#ff4500'; }
+        else                         { el.textContent = 'TOF is cold'; el.style.color = '#6db4ff'; }
     }
 
     // One-press cold-start cure — same config-cycle as a manual HIGH REFLECTIVITY
