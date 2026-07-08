@@ -1108,6 +1108,27 @@ std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 
 // capture points keep sub-mm resolution. Bit 31 = valid (mirrors sensorState).
 std::atomic<uint32_t> sensorDistTenths{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
+
+// ── TOF thermal warm-up re-lock ──────────────────────────────────────────────
+// The VL53L4CX captures its VHV / reference-timing calibration ONCE, at
+// VL53L4CX_StartMeasurement(), and holds it for the whole ranging session. That
+// reference is the "zero" for every distance it reports and it drifts with die
+// temperature. When we start ranging cold (boot / wake / idle-resume) the
+// reference locks to the cold die, biasing every reading long (~7-10 mm at max
+// bellows) until a fresh Stop→Start re-captures it — exactly what the manual
+// high-refl toggle does once the sensor has warmed. The ULD exposes no
+// standalone temperature-update call, so a Stop→Start is the only re-lock.
+//
+// After each cold start we run a short STAGED series of automatic Stop→Start
+// re-locks as the die heats (the offset converges within the first few seconds
+// instead of after a lone late re-lock), then stop. Handled on Core 1 in loop()
+// under i2cMutex — the same pattern the hi-refl toggle uses, so it's atomic
+// w.r.t. sensorTask's polling. tofWarmStartMs = millis() of the cold start
+// (0 = warm-up tracking inactive); tofRelockStage = next schedule entry to fire.
+const unsigned long TOF_RELOCK_AT_MS[] = { 8000UL, 30000UL, 90000UL };  // since cold start
+const uint8_t       TOF_RELOCK_COUNT   = sizeof(TOF_RELOCK_AT_MS) / sizeof(TOF_RELOCK_AT_MS[0]);
+unsigned long tofWarmStartMs = 0;
+uint8_t       tofRelockStage = 0;
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
 // means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
@@ -3392,6 +3413,7 @@ void handleSensorInfoTouch(TS_Point p) {
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
         sensorEmaReset.store(true, std::memory_order_release);
+        armTofWarmup();         // cold wake → schedule warm-up re-locks
         sensorSleeping = false;
         tofAutoSlept = false;   // manually woken — the idle-resume branch must
                                 // not re-configure the now-ranging sensor
@@ -3424,6 +3446,8 @@ void handleSensorInfoTouch(TS_Point p) {
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
         sensorEmaReset.store(true, std::memory_order_release);
+        armTofWarmup();          // fresh Start → re-arm warm-up re-locks in case
+                                 // this toggle happened while the die was cold
       }
     } else {
       highReflMode = !highReflMode;   // asleep: config is applied on wake
@@ -4003,6 +4027,15 @@ void applyHighReflConfig() {
     sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(33000);
   }
   sensor.VL53L4CX_SetUserROI(&roi);
+}
+
+// Arm the staged TOF warm-up re-lock (see tofWarmStartMs decl). Call right after
+// any cold-start VL53L4CX_StartMeasurement (boot / manual wake / idle-resume /
+// hi-refl toggle) so loop() re-captures the VHV reference as the die warms.
+void armTofWarmup() {
+  tofWarmStartMs = millis();
+  if (tofWarmStartMs == 0) tofWarmStartMs = 1;   // 0 is the "inactive" sentinel
+  tofRelockStage = 0;
 }
 
 void sensorTask(void *pvParameters) {
@@ -5095,6 +5128,7 @@ void setup() {
     delay(100);
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
+    armTofWarmup();          // cold boot → schedule warm-up re-locks
     imuSetup();              // V12: bring up the LSM6DSOX on the same I²C bus
     xSemaphoreGive(i2cMutex);
   }
@@ -5414,6 +5448,7 @@ void loop() {
           sensor.VL53L4CX_StartMeasurement();
           xSemaphoreGive(i2cMutex);
           sensorEmaReset.store(true, std::memory_order_release);
+          armTofWarmup();      // cold idle-resume → schedule warm-up re-locks
           sensorSleeping = false;
           tofAutoSlept = false;
         } else {
@@ -5426,6 +5461,31 @@ void loop() {
         Serial.println("[idle] activity resumed — TOF + accelerometer back on");
       }
     }
+  }
+
+  // ── TOF thermal warm-up re-lock (see tofWarmStartMs decl) ──
+  // As each scheduled offset elapses, do one Stop→reconfig→Start so the
+  // VL53L4CX re-captures its VHV reference at the now-warmer die temperature,
+  // walking out the cold-start long-bias. Single series per cold start: the
+  // stage counter advances until the schedule is exhausted, then tracking goes
+  // idle (tofWarmStartMs = 0) until the next cold start re-arms it.
+  if (tofWarmStartMs != 0 && tofRelockStage < TOF_RELOCK_COUNT &&
+      (long)(millis() - (tofWarmStartMs + TOF_RELOCK_AT_MS[tofRelockStage])) >= 0) {
+    if (sensorSleeping.load(std::memory_order_acquire)) {
+      tofWarmStartMs = 0;                 // slept/powered-down before the series
+                                          // finished; the next wake re-arms cold
+    } else if (currentMode == CAL_SAMPLING) {
+      // Never glitch a calibration capture — hold this stage until sampling ends
+      // (the 2 s window is short, so at most one boundary is ever deferred).
+    } else if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+      sensor.VL53L4CX_StopMeasurement();
+      applyHighReflConfig();
+      sensor.VL53L4CX_StartMeasurement();
+      xSemaphoreGive(i2cMutex);
+      sensorEmaReset.store(true, std::memory_order_release);
+      if (++tofRelockStage >= TOF_RELOCK_COUNT) tofWarmStartMs = 0;   // series done
+    }
+    // mutex busy → leave state; retry next loop iteration
   }
 
   if (currentMode == CAL_SAMPLING) {
