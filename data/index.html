@@ -1838,73 +1838,6 @@
                 </div>
             </div>
 
-            <!-- ===== MEASURE FROM PHOTO overlay =====
-                 Drop a JPEG of the stage micrometer; detect the periodic ticks,
-                 measure the pixels spanning the demarcation window, and auto-fill
-                 the capture screen's pixel count. Runs entirely in the browser. -->
-            <div id="calphoto" style="display:none; position:absolute; top:0; left:0;
-                 width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
-                 flex-direction:column;">
-                <div style="position:relative; flex:0 0 auto; padding:8px 0 7px;
-                     text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
-                     letter-spacing:0.4px; border-bottom:1px solid #1c3a4a;">
-                    &#128247; MEASURE FROM PHOTO
-                    <div class="gfx-btn" onclick="closeCalPhoto()"
-                         style="top:2px; left:206px; width:30px; height:24px;
-                                background:#404040; color:#FF0000; font-size:15px;">X</div>
-                </div>
-                <div style="flex:1 1 auto; overflow-y:auto; padding:8px 10px 8px;">
-                    <div id="calphoto-drop" onclick="document.getElementById('calphoto-file').click()"
-                         style="border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
-                                padding:12px 8px; text-align:center; color:#7fd8c0; font-size:10px;
-                                line-height:1.5; cursor:pointer;">
-                        Drop micrometer photo here<br><span style="color:#5a8;">or tap to choose a .jpg</span>
-                    </div>
-                    <input type="file" id="calphoto-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                           style="display:none;" onchange="calPhotoChosen(this)">
-                    <!-- Read-only echo of the two pre-cal settings this measurement
-                         depends on. Both are set on the CALIBRATOR screen before
-                         START CAL — editing them mid-run would silently rescale the
-                         points already captured. -->
-                    <div style="margin-top:8px; font-size:10px; color:var(--text-disabled); line-height:1.5;">
-                        Tick pitch <b id="calphoto-pitch" style="color:#aaa;">0.010</b> mm &nbsp;·&nbsp;
-                        span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm<br>
-                        <span style="color:#5a7;">set both on the CALIBRATOR screen</span>
-                    </div>
-                    <!-- Numbers first, picture second: on a 240 px screen the preview
-                         canvas would otherwise push the verdict and the span picker
-                         below the fold, where nobody scrolls to find them. -->
-                    <div id="calphoto-result" style="margin-top:7px; font-size:11px; line-height:1.5;
-                         color:var(--text-disabled); min-height:30px;"></div>
-                    <div id="calphoto-warn" style="margin-top:4px; font-size:9px; line-height:1.4;
-                         color:#fa6;"></div>
-
-                    <!-- FOCUS / TILT verdict + the span picker. Populated by
-                         calPhotoRenderFocus(); hidden until a photo is analysed. -->
-                    <div id="calphoto-focus" style="display:none; margin-top:7px; padding-top:6px;
-                         border-top:1px solid #16323f; font-size:9px; line-height:1.45;
-                         color:var(--text-disabled);"></div>
-                    <div id="calphoto-spans" style="display:none; margin-top:6px;"></div>
-                    <div id="calphoto-spanhint" style="display:none; margin-top:4px; font-size:8px;
-                         line-height:1.35; color:#667;">Every option reports pixels per
-                         <b>Demarc&nbsp;Dist</b> — a shorter span just fits the tick pitch on cleaner
-                         ticks and scales it up.</div>
-
-                    <canvas id="calphoto-prev" width="220" height="116"
-                            style="display:none; width:220px; height:116px; margin-top:8px;
-                                   background:#000; border:1px solid #222;"></canvas>
-                    <div id="calphoto-prevcap" style="display:none; font-size:8px; color:#667;
-                         margin-top:2px; line-height:1.3;">zoom of sharpest region · contrast profile below ·
-                         <span style="color:#fb0;">|</span> = detected centroid</div>
-                </div>
-                <div style="flex:0 0 auto; padding:7px 10px 9px; border-top:1px solid #1c3a4a;">
-                    <div id="calphoto-use" class="gfx-btn" onclick="calPhotoUse()"
-                         style="position:relative; left:0; top:0; width:100%; height:34px;
-                                background:#143a14; border:1px solid #2a7a2a; color:#7fff7f;
-                                font-size:12px; opacity:0.4; pointer-events:none;">USE MEASUREMENT</div>
-                </div>
-            </div>
-
             <!-- ===== CALIBRATION HOW-TO overlay (CALIBRATOR "i" button) ===== -->
             <div id="calhelp" style="display:none; position:absolute; top:0; left:0;
                  width:240px; height:320px; background:rgba(0,0,0,0.98); z-index:191;
@@ -2755,6 +2688,100 @@
       </div>
     </div>
 
+    <!-- ===== MEASURE FROM PHOTO panel =====
+         Drop a JPEG of the stage micrometer; detect the periodic ticks, measure the
+         pixels spanning the demarcation window, and fill in the capture screen's
+         pixel count. Runs entirely in the browser.
+
+         This used to be a 240×320 overlay inside the device mirror — far too cramped
+         for the numbers AND the evidence, with the span picker below an invisible
+         fold. It is web-only (the device has no photo measurement), so nothing forces
+         it to live at device size: it is now a full-viewport panel, OUTSIDE
+         #ili9341-display like #mtf and #focus (the mirror's scale(2.0) would trap and
+         double-scale a position:fixed child). The narrow media query keeps a phone on
+         a single scrolling column. -->
+    <style>
+      #calphoto { display:none; position:fixed; inset:0; z-index:401;
+        background:#04101a; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #cph-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+        padding:9px 16px; background:#0a2838; border-bottom:1px solid #1c3a4a; }
+      #cph-title { color:#5ad6ff; font-weight:bold; letter-spacing:1px; font-size:14px; }
+      #cph-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
+        padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #cph-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
+      #cph-left { flex:0 0 360px; display:flex; flex-direction:column; gap:8px;
+        min-height:0; overflow-y:auto; }
+      #cph-right { flex:1 1 auto; display:flex; flex-direction:column; gap:6px;
+        min-width:0; min-height:0; overflow-y:auto; }
+      #calphoto-drop { border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
+        padding:16px 10px; text-align:center; color:#7fd8c0; font-size:12px;
+        line-height:1.5; cursor:pointer; }
+      #calphoto-use { display:flex; align-items:center; justify-content:center;
+        cursor:pointer; height:40px; border-radius:4px; font-size:14px; font-weight:bold;
+        letter-spacing:1px; background:#143a14; border:1px solid #2a7a2a; color:#7fff7f;
+        opacity:0.4; pointer-events:none; }
+      .calphoto-chip { display:flex; justify-content:space-between; align-items:center;
+        padding:7px 9px; margin-bottom:4px; border-radius:3px; cursor:pointer;
+        font-size:12px; border:1px solid #24485c; background:#0a1c26; }
+      @media (max-width:760px) {
+        #cph-body { flex-direction:column; overflow-y:auto; }
+        #cph-left { flex:0 0 auto; overflow:visible; }
+      }
+    </style>
+    <div id="calphoto">
+      <div id="cph-head">
+        <div id="cph-title">&#128247; MEASURE FROM PHOTO</div>
+        <div id="cph-close" onclick="closeCalPhoto()">CLOSE &#10005;</div>
+      </div>
+      <div id="cph-body">
+        <div id="cph-left">
+          <div id="calphoto-drop" onclick="document.getElementById('calphoto-file').click()">
+            Drop micrometer photo here<br><span style="color:#5a8;">or click to choose a .jpg</span>
+          </div>
+          <input type="file" id="calphoto-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                 style="display:none;" onchange="calPhotoChosen(this)">
+          <!-- Read-only echo of the two pre-cal settings this measurement depends on.
+               Both are set on the CALIBRATOR screen before START CAL — editing them
+               mid-run would silently rescale the points already captured. -->
+          <div style="font-size:11px; color:var(--text-disabled); line-height:1.5;">
+            Tick pitch <b id="calphoto-pitch" style="color:#aaa;">0.010</b> mm &nbsp;·&nbsp;
+            span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm
+            <span style="color:#5a7;">— set on the CALIBRATOR screen</span>
+          </div>
+          <div id="calphoto-result" style="font-size:13px; line-height:1.5;
+               color:var(--text-disabled); min-height:34px;"></div>
+          <div id="calphoto-warn" style="font-size:10px; line-height:1.4; color:#fa6;"></div>
+          <!-- FOCUS / TILT verdict + span picker — populated by calPhotoRenderFocus() -->
+          <div id="calphoto-focus" style="display:none; padding-top:7px;
+               border-top:1px solid #16323f; font-size:11px; line-height:1.5;
+               color:var(--text-disabled);"></div>
+          <div id="calphoto-spans" style="display:none;"></div>
+          <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.4;
+               color:#667;">Every option reports pixels per <b>Demarc&nbsp;Dist</b> — a shorter
+               span just fits the tick pitch on cleaner ticks and scales it up. The green
+               window on the profile shows which ticks it uses.</div>
+          <div id="calphoto-use" onclick="calPhotoUse()">USE MEASUREMENT</div>
+        </div>
+        <div id="cph-right">
+          <div id="calphoto-profwrap" style="display:none;">
+            <canvas id="calphoto-prof" style="display:block; width:100%; height:130px;
+                    background:#050505; border:1px solid #222;"></canvas>
+            <div style="font-size:9px; color:#5e8c7e; margin-top:2px;">
+              tick profile across the whole frame ·
+              <span style="color:#fb0;">|</span> detected centroid ·
+              <span style="color:#3ddb7a;">green</span> = the window the selected span measures
+            </div>
+          </div>
+          <canvas id="calphoto-prev" width="220" height="116"
+                  style="display:none; width:100%; height:250px; background:#000;
+                         border:1px solid #222;"></canvas>
+          <div id="calphoto-prevcap" style="display:none; font-size:9px; color:#667;
+               margin-top:2px; line-height:1.3;">zoom of the sharpest region · contrast profile below ·
+               <span style="color:#fb0;">|</span> = detected centroid</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== FOCUS / TILT panel — rank a set of micrometer shots, and diagnose the
          one defect the pixel measurement cannot see: the slide not being square to
          the optic axis, so focus sweeps across the frame. Same full-viewport shape
@@ -2774,8 +2801,8 @@
         padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
         box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
       #foc-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
-      #foc-left { flex:0 0 380px; display:flex; flex-direction:column; gap:8px;
-        min-height:0; overflow-y:auto; }
+      #foc-left { flex:0 0 448px; display:flex; flex-direction:column; gap:8px;
+        min-height:0; overflow-y:auto; }   /* 3 thumbs across */
       #foc-right { flex:1 1 auto; display:flex; flex-direction:column; gap:8px;
         min-width:0; min-height:0; overflow-y:auto; }
       #focus .foc-inp { display:flex; gap:8px; align-items:center; font-size:11px;
@@ -2786,7 +2813,7 @@
         padding:14px 10px; text-align:center; color:#7fd8c0; font-size:11px;
         line-height:1.5; cursor:pointer; }
       #foc-thumbs { display:none; flex-wrap:wrap; gap:6px; }
-      .foc-thumb { width:104px; cursor:pointer; border:1px solid #1f3a33; border-radius:4px;
+      .foc-thumb { width:138px; cursor:pointer; border:1px solid #1f3a33; border-radius:4px;
         padding:3px; font-size:9px; line-height:1.35; color:#7a958c; background:#08140f; }
       .foc-thumb canvas { display:block; margin-bottom:2px; }
       .foc-thumb.best { border-color:#3ddb7a; }
@@ -2858,6 +2885,16 @@
         <div id="foc-right">
           <div id="foc-verdict">Drop one or more shots to rank them.</div>
           <div id="foc-plotwrap"><canvas id="foc-plot"></canvas></div>
+          <div id="foc-profwrap" style="display:none;">
+            <canvas id="foc-prof" style="display:block; width:100%; height:120px;
+                    background:#050505; border:1px solid #222;"></canvas>
+            <div style="font-size:9px; color:#5e8c7e; margin-top:2px;">
+              tick profile across the whole frame ·
+              <span style="color:#fb0;">|</span> detected centroid ·
+              <span style="color:#3ddb7a;">green</span> = the window the starred span measures ·
+              <span style="color:#ffb347;">dashed</span> = where the focus plane crosses
+            </div>
+          </div>
           <div id="foc-spans"></div>
           <div id="foc-note"></div>
         </div>
@@ -7252,6 +7289,7 @@
         return { W, H, y0, y1, pitch, scale:(opts.imageW||W)/W,
                  umpxWork: (opts.pitchMm*1000)/pitch,          // µm of object per working px
                  ticks, bands: bands.map(b=>b.yc), fit:f,
+                 prom: q,                                       // full-width profile, for the preview
                  errFrac: f.rms/Math.abs(f.a),
                  scaleGradPctPerMm: 100*gradPerIdx/opts.pitchMm };
     }
@@ -7438,6 +7476,85 @@
                  scaleGradPctPerMm: t.scaleGradPctPerMm, errFrac: t.errFrac };
     }
 
+    // Full-width tick profile with every detected centroid marked, and the window a
+    // given span option actually measures over shaded on top. Shared by the FOCUS
+    // panel and MEASURE FROM PHOTO — it is the picture that answers "which ticks did
+    // you use", so switching span options has something visible to change.
+    //   fa  — an analyzeMicrometerFocus() result
+    //   sel — the span entry to highlight (or null)
+    function drawMicProfile(cv, fa, sel){
+        if (!cv || !fa || !fa.table || !fa.table.prom) return;
+        const t=fa.table, W=t.W, prom=t.prom;
+        const rect=cv.getBoundingClientRect();
+        const dpr=window.devicePixelRatio||1, MAXW=2200;
+        let PW=Math.round((rect.width||600)*dpr), PH=Math.round((rect.height||120)*dpr);
+        if (PW>MAXW){ PH=Math.round(PH*MAXW/PW); PW=MAXW; }
+        if (!PW || !PH) return;
+        cv.width=PW; cv.height=PH;
+        const S=PH/120, ctx=cv.getContext('2d');
+        ctx.fillStyle='#050505'; ctx.fillRect(0,0,PW,PH);
+        const MT=4*S, MB=13*S, plotH=PH-MT-MB;
+        const toX=x=>(x/W)*PW;
+        let mx=0; for(let x=0;x<W;x++) if(prom[x]>mx) mx=prom[x];
+        if (!(mx>0)) return;
+
+        // The window this span option measures over. Everything outside it is knocked
+        // back — the whole point of the picture is that switching 0.40 → 0.20 makes a
+        // visibly different set of ticks light up.
+        if (sel){
+            ctx.fillStyle='rgba(61,219,122,0.16)';
+            ctx.fillRect(toX(sel.xa), MT, toX(sel.xb)-toX(sel.xa), plotH);
+            ctx.strokeStyle='#3ddb7a'; ctx.lineWidth=Math.max(1.5,1.5*S);
+            ctx.beginPath();
+            ctx.moveTo(toX(sel.xa),MT); ctx.lineTo(toX(sel.xa),MT+plotH);
+            ctx.moveTo(toX(sel.xb),MT); ctx.lineTo(toX(sel.xb),MT+plotH);
+            ctx.stroke();
+        }
+        // profile — bright inside the window, dim outside
+        const step=Math.max(1, Math.floor(W/PW));      // one sample per output px is plenty
+        const drawProf=(from,to,col,lw)=>{
+            if (to<=from) return;
+            ctx.strokeStyle=col; ctx.lineWidth=Math.max(1,lw*S);
+            ctx.beginPath();
+            let first=true;
+            for(let x=Math.floor(from); x<=Math.min(W-1,Math.ceil(to)); x+=step){
+                const y=MT+plotH-(prom[x]/mx)*plotH;
+                if (first){ ctx.moveTo(toX(x),y); first=false; } else ctx.lineTo(toX(x),y);
+            }
+            ctx.stroke();
+        };
+        if (sel){
+            drawProf(0, sel.xa, 'rgba(90,214,255,0.30)', 0.8);
+            drawProf(sel.xa, sel.xb, '#5ad6ff', 1.1);
+            drawProf(sel.xb, W-1, 'rgba(90,214,255,0.30)', 0.8);
+        } else {
+            drawProf(0, W-1, '#5ad6ff', 0.9);
+        }
+        // centroids — in-window ones bright, the rest dim
+        for(const k of t.ticks){
+            const inWin = sel ? (k.x>=sel.xa && k.x<=sel.xb) : true;
+            ctx.strokeStyle = inWin ? 'rgba(255,176,0,0.95)' : 'rgba(255,176,0,0.28)';
+            ctx.lineWidth = Math.max(1, (inWin?0.9:0.7)*S);
+            const xx=toX(k.x);
+            ctx.beginPath(); ctx.moveTo(xx, MT); ctx.lineTo(xx, MT+plotH*0.16);
+            ctx.moveTo(xx, MT+plotH*0.84); ctx.lineTo(xx, MT+plotH); ctx.stroke();
+        }
+        // where the focus plane crosses
+        if (fa.wedge && fa.wedge.ok){
+            const x0=fa.wedge.x0um/fa.umpxWork;
+            if (x0>0 && x0<W){
+                ctx.strokeStyle='#ffb347'; ctx.setLineDash([3*S,3*S]); ctx.lineWidth=Math.max(1,S);
+                ctx.beginPath(); ctx.moveTo(toX(x0),MT); ctx.lineTo(toX(x0),MT+plotH); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+        ctx.fillStyle='#5e8c7e'; ctx.font=Math.round(9*S)+'px monospace';
+        ctx.textAlign='left'; ctx.textBaseline='bottom';
+        ctx.fillText('full frame · '+t.ticks.length+' centroids'+
+                     (sel? ' · '+sel.spanMm.toFixed(2)+' mm window = '+sel.nTicks+' ticks' : ''),
+                     3*S, PH-2*S);
+    }
+
     // ── modal driver ──
     let _calPhotoPx = null, _calPhotoDropBound = false, _calPhotoGen = 0;
     function _calPhotoResetUse(){
@@ -7453,8 +7570,8 @@
         document.getElementById('calphoto-span').textContent  = (state.demarcDist||0.4).toFixed(2);
         document.getElementById('calphoto-pitch').textContent = (state.tickPitch||0.01).toFixed(3);
         const dz0 = document.getElementById('calphoto-drop');    // restore the full drop zone
-        dz0.style.padding='12px 8px'; dz0.style.fontSize='10px'; dz0.style.lineHeight='1.5';
-        dz0.innerHTML='Drop micrometer photo here<br><span style="color:#5a8;">or tap to choose a .jpg</span>';
+        dz0.style.padding=''; dz0.style.fontSize=''; dz0.style.lineHeight='';
+        dz0.innerHTML='Drop micrometer photo here<br><span style="color:#5a8;">or click to choose a .jpg</span>';
         document.getElementById('calphoto-result').textContent = '';
         document.getElementById('calphoto-warn').textContent = '';
         _calPhotoGen++;                 // orphan any in-flight decode from a prior session
@@ -7557,7 +7674,14 @@
     // Read-only, like CENTERING and MTF: it hands nothing back to the calibration
     // (the per-point span choice lives in MEASURE FROM PHOTO, where it belongs).
     // ─────────────────────────────────────────────────────────────────────────
-    let _focDropBound=false, _focGen=0, _focFiles=[], _focSel=-1, _focBest=-1;
+    let _focDropBound=false, _focGen=0, _focFiles=[], _focSel=-1, _focBest=-1, _focCur=null;
+    function _focShowSpan(k){
+        if (!_focCur || !_focCur.spans[k]) return;
+        drawMicProfile(document.getElementById('foc-prof'), _focCur, _focCur.spans[k]);
+        document.querySelectorAll('#foc-spans tr').forEach((tr,i)=>{
+            if (i>0) tr.style.background = (i-1===k) ? '#0d2a1e' : 'transparent';
+        });
+    }
 
     function openFocus(){
         const m=document.getElementById('focus');
@@ -7579,6 +7703,7 @@
         document.getElementById('foc-verdict').innerHTML='Drop one or more shots to rank them.';
         document.getElementById('foc-thumbs').style.display='none';
         document.getElementById('foc-plotwrap').style.display='none';
+        document.getElementById('foc-profwrap').style.display='none';
         document.getElementById('foc-spans').style.display='none';
         document.getElementById('foc-note').textContent='';
         document.getElementById('foc-help').style.display='none';
@@ -7635,6 +7760,30 @@
         _focSelect(bi);
     }
 
+    // Thumbnails, without the moiré. Scaling a 4000-px frame straight down to ~130 px
+    // is a 30× jump: the resampler point-samples a tick grid finer than its own step,
+    // and the beat between the two shows up as those wavy bands. Halving repeatedly
+    // low-passes the grid away first — each step only ever discards a factor of 2.
+    const FOC_THUMB_W = 132, FOC_THUMB_H = 86;
+    function _focThumb(srcCv, cw, ch){
+        let cur=srcCv, curW=cw, curH=ch;
+        while (curW > FOC_THUMB_W*2){
+            const nw=Math.max(FOC_THUMB_W, Math.round(curW/2)), nh=Math.max(1, Math.round(curH/2));
+            const half=document.createElement('canvas'); half.width=nw; half.height=nh;
+            const hg=half.getContext('2d');
+            hg.imageSmoothingEnabled=true; hg.imageSmoothingQuality='high';
+            hg.drawImage(cur, 0, 0, nw, nh);
+            cur=half; curW=nw; curH=nh;
+        }
+        const th=document.createElement('canvas'); th.width=FOC_THUMB_W; th.height=FOC_THUMB_H;
+        const tg=th.getContext('2d');
+        tg.imageSmoothingEnabled=true; tg.imageSmoothingQuality='high';
+        tg.fillStyle='#000'; tg.fillRect(0,0,FOC_THUMB_W,FOC_THUMB_H);
+        const sc=Math.min(FOC_THUMB_W/curW, FOC_THUMB_H/curH);
+        tg.drawImage(cur, (FOC_THUMB_W-curW*sc)/2, (FOC_THUMB_H-curH*sc)/2, curW*sc, curH*sc);
+        return th;
+    }
+
     function _focAnalyze(file, pitchMm, demarcMm){
         return new Promise((resolve)=>{
             const url=URL.createObjectURL(file);
@@ -7663,11 +7812,7 @@
                                                           NA: state.effNA,
                                                           basePx: base.error ? 0 : Math.round(base.pixelsSpan) });
                     // keep only a thumbnail — a full ImageData per frame would blow memory
-                    const th=document.createElement('canvas'); th.width=98; th.height=64;
-                    const tg=th.getContext('2d');
-                    const sc=Math.min(98/cw, 64/ch);
-                    tg.fillStyle='#000'; tg.fillRect(0,0,98,64);
-                    tg.drawImage(srcCv, (98-cw*sc)/2, (64-ch*sc)/2, cw*sc, ch*sc);
+                    const th=_focThumb(srcCv, cw, ch);
                     URL.revokeObjectURL(url);
                     resolve({ name:file.name, thumb:th, fa, angle, demarcMm });
                 } catch(e){ URL.revokeObjectURL(url); resolve(null); }
@@ -7708,7 +7853,9 @@
         if (!fa || fa.error){
             vd.innerHTML='<b style="color:#ff6a6a;">'+en.name+' — analysis failed</b><br>'+
                 '<span style="font-size:11px;">'+((fa&&fa.error)||'unknown')+'</span>';
-            pw.style.display='none'; sp.style.display='none'; note.textContent=''; return;
+            pw.style.display='none'; sp.style.display='none'; note.textContent='';
+            document.getElementById('foc-profwrap').style.display='none';
+            return;
         }
         const w=fa.wedge, n1=v=>v.toFixed(1);
         const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a'}[fa.verdict];
@@ -7740,14 +7887,18 @@
         }
         vd.innerHTML='<b style="color:'+col+';">'+head+'</b><br><span style="font-size:12px; color:var(--text-disabled);">'+body+'</span>';
 
-        // span table
+        // span table — rows are clickable, and each one redraws the profile with ITS
+        // window, so "which ticks does 0.20 mm actually use" is one click away
+        _focCur=fa;
         if (fa.spans.length){
             sp.innerHTML='<table><tr><th>span</th><th>pixels / demarc</th><th>&plusmn; total</th>'+
                 '<th>fit noise</th><th>window drift</th><th>ticks</th></tr>'+
-                fa.spans.map(s=>'<tr class="'+(s.best?'best':'')+'"><td>'+(s.best?'&#9733; ':'')+
+                fa.spans.map((s,k)=>'<tr class="'+(s.best?'best':'')+'" onclick="_focShowSpan('+k+')" '+
+                    'style="cursor:pointer;"><td>'+(s.best?'&#9733; ':'')+
                     s.spanMm.toFixed(2)+' mm</td><td>'+Math.round(s.px)+'</td><td>&plusmn;'+s.sigmaPx.toFixed(1)+
                     '</td><td>'+s.sigmaStat.toFixed(2)+'</td><td>'+s.sigmaSys.toFixed(1)+'</td><td>'+
-                    s.nTicks+'</td></tr>').join('')+'</table>';
+                    s.nTicks+'</td></tr>').join('')+'</table>'+
+                '<div style="font-size:9px; color:#5e8c7e; margin-top:3px;">click a row to see the ticks it uses</div>';
             sp.style.display='block';
         } else { sp.style.display='none'; }
         note.innerHTML='Scale drift across the field '+fa.scaleGradPctPerMm.toFixed(2)+' %/mm · '+
@@ -7758,6 +7909,9 @@
             'if the angle grows, go the other way.';
         pw.style.display='block';
         _focDrawPlot(fa);
+        const prw=document.getElementById('foc-profwrap');
+        prw.style.display='block';
+        drawMicProfile(document.getElementById('foc-prof'), fa, fa.best);
     }
 
     // Contrast across the frame + the fitted wedge. This is the picture that makes
@@ -8811,12 +8965,10 @@
                     const use = document.getElementById('calphoto-use');
                     use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
                 }
-                // Collapse the drop zone to a one-line status — on a 240 px screen its
-                // full height is the difference between the span picker being visible
-                // and being below the fold.
+                // Collapse the drop zone to a one-line status once it has served its purpose
                 const dz0 = document.getElementById('calphoto-drop');
-                dz0.style.padding='5px 8px'; dz0.style.fontSize='9px'; dz0.style.lineHeight='1.3';
-                dz0.innerHTML='&#10003; '+file.name.slice(0,22)+' · tap to load another';
+                dz0.style.padding='6px 8px'; dz0.style.fontSize='11px'; dz0.style.lineHeight='1.3';
+                dz0.innerHTML='&#10003; '+file.name.slice(0,26)+' · click to load another';
                 // Focus / tilt pass. Advisory only — it never blocks a measurement the
                 // gates above allowed, it just says how much to trust it and offers a
                 // shorter span when the frame can't hold a sharp full one. basePx keeps
@@ -8831,10 +8983,10 @@
     }
 
     // ── FOCUS verdict + span picker inside MEASURE FROM PHOTO ──
-    let _calPhotoSpans = null, _calPhotoSpanSel = -1;
+    let _calPhotoSpans = null, _calPhotoSpanSel = -1, _calPhotoFa = null;
     function _calPhotoHideFocus(){
-        _calPhotoSpans = null; _calPhotoSpanSel = -1;
-        for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanhint'])
+        _calPhotoSpans = null; _calPhotoSpanSel = -1; _calPhotoFa = null;
+        for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanhint','calphoto-profwrap'])
             document.getElementById(id).style.display='none';
     }
     function calPhotoRenderFocus(fa, spanMm, bad){
@@ -8871,20 +9023,21 @@
         fx.innerHTML = '<b style="color:'+col+';">'+head+'</b><br>'+body;
         fx.style.display='block';
 
+        // the full-frame profile: which ticks were found, and which ones the selected
+        // span actually measures over
+        _calPhotoFa = fa;
+        document.getElementById('calphoto-profwrap').style.display='block';
+        drawMicProfile(document.getElementById('calphoto-prof'), fa, fa.best);
+
         // span picker — only worth showing when there is something to choose
         _calPhotoSpans = fa.spans; _calPhotoSpanSel = -1;
         if (!fa.spans.length || bad){ sp.style.display='none'; hint.style.display='none'; return; }
-        sp.innerHTML = fa.spans.map((s,i)=>{
-            const px = Math.round(s.px);
-            return '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')" '+
-                   'style="display:flex; justify-content:space-between; align-items:center; '+
-                   'padding:4px 6px; margin-bottom:3px; border-radius:3px; cursor:pointer; '+
-                   'font-size:10px; border:1px solid #24485c; background:#0a1c26;">'+
-                   '<span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
-                   (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+'</span>'+
-                   '<span style="color:#9cc;">'+px+' px <span style="color:#678;">&plusmn;'+
-                   s.sigmaPx.toFixed(1)+'</span></span></div>';
-        }).join('');
+        sp.innerHTML = fa.spans.map((s,i)=>
+            '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')">'+
+            '<span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
+            (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+'</span>'+
+            '<span style="color:#9cc;">'+Math.round(s.px)+' px <span style="color:#678;">&plusmn;'+
+            s.sigmaPx.toFixed(1)+'</span></span></div>').join('');
         sp.style.display='block'; hint.style.display='block';
         const bi = fa.spans.findIndex(s=>s.best);
         calPhotoPickSpan(bi<0 ? 0 : bi);
@@ -8892,13 +9045,17 @@
     function calPhotoPickSpan(i){
         if (!_calPhotoSpans || !_calPhotoSpans[i]) return;
         _calPhotoSpanSel = i;
-        const px = Math.max(1, Math.round(_calPhotoSpans[i].px));
+        const sel = _calPhotoSpans[i];
+        const px = Math.max(1, Math.round(sel.px));
         _calPhotoPx = px;
         document.querySelectorAll('#calphoto-spans .calphoto-chip').forEach((el,k)=>{
             const on = (k===i);
             el.style.borderColor = on ? '#3ddb7a' : '#24485c';
             el.style.background  = on ? '#0e3323' : '#0a1c26';
         });
+        // redraw the profile against THIS span's window — previously the picker changed
+        // the number with nothing on screen to show what it had changed
+        if (_calPhotoFa) drawMicProfile(document.getElementById('calphoto-prof'), _calPhotoFa, sel);
         const use = document.getElementById('calphoto-use');
         use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
     }
@@ -8930,10 +9087,11 @@
         // too dense to read; this is a legible window onto it (not the whole span).
         const showT = Math.min(20, r.intervals||40);
         const half = Math.min(ww/2, showT*pw/2);
+        // Careful with the wording: "0.20 mm of 0.40 mm" would read as a SPAN OPTION now
+        // that the picker offers those very numbers. This is only a zoom, not a choice.
         if (cap){ cap.style.display='block';
-            const shownMm = (spanMm||0.4)*showT/(r.intervals||40);
-            cap.innerHTML = shownMm.toFixed(2) + ' mm of ' + (spanMm||0.4).toFixed(2) +
-                ' mm span · contrast profile · <span style="color:#fb0;">|</span> = centroid'; }
+            cap.innerHTML = 'zoom: ' + showT + ' ticks from the sharpest region · contrast profile · ' +
+                '<span style="color:#fb0;">|</span> = centroid'; }
         const u0=Math.max(0, Math.min(ww-2*half, uc-half)), u1=Math.min(ww, u0+2*half), uw=u1-u0||1;
         const stripH=Math.round(46*S), profY=stripH+Math.round(3*S), profH=PH-profY, gap=Math.round(3*S), mark=Math.round(4*S);
         // 1) zoomed crop of the deskewed sub-window (ticks vertical)
