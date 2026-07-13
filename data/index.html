@@ -7589,7 +7589,10 @@
         }
         m.style.display = 'flex';
     }
-    function closeCalPhoto(){ document.getElementById('calphoto').style.display = 'none'; }
+    function closeCalPhoto(){
+        document.getElementById('calphoto').style.display = 'none';
+        _calPhotoStrip = null;          // drop the retained band strip
+    }
 
     // ── LENS CENTERING (lateral-CA neutral-point test) ──
     // Entry point + drop zone. The left/right analysis (per-channel column-
@@ -8949,7 +8952,6 @@
                     '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
                     '<span style="color:' + (errPct<5?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
                     ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt + '</span>';
-                drawCalPhotoPreview(srcCv, r, spanMm);
                 if (bad){
                     warn.style.color='#ff6a6a';
                     warn.textContent = tooFew
@@ -8977,6 +8979,11 @@
                 // the full-span option byte-identical to what this tool always returned.
                 const fa = analyzeMicrometerFocus(imd, { pitchMm, demarcMm: spanMm,
                                                          imageW: photoW, NA: state.effNA, basePx: px });
+                // The zoom is drawn per-span from a retained band strip. If the focus
+                // pass couldn't build a tick table, fall back to the old fixed preview so
+                // an odd photo still shows its evidence.
+                if (!fa.error && fa.table) _calPhotoMakeStrip(srcCv, fa.table);
+                else drawCalPhotoPreview(srcCv, r, spanMm);
                 calPhotoRenderFocus(fa, spanMm, bad);
             } catch(e){ res.style.color='#ff6a6a'; res.textContent='Analysis error: ' + e.message; }
             URL.revokeObjectURL(url);
@@ -8985,11 +8992,98 @@
     }
 
     // ── FOCUS verdict + span picker inside MEASURE FROM PHOTO ──
-    let _calPhotoSpans = null, _calPhotoSpanSel = -1, _calPhotoFa = null;
+    let _calPhotoSpans = null, _calPhotoSpanSel = -1, _calPhotoFa = null, _calPhotoStrip = null;
+
+    // The rows the zoom will ever show, kept so the picture can be REDRAWN when the
+    // span changes. Retaining the whole deskewed working canvas would be ~40 MB; the
+    // tick band alone is a fraction of that, and it is dropped when the panel closes.
+    function _calPhotoMakeStrip(srcCv, t){
+        const bh = Math.max(4, t.y1 - t.y0);
+        const y0 = Math.max(0, Math.round(t.y0 - bh*0.18));
+        const y1 = Math.min(srcCv.height-1, Math.round(t.y1 + bh*0.18));
+        const h  = Math.max(1, y1 - y0 + 1);
+        const c = document.createElement('canvas');
+        c.width = srcCv.width; c.height = h;
+        c.getContext('2d').drawImage(srcCv, 0, y0, srcCv.width, h, 0, 0, srcCv.width, h);
+        _calPhotoStrip = c;
+    }
+
     function _calPhotoHideFocus(){
-        _calPhotoSpans = null; _calPhotoSpanSel = -1; _calPhotoFa = null;
+        _calPhotoSpans = null; _calPhotoSpanSel = -1; _calPhotoFa = null; _calPhotoStrip = null;
         for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanhint','calphoto-profwrap'])
             document.getElementById(id).style.display='none';
+    }
+
+    // The zoom + its contrast profile, drawn for the SELECTED span — so picking
+    // 0.40 / 0.30 / 0.20 moves all three views together instead of highlighting a
+    // window up top while the picture below still shows some other stretch of ticks.
+    // Isotropic throughout: the source rect's aspect drives the destination's, so the
+    // strip stays a faithful crop of the photo (see the note on the old stretch bug).
+    function calPhotoDrawZoom(sel){
+        const pv  = document.getElementById('calphoto-prev');
+        const cap = document.getElementById('calphoto-prevcap');
+        const fa  = _calPhotoFa, strip = _calPhotoStrip;
+        if (!fa || !strip || !sel){ pv.style.display='none'; if(cap) cap.style.display='none'; return; }
+        pv.style.display='block';
+        const rect = pv.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1, MAXW = 2400;
+        let PW = Math.round((rect.width||600)*dpr), PH = Math.round((rect.height||300)*dpr);
+        if (PW > MAXW){ PH = Math.round(PH*MAXW/PW); PW = MAXW; }
+        if (!PW || !PH) return;
+        pv.width = PW; pv.height = PH;
+        const ctx = pv.getContext('2d');
+        ctx.clearRect(0,0,PW,PH);
+        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+
+        const t = fa.table, prom = t.prom, pitch = t.pitch;
+        const S = PH/300, lw = Math.max(1, Math.round(S*1.4));
+        // show the span's window plus a tick of context either side
+        const pad = pitch*0.7;
+        const u0 = Math.max(0, sel.xa - pad), u1 = Math.min(t.W, sel.xb + pad);
+        const sw = Math.max(1, u1 - u0), scale = PW/sw;
+        const maxStrip = Math.round(PH*0.60);
+        let sh = strip.height, destH = sh*scale;
+        if (destH > maxStrip){ destH = maxStrip; sh = destH/scale; }   // crop rows, never distort
+        const sy = Math.max(0, (strip.height - sh)/2);
+        ctx.drawImage(strip, u0, sy, sw, sh, 0, 0, PW, destH);
+
+        const toX = u => (u - u0)*scale;
+        const profY = destH + Math.round(5*S), profH = PH - profY, gap = Math.round(4*S);
+        // contrast profile over exactly the same x range
+        let pmin=Infinity, pmax=-Infinity;
+        for (let x=Math.floor(u0); x<u1; x++){ const v=prom[x]; if(v<pmin)pmin=v; if(v>pmax)pmax=v; }
+        const rng = (pmax-pmin) || 1;
+        ctx.fillStyle='#060f0d'; ctx.fillRect(0, profY, PW, profH);
+        ctx.strokeStyle='#5ad6ff'; ctx.lineWidth=lw; ctx.beginPath();
+        let first=true;
+        for (let x=Math.floor(u0); x<u1; x++){
+            const xx=toX(x), yy=profY+profH-1-((prom[x]-pmin)/rng)*(profH-gap);
+            if (first){ ctx.moveTo(xx,yy); first=false; } else ctx.lineTo(xx,yy);
+        }
+        ctx.stroke();
+        // the span's own edges — the same green bracket as the full-frame view above
+        ctx.strokeStyle='#3ddb7a'; ctx.lineWidth=Math.max(1.5, 1.6*S);
+        ctx.beginPath();
+        ctx.moveTo(toX(sel.xa), 0); ctx.lineTo(toX(sel.xa), PH);
+        ctx.moveTo(toX(sel.xb), 0); ctx.lineTo(toX(sel.xb), PH);
+        ctx.stroke();
+        // centroids: the ones this span actually fits are bright, the context ticks dim
+        const mark = Math.round(9*S);
+        for (const k of t.ticks){
+            if (k.x < u0 || k.x > u1) continue;
+            const inSpan = (k.x >= sel.xa && k.x <= sel.xb), xx = toX(k.x);
+            ctx.strokeStyle = inSpan ? 'rgba(255,176,0,0.95)' : 'rgba(255,176,0,0.30)';
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.moveTo(xx, 0); ctx.lineTo(xx, mark);
+            ctx.moveTo(xx, destH-mark); ctx.lineTo(xx, destH);
+            ctx.moveTo(xx, profY); ctx.lineTo(xx, PH);
+            ctx.stroke();
+        }
+        if (cap){ cap.style.display='block';
+            cap.innerHTML = '<b style="color:#3ddb7a;">'+sel.spanMm.toFixed(2)+' mm window</b> — the '+
+                sel.nTicks+' ticks this option fits · true aspect, no stretch (&times;'+
+                scale.toFixed(1)+') · <span style="color:#fb0;">|</span> = centroid'; }
     }
     function calPhotoRenderFocus(fa, spanMm, bad){
         const fx = document.getElementById('calphoto-focus');
@@ -9030,6 +9124,7 @@
         _calPhotoFa = fa;
         document.getElementById('calphoto-profwrap').style.display='block';
         drawMicProfile(document.getElementById('calphoto-prof'), fa, fa.best);
+        calPhotoDrawZoom(fa.best);
 
         // span picker — only worth showing when there is something to choose
         _calPhotoSpans = fa.spans; _calPhotoSpanSel = -1;
@@ -9055,9 +9150,14 @@
             el.style.borderColor = on ? '#3ddb7a' : '#24485c';
             el.style.background  = on ? '#0e3323' : '#0a1c26';
         });
-        // redraw the profile against THIS span's window — previously the picker changed
-        // the number with nothing on screen to show what it had changed
-        if (_calPhotoFa) drawMicProfile(document.getElementById('calphoto-prof'), _calPhotoFa, sel);
+        // All three views move together: the full-frame profile highlights the window,
+        // and the zoom + its contrast profile below show THOSE ticks. Previously the
+        // picker changed the number and the top view while the picture underneath kept
+        // showing a different stretch of the slide.
+        if (_calPhotoFa){
+            drawMicProfile(document.getElementById('calphoto-prof'), _calPhotoFa, sel);
+            calPhotoDrawZoom(sel);
+        }
         const use = document.getElementById('calphoto-use');
         use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
     }
