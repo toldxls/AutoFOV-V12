@@ -2720,9 +2720,10 @@
         cursor:pointer; height:40px; border-radius:4px; font-size:14px; font-weight:bold;
         letter-spacing:1px; background:#143a14; border:1px solid #2a7a2a; color:#7fff7f;
         opacity:0.4; pointer-events:none; }
-      .calphoto-chip { display:flex; justify-content:space-between; align-items:center;
-        padding:7px 9px; margin-bottom:4px; border-radius:3px; cursor:pointer;
-        font-size:12px; border:1px solid #24485c; background:#0a1c26; }
+      .calphoto-chip { display:block; padding:7px 9px; margin-bottom:4px; border-radius:3px;
+        cursor:pointer; font-size:12px; border:1px solid #24485c; background:#0a1c26; }
+      .calphoto-chip .cc-row { display:flex; justify-content:space-between; align-items:baseline; }
+      .calphoto-chip .cc-sub { margin-top:3px; font-size:9px; line-height:1.35; color:#6d8a99; }
       @media (max-width:760px) {
         #cph-body { flex-direction:column; overflow-y:auto; }
         #cph-left { flex:0 0 auto; overflow:visible; }
@@ -2757,9 +2758,11 @@
                color:var(--text-disabled);"></div>
           <div id="calphoto-spans" style="display:none;"></div>
           <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.4;
-               color:#667;">Every option reports pixels per <b>Demarc&nbsp;Dist</b> — a shorter
-               span just fits the tick pitch on cleaner ticks and scales it up. The green
-               window on the profile shows which ticks it uses.</div>
+               color:#667;"><b>*</b> The big number is always pixels per <b>Demarc&nbsp;Dist</b> —
+               that is what CAPTURE&nbsp;&amp;&nbsp;SAVE receives and what the firmware expects. A
+               shorter span measures the tick pitch on cleaner ticks and scales it up to the
+               demarc; it is the same quantity from better data, not a different one. The green
+               window shows which ticks each option uses.</div>
           <div id="calphoto-use" onclick="calPhotoUse()">USE MEASUREMENT</div>
         </div>
         <div id="cph-right">
@@ -7896,14 +7899,19 @@
         // window, so "which ticks does 0.20 mm actually use" is one click away
         _focCur=fa;
         if (fa.spans.length){
-            sp.innerHTML='<table><tr><th>span</th><th>pixels / demarc</th><th>&plusmn; total</th>'+
-                '<th>fit noise</th><th>window drift</th><th>ticks</th></tr>'+
+            // "measured" is the raw count over that span; "per demarc" is the same fit
+            // scaled up to the Demarc Dist — the figure the calibration actually uses.
+            sp.innerHTML='<table><tr><th>span</th><th>measured px</th><th>&rarr; px / demarc</th>'+
+                '<th>&plusmn; total</th><th>fit noise</th><th>window drift</th><th>ticks</th></tr>'+
                 fa.spans.map((s,k)=>'<tr class="'+(s.best?'best':'')+'" onclick="_focShowSpan('+k+')" '+
                     'style="cursor:pointer;"><td>'+(s.best?'&#9733; ':'')+
-                    s.spanMm.toFixed(2)+' mm</td><td>'+Math.round(s.px)+'</td><td>&plusmn;'+s.sigmaPx.toFixed(1)+
+                    s.spanMm.toFixed(2)+' mm</td><td>'+Math.round(s.px*s.fr)+
+                    (s.fr===1.0?'':' <span style="color:#5e8c7e;">&times;'+(1/s.fr).toFixed(2)+'</span>')+
+                    '</td><td>'+Math.round(s.px)+'</td><td>&plusmn;'+s.sigmaPx.toFixed(1)+
                     '</td><td>'+s.sigmaStat.toFixed(2)+'</td><td>'+s.sigmaSys.toFixed(1)+'</td><td>'+
                     s.nTicks+'</td></tr>').join('')+'</table>'+
-                '<div style="font-size:9px; color:#5e8c7e; margin-top:3px;">click a row to see the ticks it uses</div>';
+                '<div style="font-size:9px; color:#5e8c7e; margin-top:3px;">click a row to see the ticks it uses · '+
+                'a shorter span is measured over fewer ticks and scaled up to the demarc</div>';
             sp.style.display='block';
         } else { sp.style.display='none'; }
         note.innerHTML='Scale drift across the field '+fa.scaleGradPctPerMm.toFixed(2)+' %/mm · '+
@@ -9129,12 +9137,25 @@
         // span picker — only worth showing when there is something to choose
         _calPhotoSpans = fa.spans; _calPhotoSpanSel = -1;
         if (!fa.spans.length || bad){ sp.style.display='none'; hint.style.display='none'; return; }
-        sp.innerHTML = fa.spans.map((s,i)=>
-            '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')">'+
-            '<span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
-            (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+'</span>'+
-            '<span style="color:#9cc;">'+Math.round(s.px)+' px <span style="color:#678;">&plusmn;'+
-            s.sigmaPx.toFixed(1)+'</span></span></div>').join('');
+        // Each chip states BOTH numbers. The headline is always pixels-per-Demarc-Dist —
+        // that is what CAPTURE & SAVE receives — but for a shorter span that figure is
+        // scaled up from a smaller measurement, and hiding that arithmetic would make the
+        // options look like three independent readings of the same thing. They are not.
+        const dm = (state.demarcDist>0 ? state.demarcDist : 0.4);
+        sp.innerHTML = fa.spans.map((s,i)=>{
+            const px = Math.round(s.px), raw = Math.round(s.px * s.fr);
+            const sub = (s.fr === 1.0)
+                ? 'measured directly over the full ' + dm.toFixed(2) + ' mm — no scaling'
+                : raw + ' px measured over ' + s.spanMm.toFixed(2) + ' mm &nbsp;&times;&nbsp;' +
+                  (1/s.fr).toFixed(2) + ' &rarr; ' + px + ' px per ' + dm.toFixed(2) + ' mm';
+            return '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')">'+
+              '<div class="cc-row"><span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
+              (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+
+              (s.fr===1.0?'':'<span style="color:#6d8a99;">*</span>')+'</span>'+
+              '<span style="color:#9cc;">'+px+' px <span style="color:#678;">&plusmn;'+
+              s.sigmaPx.toFixed(1)+'</span></span></div>'+
+              '<div class="cc-sub">'+sub+'</div></div>';
+        }).join('');
         sp.style.display='block'; hint.style.display='block';
         const bi = fa.spans.findIndex(s=>s.best);
         calPhotoPickSpan(bi<0 ? 0 : bi);
