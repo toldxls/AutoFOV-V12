@@ -937,38 +937,40 @@
                      background:#0a3344; border:1px solid #2a7a9a; font-size:10px;"
                      onclick="calioOpen()">CAL I/O</div>
 
+                <!-- Rows are tap-to-type (shared numeric overlay) — no arrow steppers
+                     here, unlike the device, which has no keyboard. Tick pitch sits
+                     with the other pre-cal settings: it feeds MEASURE FROM PHOTO and
+                     is pointless to change once the capture loop is running. -->
                 <!-- Row 0: Photo Width -->
-                <div class="stack-row" style="top: 45px; height: 35px;" onclick="setCalSel(0)">
-                    <div id="lbl-calw" class="gfx-text" style="left: 10px; top: 8px; color: var(--accent-green); font-size: 12px;">Photo Width:</div>
-                    <div id="val-calw" class="gfx-text" style="left: 115px; top: 6px; font-size: 16px; color: var(--text-primary);">6960 px</div>
+                <div class="stack-row" style="top: 45px; height: 35px;" onclick="editCalField('width')" title="Tap to type">
+                    <div id="lbl-calw" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Photo Width:</div>
+                    <div id="val-calw" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">6960 px</div>
                 </div>
                 <!-- Row 1: Demarc Dist -->
-                <div class="stack-row" style="top: 80px; height: 35px;" onclick="setCalSel(1)">
+                <div class="stack-row" style="top: 80px; height: 35px;" onclick="editCalField('demarc')" title="Tap to type">
                     <div id="lbl-cald" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Demarc Dist:</div>
-                    <div id="val-cald" class="gfx-text" style="left: 115px; top: 6px; font-size: 16px; color: var(--text-primary);">0.40 mm</div>
+                    <div id="val-cald" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">0.40 mm</div>
                 </div>
-                <!-- Row 2: Cal Points -->
-                <div class="stack-row" style="top: 115px; height: 35px;" onclick="setCalSel(2)">
+                <!-- Row 2: Tick Pitch (browser-side — drives MEASURE FROM PHOTO only) -->
+                <div class="stack-row" style="top: 115px; height: 35px;" onclick="editCalField('pitch')" title="Micrometer minor-tick spacing — tap to type">
+                    <div id="lbl-calp" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Tick Pitch:</div>
+                    <div id="val-calp" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">0.010 mm</div>
+                </div>
+                <!-- Row 3: Cal Points -->
+                <div class="stack-row" style="top: 150px; height: 35px;" onclick="editCalField('points')" title="Tap to type">
                     <div id="lbl-caln" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Cal Points:</div>
-                    <div id="val-caln" class="gfx-text" style="left: 115px; top: 6px; font-size: 16px; color: var(--text-primary);">10</div>
+                    <div id="val-caln" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">10</div>
                 </div>
 
-                <div class="adj-row" style="top: 165px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCal(-2)">◄◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjCal(-1)">◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjCal(1)">►</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjCal(2)">►►</div>
-                </div>
-
-                <div class="gfx-btn" style="left: 10px; top: 208px; width: 105px; height: 46px; background: #0000CD;"
+                <div class="gfx-btn" style="left: 10px; top: 196px; width: 105px; height: 46px; background: #0000CD;"
                      onclick="startCal()">START CAL</div>
-                <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 208px; width: 105px; height: 46px; background: #780000;"
+                <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #780000;"
                      onclick="resetAll()">RESET ALL</div>
-                <div class="gfx-btn flat" style="left: 10px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
+                <div class="gfx-btn flat" style="left: 10px; top: 250px; width: 105px; height: 26px; font-size: 11px;"
                      onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTERING</div>
-                <div class="gfx-btn flat" style="left: 125px; top: 260px; width: 105px; height: 26px; font-size: 11px;"
+                <div class="gfx-btn flat" style="left: 125px; top: 250px; width: 105px; height: 26px; font-size: 11px;"
                      onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot"><svg width="18" height="14" viewBox="0 0 20 14" style="margin-right: 5px; flex: none;" aria-hidden="true"><rect x="2" y="0" width="3" height="14" fill="#000"/><rect x="8.5" y="0" width="3" height="14" fill="#000"/><rect x="15" y="0" width="3" height="14" fill="#000"/><path d="M0 2.5 C 7 3, 9 11, 20 11.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>MTF</div>
-                <div class="gfx-btn" style="left: 60px; top: 291px; width: 120px; height: 25px; background: #FF0000;"
+                <div class="gfx-btn" style="left: 60px; top: 285px; width: 120px; height: 25px; background: #FF0000;"
                      onclick="switchScreen('screen-main')">CANCEL</div>
             </div>
 
@@ -1833,13 +1835,14 @@
                     </div>
                     <input type="file" id="calphoto-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                            style="display:none;" onchange="calPhotoChosen(this)">
-                    <div style="display:flex; gap:8px; margin-top:8px; font-size:10px; align-items:center;">
-                        <span style="color:var(--text-disabled);">Tick pitch</span>
-                        <input id="calphoto-pitch" type="number" step="0.001" min="0.0001" value="0.01"
-                               onchange="calPhotoPitchSave()"
-                               style="width:62px; background:#0d2535; border:1px solid #2a5a7a; color:#fff;
-                                      font:11px monospace; padding:2px 4px; border-radius:3px;">
-                        <span style="color:var(--text-disabled);">mm &nbsp; span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm</span>
+                    <!-- Read-only echo of the two pre-cal settings this measurement
+                         depends on. Both are set on the CALIBRATOR screen before
+                         START CAL — editing them mid-run would silently rescale the
+                         points already captured. -->
+                    <div style="margin-top:8px; font-size:10px; color:var(--text-disabled); line-height:1.5;">
+                        Tick pitch <b id="calphoto-pitch" style="color:#aaa;">0.010</b> mm &nbsp;·&nbsp;
+                        span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm<br>
+                        <span style="color:#5a7;">set both on the CALIBRATOR screen</span>
                     </div>
                     <canvas id="calphoto-prev" width="220" height="116"
                             style="display:none; width:220px; height:116px; margin-top:8px;
@@ -1886,12 +1889,14 @@
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">You'll need</div>
                     A stage micrometer (a ruler of known scale) in the frame, so the pixel width of a known
                     distance can be measured at each step.
-                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">The three settings</div>
+                    <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">The settings (tap a row to type)</div>
                     <b>Photo Width</b> — your camera's image width in px (e.g. 6960).<br>
                     <b>Demarc Dist</b> — the real width (mm) you measure pixels across (default 0.40).<br>
+                    <b>Tick Pitch</b> — your micrometer's smallest tick spacing (mm, default 0.010).
+                    Used by <b>MEASURE FROM PHOTO</b>; set it here, before starting.<br>
                     <b>Cal Points</b> — a TARGET step count; you don't have to hit it exactly.
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Steps</div>
-                    1. Set Photo Width &amp; Demarc Dist, then <b>START CAL</b>.<br>
+                    1. Set Photo Width, Demarc Dist &amp; Tick Pitch, then <b>START CAL</b>.<br>
                     2. At each bellows distance, fill in the pixel count — either type it, or tap
                     <b>&#128247; MEASURE FROM PHOTO</b> and drop a micrometer JPEG to measure it automatically.<br>
                     3. Tap <b>CAPTURE &amp; SAVE</b> (pairs your pixels with the live ToF distance).<br>
@@ -1899,7 +1904,7 @@
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Measure from photo</div>
                     Drop a JPEG of the micrometer; it finds the ticks, deskews any tilt, and fills the pixel
                     field. It refuses to apply a result it can't trust (too few ticks / high error) — retake
-                    or check the Tick pitch if so. Shoot JPEG (or RAW+JPEG); a full uncropped frame.
+                    or check the Tick Pitch setting if so. Shoot JPEG (or RAW+JPEG); a full uncropped frame.
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Stop anytime · review</div>
                     Capture points at whatever spacing you manage, then <b>FINISH</b> to fit from exactly the
                     points you took. Use 3+ (5+ across the whole range is better). <b>REVIEW</b> lets you check
@@ -2205,39 +2210,40 @@
       </form>
     </div>
 
-    <!-- Cal-run pixel-entry overlay — styled like the OTA/updater popups so the
-         user can type an exact pixel count instead of stepping with the arrows. -->
+    <!-- Numeric-entry overlay — styled like the OTA/updater popups. Shared by the
+         cal-run pixel count and every CALIBRATOR setting row, so typing a value
+         looks the same everywhere the web UI takes a number. -->
     <style>
-      #calpx-overlay { display:none; position:fixed; inset:0; z-index:660;
+      #numin-overlay { display:none; position:fixed; inset:0; z-index:660;
         background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
         -webkit-backdrop-filter:blur(4px); flex-direction:column;
         align-items:center; justify-content:center; padding:0 24px;
         color:#cfe7df; font-family:monospace; text-align:center; }
-      #calpx-overlay.open { display:flex; }
-      #calpx-overlay .cpTitle { font-size:20px; font-weight:bold; color:#3ddb7a;
+      #numin-overlay.open { display:flex; }
+      #numin-overlay .cpTitle { font-size:20px; font-weight:bold; color:#3ddb7a;
         letter-spacing:3px; margin-bottom:6px; }
-      #calpx-overlay .cpSub { font-size:11px; color:#7ab4a2; line-height:1.5;
+      #numin-overlay .cpSub { font-size:11px; color:#7ab4a2; line-height:1.5;
         margin-bottom:20px; max-width:300px; }
-      #calpx-input { width:100%; max-width:220px; padding:11px; font-size:18px;
+      #numin-input { width:100%; max-width:220px; padding:11px; font-size:18px;
         font-family:monospace; background:#0c2b2e; border:1px solid #2a5e58;
         border-radius:4px; color:#e7f5ee; margin-bottom:16px; text-align:center; }
-      #calpx-input:focus { outline:none; border-color:#3ddb7a; }
-      #calpx-row { display:flex; gap:10px; width:100%; max-width:220px; }
-      #calpx-row button { flex:1; padding:12px; font-size:14px; font-weight:bold;
+      #numin-input:focus { outline:none; border-color:#3ddb7a; }
+      #numin-row { display:flex; gap:10px; width:100%; max-width:220px; }
+      #numin-row button { flex:1; padding:12px; font-size:14px; font-weight:bold;
         letter-spacing:1px; border-radius:4px; cursor:pointer; font-family:monospace; }
-      #calpx-set    { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df; }
-      #calpx-set:active { filter:brightness(1.3); }
-      #calpx-cancel { background:#2a1414; border:1px solid #7a3a3a; color:#e7cfcf; }
+      #numin-set    { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df; }
+      #numin-set:active { filter:brightness(1.3); }
+      #numin-cancel { background:#2a1414; border:1px solid #7a3a3a; color:#e7cfcf; }
     </style>
-    <div id="calpx-overlay">
-      <div class="cpTitle">PIXELS</div>
-      <div class="cpSub">Type the measured pixel width for this point.</div>
-      <form id="calpx-form" onsubmit="calPxConfirm(); return false;">
-        <input id="calpx-input" type="number" inputmode="numeric" min="1" step="1"
+    <div id="numin-overlay">
+      <div class="cpTitle" id="numin-title">PIXELS</div>
+      <div class="cpSub"   id="numin-sub">Type the measured pixel width for this point.</div>
+      <form id="numin-form" onsubmit="numInConfirm(); return false;">
+        <input id="numin-input" type="number" inputmode="decimal" min="1" step="1"
                spellcheck="false" autocomplete="off">
-        <div id="calpx-row">
-          <button type="button" id="calpx-cancel" onclick="calPxClose()">CANCEL</button>
-          <button type="submit"  id="calpx-set">SET</button>
+        <div id="numin-row">
+          <button type="button" id="numin-cancel" onclick="numInClose()">CANCEL</button>
+          <button type="submit"  id="numin-set">SET</button>
         </div>
       </form>
     </div>
@@ -2795,9 +2801,11 @@
         sleepMs: 300000,      // 5 min
         themeIndex: 0,
         tintPct: 50,          // 0-100
-        calSel: 0,            // 0=photoWidth 1=demarcDist 2=calPoints
         photoWidth: 6960,
         demarcDist: 0.40,
+        tickPitch: 0.01,      // micrometer minor-tick spacing, mm — browser-only
+                              // (MEASURE FROM PHOTO); persisted in localStorage,
+                              // the firmware has no use for it
         calPoints: 10,
         calRunPx: 1920,
         calPointsCaptured: 0,
@@ -5135,39 +5143,51 @@
     // ─────────────────────────────────────────────────────────────────────────
     // CALIBRATOR SETTINGS
     // ─────────────────────────────────────────────────────────────────────────
-    function setCalSel(sel) {
-        state.calSel = sel;
+    // Web edits a setting by typing it (the device keeps its arrow steppers — it
+    // has no keyboard). Cal Points caps at 20 to match firmware MAX_CALIB_POINTS;
+    // the old 50 let the web run past the device, which finalized at 20 while the
+    // web kept waiting for more captures.
+    const CAL_FIELDS = {
+        width:  { title: 'PHOTO WIDTH', sub: "Your camera's full image width, in pixels.",
+                  min: 100, max: 30000, step: 1,     dec: 0, unit: ' px' },
+        demarc: { title: 'DEMARC DIST',  sub: 'The real width you count pixels across, in mm.',
+                  min: 0.01, max: 5.0,  step: 0.01,  dec: 2, unit: ' mm' },
+        pitch:  { title: 'TICK PITCH',   sub: 'Spacing of the micrometer’s smallest ticks, in mm (e.g. 0.01).',
+                  min: 0.0001, max: 5.0, step: 0.001, dec: 3, unit: ' mm' },
+        points: { title: 'CAL POINTS',   sub: 'Target number of capture steps (3–20).',
+                  min: 3, max: 20,      step: 1,     dec: 0, unit: '' },
+    };
+
+    function editCalField(key) {
+        const f = CAL_FIELDS[key];
+        const cur = { width: state.photoWidth, demarc: state.demarcDist,
+                      pitch: state.tickPitch,  points: state.calPoints }[key];
+        openNumInput({ ...f, value: cur, onSet: v => setCalField(key, v) });
+    }
+
+    function setCalField(key, v) {
+        if (key === 'width')       { state.photoWidth = Math.round(v); sendCommand('calWidth',   state.photoWidth); }
+        else if (key === 'demarc') { state.demarcDist = v;             sendCommand('demarcDist', state.demarcDist); }
+        else if (key === 'points') { state.calPoints  = Math.round(v); sendCommand('calPoints',  state.calPoints);  }
+        else if (key === 'pitch')  { state.tickPitch  = v;             saveTickPitch(); }
         updateCalSettingsUI();
     }
 
-    function adjCal(adj) {
-        const bigDelta = Math.abs(adj) >= 2;
-        const dir = Math.sign(adj);
-        if (state.calSel === 0) {
-            const step = bigDelta ? 100 : 10;
-            state.photoWidth = Math.max(100, Math.min(30000, state.photoWidth + dir * step));
-        } else if (state.calSel === 1) {
-            const step = bigDelta ? 0.1 : 0.01;
-            state.demarcDist = Math.max(0.01, Math.min(5.0, +(state.demarcDist + dir * step).toFixed(2)));
-        } else {
-            const step = bigDelta ? 5 : 1;
-            // Cap matches firmware MAX_CALIB_POINTS (20) — the old 50 let the
-            // web run past the device, which finalized at 20 while the web
-            // kept waiting for more captures.
-            state.calPoints = Math.max(3, Math.min(20, state.calPoints + dir * step));
-        }
-        updateCalSettingsUI();
-        sendCommand(state.calSel === 0 ? 'calWidth' : state.calSel === 1 ? 'demarcDist' : 'calPoints',
-                    [state.photoWidth, state.demarcDist, state.calPoints][state.calSel]);
+    function saveTickPitch() {
+        try { localStorage.setItem('afMicPitch', String(state.tickPitch)); } catch(e){}
     }
+    function loadTickPitch() {
+        try {
+            const s = parseFloat(localStorage.getItem('afMicPitch'));
+            if (isFinite(s) && s > 0) state.tickPitch = s;
+        } catch(e){}
+    }
+    loadTickPitch();
 
     function updateCalSettingsUI() {
-        const sel = state.calSel;
-        document.getElementById('lbl-calw').style.color = sel === 0 ? '#ADFF2F' : '#FFF';
-        document.getElementById('lbl-cald').style.color = sel === 1 ? '#ADFF2F' : '#FFF';
-        document.getElementById('lbl-caln').style.color = sel === 2 ? '#ADFF2F' : '#FFF';
         document.getElementById('val-calw').innerText = state.photoWidth + ' px';
         document.getElementById('val-cald').innerText = state.demarcDist.toFixed(2) + ' mm';
+        document.getElementById('val-calp').innerText = state.tickPitch.toFixed(3) + ' mm';
         document.getElementById('val-caln').innerText = state.calPoints;
     }
 
@@ -5214,23 +5234,48 @@
         document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
     }
 
-    // Tap the pixel box to type an exact value (updater-popup styled overlay).
-    function openCalPxInput() {
-        const inp = document.getElementById('calpx-input');
-        inp.value = state.calRunPx;
-        document.getElementById('calpx-overlay').classList.add('open');
+    // Shared type-a-number overlay: the cal-run pixel box and every CALIBRATOR
+    // setting row use it, so entry looks and behaves the same everywhere.
+    let _numinCfg = null;
+    function openNumInput(cfg) {
+        _numinCfg = cfg;
+        const inp = document.getElementById('numin-input');
+        document.getElementById('numin-title').innerText = cfg.title;
+        document.getElementById('numin-sub').innerText   = cfg.sub;
+        inp.min  = cfg.min;
+        inp.max  = cfg.max;
+        inp.step = cfg.step;
+        inp.inputMode = cfg.dec ? 'decimal' : 'numeric';   // phone keypad matches the field
+        inp.value = cfg.dec ? (+cfg.value).toFixed(cfg.dec) : String(cfg.value);
+        document.getElementById('numin-overlay').classList.add('open');
         setTimeout(() => { inp.focus(); inp.select(); }, 30);   // type replaces current value
     }
-    function calPxClose() {
-        document.getElementById('calpx-overlay').classList.remove('open');
+    function numInClose() {
+        document.getElementById('numin-overlay').classList.remove('open');
+        _numinCfg = null;
     }
-    function calPxConfirm() {
-        const v = parseInt(document.getElementById('calpx-input').value, 10);
-        if (!isNaN(v) && v >= 1) {
-            state.calRunPx = v;
-            document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
+    function numInConfirm() {
+        const cfg = _numinCfg;
+        if (!cfg) return;
+        let v = parseFloat(document.getElementById('numin-input').value);
+        if (isFinite(v)) {
+            v = Math.max(cfg.min, Math.min(cfg.max, v));
+            if (cfg.dec !== undefined) v = +v.toFixed(cfg.dec);
+            cfg.onSet(v);
         }
-        calPxClose();
+        numInClose();
+    }
+
+    // Tap the pixel box during a run to type an exact count.
+    function openCalPxInput() {
+        openNumInput({
+            title: 'PIXELS', sub: 'Type the measured pixel width for this point.',
+            min: 1, max: 1000000, step: 1, dec: 0, value: state.calRunPx,
+            onSet: v => {
+                state.calRunPx = v;
+                document.getElementById('calrun-pixels').innerText = state.calRunPx + ' px';
+            },
+        });
     }
 
     // Ack-driven capture: send calCapture, show SAMPLING…, then advance ONLY
@@ -6886,14 +6931,10 @@
         document.getElementById('calphoto-prev').style.display='none';
         document.getElementById('calphoto-prevcap').style.display='none';
     }
-    function calPhotoPitchSave(){
-        const p = parseFloat(document.getElementById('calphoto-pitch').value);
-        if (isFinite(p) && p > 0) { try { localStorage.setItem('afMicPitch', String(p)); } catch(e){} }
-    }
     function openCalPhoto(){
         const m = document.getElementById('calphoto');
-        document.getElementById('calphoto-span').textContent = (state.demarcDist||0.4).toFixed(2);
-        try { const s=localStorage.getItem('afMicPitch'); if (s) document.getElementById('calphoto-pitch').value=s; } catch(e){}
+        document.getElementById('calphoto-span').textContent  = (state.demarcDist||0.4).toFixed(2);
+        document.getElementById('calphoto-pitch').textContent = (state.tickPitch||0.01).toFixed(3);
         document.getElementById('calphoto-result').textContent = '';
         document.getElementById('calphoto-warn').textContent = '';
         _calPhotoGen++;                 // orphan any in-flight decode from a prior session
@@ -7901,8 +7942,7 @@
         const myGen = ++_calPhotoGen;        // newest request wins; older loads become orphans
         warn.textContent=''; warn.style.color='#fa6'; res.style.color='var(--text-disabled)'; res.textContent = 'Reading ' + file.name + '…';
         _calPhotoResetUse();                 // never leave a stale enabled USE while loading
-        const pp = parseFloat(document.getElementById('calphoto-pitch').value);
-        const pitchMm = (isFinite(pp) && pp > 0) ? pp : 0.01;
+        const pitchMm = (state.tickPitch > 0) ? state.tickPitch : 0.01;
         const spanMm  = (state.demarcDist > 0) ? state.demarcDist : 0.4;
         const url = URL.createObjectURL(file);
         const img = new Image();
@@ -7955,9 +7995,9 @@
                 if (bad){
                     warn.style.color='#ff6a6a';
                     warn.textContent = tooFew
-                        ? '⚠ Only ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — check the Tick pitch, or use a clearer/closer photo. Not measured.'
+                        ? '⚠ Only ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — check Tick Pitch on the CALIBRATOR screen, or use a clearer/closer photo. Not measured.'
                         : tooMany
-                        ? '⚠ ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — Tick pitch looks too large (0.1 instead of 0.01?). Not measured.'
+                        ? '⚠ ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — Tick Pitch (CALIBRATOR screen) looks too large (0.1 instead of 0.01?). Not measured.'
                         : '⚠ High spacing error — check focus and that the slide is flat. Not measured.';
                     const u = document.getElementById('calphoto-use');
                     u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
