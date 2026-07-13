@@ -993,10 +993,15 @@
                      onclick="startCal()">START CAL</div>
                 <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #780000;"
                      onclick="resetAll()">RESET ALL</div>
-                <div class="gfx-btn flat" style="left: 10px; top: 250px; width: 105px; height: 26px; font-size: 11px;"
-                     onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTERING</div>
-                <div class="gfx-btn flat" style="left: 125px; top: 250px; width: 105px; height: 26px; font-size: 11px;"
-                     onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot"><svg width="18" height="14" viewBox="0 0 20 14" style="margin-right: 5px; flex: none;" aria-hidden="true"><rect x="2" y="0" width="3" height="14" fill="#000"/><rect x="8.5" y="0" width="3" height="14" fill="#000"/><rect x="15" y="0" width="3" height="14" fill="#000"/><path d="M0 2.5 C 7 3, 9 11, 20 11.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>MTF</div>
+                <!-- Three secondary analysis tools, 68 px each — the only way to fit a
+                     third without disturbing START CAL / CANCEL (no free vertical band
+                     on this screen is wider than 14 px). -->
+                <div class="gfx-btn flat" style="left: 10px; top: 250px; width: 68px; height: 26px; font-size: 10px;"
+                     onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTER</div>
+                <div class="gfx-btn flat" style="left: 86px; top: 250px; width: 68px; height: 26px; font-size: 10px;"
+                     onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot"><svg width="16" height="12" viewBox="0 0 20 14" style="margin-right: 4px; flex: none;" aria-hidden="true"><rect x="2" y="0" width="3" height="14" fill="#000"/><rect x="8.5" y="0" width="3" height="14" fill="#000"/><rect x="15" y="0" width="3" height="14" fill="#000"/><path d="M0 2.5 C 7 3, 9 11, 20 11.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>MTF</div>
+                <div class="gfx-btn flat" style="left: 162px; top: 250px; width: 68px; height: 26px; font-size: 10px;"
+                     onclick="openFocus()" title="Rank candidate shots; measure out-of-plane tilt of the slide">&#9679; FOCUS</div>
                 <div class="gfx-btn" style="left: 60px; top: 285px; width: 120px; height: 25px; background: #FF0000;"
                      onclick="switchScreen('screen-main')">CANCEL</div>
             </div>
@@ -1866,16 +1871,31 @@
                         span <b id="calphoto-span" style="color:#aaa;">0.40</b> mm<br>
                         <span style="color:#5a7;">set both on the CALIBRATOR screen</span>
                     </div>
+                    <!-- Numbers first, picture second: on a 240 px screen the preview
+                         canvas would otherwise push the verdict and the span picker
+                         below the fold, where nobody scrolls to find them. -->
+                    <div id="calphoto-result" style="margin-top:7px; font-size:11px; line-height:1.5;
+                         color:var(--text-disabled); min-height:30px;"></div>
+                    <div id="calphoto-warn" style="margin-top:4px; font-size:9px; line-height:1.4;
+                         color:#fa6;"></div>
+
+                    <!-- FOCUS / TILT verdict + the span picker. Populated by
+                         calPhotoRenderFocus(); hidden until a photo is analysed. -->
+                    <div id="calphoto-focus" style="display:none; margin-top:7px; padding-top:6px;
+                         border-top:1px solid #16323f; font-size:9px; line-height:1.45;
+                         color:var(--text-disabled);"></div>
+                    <div id="calphoto-spans" style="display:none; margin-top:6px;"></div>
+                    <div id="calphoto-spanhint" style="display:none; margin-top:4px; font-size:8px;
+                         line-height:1.35; color:#667;">Every option reports pixels per
+                         <b>Demarc&nbsp;Dist</b> — a shorter span just fits the tick pitch on cleaner
+                         ticks and scales it up.</div>
+
                     <canvas id="calphoto-prev" width="220" height="116"
                             style="display:none; width:220px; height:116px; margin-top:8px;
                                    background:#000; border:1px solid #222;"></canvas>
                     <div id="calphoto-prevcap" style="display:none; font-size:8px; color:#667;
                          margin-top:2px; line-height:1.3;">zoom of sharpest region · contrast profile below ·
                          <span style="color:#fb0;">|</span> = detected centroid</div>
-                    <div id="calphoto-result" style="margin-top:7px; font-size:11px; line-height:1.5;
-                         color:var(--text-disabled); min-height:30px;"></div>
-                    <div id="calphoto-warn" style="margin-top:4px; font-size:9px; line-height:1.4;
-                         color:#fa6;"></div>
                 </div>
                 <div style="flex:0 0 auto; padding:7px 10px 9px; border-top:1px solid #1c3a4a;">
                     <div id="calphoto-use" class="gfx-btn" onclick="calPhotoUse()"
@@ -2704,7 +2724,8 @@
           <div class="mtf-inp">
             <span>Grp</span><input id="mtf-group" type="number" min="0" max="9" value="4" style="width:44px;">
             <span>Elem</span><input id="mtf-elem" type="number" min="1" max="6" value="2" style="width:44px;">
-            <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29" style="width:56px;">
+            <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29"
+                   onchange="saveEffNA(parseFloat(this.value))" style="width:56px;">
           </div>
           <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()">
             Drop a crop of the element<br><span style="color:#5a8;">(element filling the frame, best focus)</span>
@@ -2730,6 +2751,115 @@
             <div id="mtf-legend"></div>
             <div id="mtf-units" onclick="mtfToggleUnits()" title="Toggle x-axis: lp/mm &harr; µm (min resolvable separation = 1000/f, the Rayleigh-style figure objective datasheets quote)">lp/mm</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FOCUS / TILT panel — rank a set of micrometer shots, and diagnose the
+         one defect the pixel measurement cannot see: the slide not being square to
+         the optic axis, so focus sweeps across the frame. Same full-viewport shape
+         as #mtf, and likewise OUTSIDE #ili9341-display (the mirror's scale(2.0)
+         would trap and double-scale a position:fixed child). -->
+    <style>
+      #focus { display:none; position:fixed; inset:0; z-index:400;
+        background:#06120f; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #foc-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+        padding:9px 16px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #foc-title { color:#3ddb7a; font-weight:bold; letter-spacing:1px; font-size:14px; }
+      #foc-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
+        padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #foc-help { display:none; position:absolute; top:46px; left:16px; z-index:20;
+        max-width:560px; max-height:calc(100% - 60px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
+      #foc-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
+      #foc-left { flex:0 0 380px; display:flex; flex-direction:column; gap:8px;
+        min-height:0; overflow-y:auto; }
+      #foc-right { flex:1 1 auto; display:flex; flex-direction:column; gap:8px;
+        min-width:0; min-height:0; overflow-y:auto; }
+      #focus .foc-inp { display:flex; gap:8px; align-items:center; font-size:11px;
+        color:var(--text-disabled); }
+      #focus .foc-inp input { background:#0d2535; border:1px solid #2a5a7a; color:#fff;
+        font:12px monospace; padding:3px 4px; border-radius:3px; width:56px; }
+      #foc-drop { border:1px dashed #2a7a6a; border-radius:5px; background:#08140f;
+        padding:14px 10px; text-align:center; color:#7fd8c0; font-size:11px;
+        line-height:1.5; cursor:pointer; }
+      #foc-thumbs { display:none; flex-wrap:wrap; gap:6px; }
+      .foc-thumb { width:104px; cursor:pointer; border:1px solid #1f3a33; border-radius:4px;
+        padding:3px; font-size:9px; line-height:1.35; color:#7a958c; background:#08140f; }
+      .foc-thumb canvas { display:block; margin-bottom:2px; }
+      .foc-thumb.best { border-color:#3ddb7a; }
+      .foc-thumb.sel { background:#0d2a1e; box-shadow:0 0 0 1px #7fd8c0; }
+      #foc-verdict { font-size:13px; line-height:1.55; min-height:34px; }
+      #foc-plotwrap { display:none; flex:0 0 auto; position:relative; height:230px; }
+      #foc-plot { display:block; width:100%; height:100%; background:#000; border:1px solid #222; }
+      #foc-spans { display:none; font-size:12px; }
+      #foc-spans table { border-collapse:collapse; width:100%; max-width:520px; }
+      #foc-spans th { text-align:left; font-weight:normal; color:#5e8c7e; font-size:10px;
+        padding:3px 8px 3px 0; border-bottom:1px solid #1f3a33; }
+      #foc-spans td { padding:4px 8px 4px 0; border-bottom:1px solid #10231d; }
+      #foc-spans tr.best td { color:#7fff7f; }
+      #foc-note { font-size:10px; line-height:1.5; color:#5e8c7e; max-width:560px; }
+      @media (max-width:760px) {
+        #foc-body { flex-direction:column; overflow-y:auto; }
+        #foc-left { flex:0 0 auto; overflow:visible; }
+        #foc-plotwrap { height:200px; }
+      }
+    </style>
+    <div id="focus">
+      <div id="foc-head">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div id="foc-title">FOCUS / TILT</div>
+          <div id="foc-info" class="help-btn lg" onclick="focusToggleHelp()" title="How to use this tool">?</div>
+        </div>
+        <div id="foc-close" onclick="closeFocus()">CLOSE &#10005;</div>
+      </div>
+      <div id="foc-help" onclick="focusToggleHelp()">
+        <div style="color:#3ddb7a; font-weight:bold;">What it does</div>
+        Drop the micrometer shots you are choosing between. For each one it measures how the
+        tick <b>contrast</b> varies across the frame. A slide that is square to the optic axis
+        is uniformly sharp; a tilted one sweeps through focus, so contrast peaks somewhere and
+        falls away either side. Fitting that curve gives the <b>tilt angle</b> and the width of
+        the in-focus band.
+        <div style="color:#3ddb7a; font-weight:bold; margin-top:8px;">Reading it</div>
+        <b>&Delta;z across the span</b> is how far the slide climbs, in microns, over the width you
+        calibrate across. Compare it to the <b>depth of field</b>: if &Delta;z is larger, no
+        single shot can hold the whole span in focus, and the fix is mechanical — level the stage.
+        <div style="color:#3ddb7a; font-weight:bold; margin-top:8px;">Which way do I tilt?</div>
+        Unknowable from a single photo: blur is symmetric about focus, so a soft left edge could
+        be high or low. Nudge it either way and re-shoot — if the angle grows, go the other way.
+        <div style="color:#3ddb7a; font-weight:bold; margin-top:8px;">The span table</div>
+        &plusmn; is the total uncertainty of the pixel count: the fit's own noise, plus how much
+        the answer <i>moves</i> when the measuring window slides along the frame. That second part
+        is usually the bigger one — it is real scale drift across the field, and it is why a
+        <i>shorter</i> span is not automatically a better one. A short span is only recommended
+        when the in-focus band is genuinely too narrow to hold the full one.
+        <div style="color:#3ddb7a; font-weight:bold; margin-top:8px;">eff NA</div>
+        Needed to turn blur into microns. Shared with the MTF tool — set it once.
+        <span style="color:#7a958c;">(click anywhere to close)</span>
+      </div>
+      <div id="foc-body">
+        <div id="foc-left">
+          <div class="foc-inp">
+            <span>eff&nbsp;NA</span>
+            <input id="foc-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29"
+                   onchange="saveEffNA(parseFloat(this.value))">
+            <span id="foc-scale" style="color:#5e8c7e;"></span>
+          </div>
+          <div id="foc-drop" onclick="document.getElementById('foc-file').click()">
+            Drop your candidate micrometer shots here<br>
+            <span style="color:#5a8;">or click to choose &mdash; full uncropped frames</span>
+          </div>
+          <input type="file" id="foc-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                 multiple style="display:none;" onchange="focusChosen(this)">
+          <div id="foc-thumbs"></div>
+        </div>
+        <div id="foc-right">
+          <div id="foc-verdict">Drop one or more shots to rank them.</div>
+          <div id="foc-plotwrap"><canvas id="foc-plot"></canvas></div>
+          <div id="foc-spans"></div>
+          <div id="foc-note"></div>
         </div>
       </div>
     </div>
@@ -2815,6 +2945,7 @@
         tintPct: 50,          // 0-100
         photoWidth: 6960,
         demarcDist: 0.40,
+        effNA: 0.29,          // effective NA of the imaging train — MTF + FOCUS share it
         tickPitch: 0.01,      // micrometer minor-tick spacing, mm — browser-only
                               // (MEASURE FROM PHOTO); persisted in localStorage,
                               // the firmware has no use for it
@@ -5196,6 +5327,24 @@
     }
     loadTickPitch();
 
+    // Effective NA of the whole imaging train — shared by MTF and the FOCUS analysis
+    // (which needs it to turn blur into microns of defocus). It used to live only as
+    // the MTF panel's uncontrolled input, so it reset to 0.29 on every reload.
+    function saveEffNA(v){
+        if (!(v>0)) return;
+        state.effNA = v;
+        try { localStorage.setItem('afEffNA', String(v)); } catch(e){}
+        const el = document.getElementById('mtf-na'); if (el) el.value = v;
+        const el2 = document.getElementById('foc-na'); if (el2) el2.value = v;
+    }
+    function loadEffNA(){
+        try {
+            const s = parseFloat(localStorage.getItem('afEffNA'));
+            if (isFinite(s) && s > 0.02 && s < 1.5) state.effNA = s;
+        } catch(e){}
+    }
+    loadEffNA();
+
     function updateCalSettingsUI() {
         document.getElementById('val-calw').innerText = state.photoWidth + ' px';
         document.getElementById('val-cald').innerText = state.demarcDist.toFixed(2) + ' mm';
@@ -6816,8 +6965,8 @@
     // autocorrelation, that smaller lag IS the fundamental. Guards against locking
     // onto a 2×/5×/10× multiple when tall/medium ticks dominate (a clean lock on the
     // wrong tier would otherwise read as a low-error, "good" measurement).
-    function _micPitchAC(prom, n){
-        const maxLag=Math.min(500, n-2); if (maxLag<8) return Math.max(8,maxLag);
+    function _micPitchAC(prom, n, cap){
+        const maxLag=Math.min(cap||500, n-2); if (maxLag<8) return Math.max(8,maxLag);
         const A=new Float32Array(maxLag+1); let bl=20, bc=-1;
         for (let lag=8; lag<=maxLag; lag++){ let c=0; for (let x=0;x+lag<n;x++) c+=prom[x]*prom[x+lag]; A[lag]=c; if (c>bc){ bc=c; bl=lag; } }
         let best=bl;
@@ -6934,6 +7083,361 @@
                  prof: P, ticksU: fit.ticks };
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // FOCUS / TILT — is this photo worth measuring, and over what span?
+    //   analyzeMicrometer() above answers "how many pixels". This answers "how
+    //   much should you trust it", and it exists because of ONE defect nothing
+    //   else here can see: OUT-OF-PLANE tilt — the slide not perpendicular to the
+    //   optic axis, so focus sweeps across the frame and one end of the span is
+    //   soft. That is a DEFOCUS GRADIENT, a different animal from the in-plane
+    //   roll estimateTickAngle() corrects (ticks not vertical — a rigid rotation).
+    //
+    //   Blur is measured as the tick grid's MODULATION DEPTH, not the width of a
+    //   tick. Width is the intuitive choice and it does not work: on a PERIODIC
+    //   grid, defocus destroys contrast but the peak width saturates at ~a third of
+    //   the pitch (the profile just tends to a sinusoid), so FWHM flatlines — on
+    //   this repo's 14 reference frames it sat at 0.25±0.01 whether the frame was
+    //   sharp or synthetically blurred by 16 px. Contrast has no such ceiling: for
+    //   a grid of period p imaged with blur sigma σ, the Gaussian MTF gives
+    //
+    //       ln C(x) = ln C0 − (2π²/p²)·σ(x)²
+    //
+    //   and with the slide tilted, σ grows linearly with distance from the focus
+    //   crossing (σ = s·|x − x0|), so LOG-CONTRAST vs x is a downward PARABOLA:
+    //
+    //       ln C(x) = ln C0 − (2π²s²/p²)·(x − x0)²
+    //
+    //   Its curvature gives the blur gradient s, its vertex is where the focus plane
+    //   crosses the frame. Modulation is a RATIO, so exposure and uneven
+    //   illumination cancel; and any blur uniform across the frame (diffraction, the
+    //   working-canvas downscale) only shifts ln C0, dropping out of the curvature.
+    //   That invariance is why this runs on the same working canvas the pixel
+    //   measurement already uses.
+    //
+    //   σ → defocus: geometric defocus blur is a DISC of diameter b = 2·NA·Δz, and a
+    //   disc's 1-D projection has σ = b/4, so Δz = 2σ/NA. The disc-vs-Gaussian model
+    //   mismatch makes the angle good to a tens-of-percent, which is what "tilt the
+    //   stage until it reads flat" actually needs — this is a nulling aid, not
+    //   metrology.
+    //
+    //   Sign is NOT recoverable from one frame (blur is symmetric about focus): we
+    //   learn the tilt magnitude and which side is soft, not whether that side is
+    //   high or low. The UI says so.
+    // ─────────────────────────────────────────────────────────────────────────
+    const MIC_SPAN_FRACS = [1.0, 0.75, 0.5];   // of Demarc Dist → 0.40 / 0.30 / 0.20 mm
+    const MIC_SPAN_MARGIN = 0.75;              // a shorter span must beat the full one by 25%
+
+    function _micMedian(a){ const v=a.filter(x=>isFinite(x)).sort((p,q)=>p-q);
+        return v.length ? v[v.length>>1] : NaN; }
+
+    // Michelson modulation of the tick grid at xc: (peak − valley)/(peak + valley)
+    // on the raw darkness projection, valleys taken half a pitch either side. A
+    // ratio, so exposure and illumination falloff cancel — only blur moves it.
+    function _micModAt(P, xc, pitch){
+        const n=P.length, c=Math.round(xc);
+        const rp=Math.max(1,Math.round(pitch*0.25)), rv=Math.max(2,Math.round(pitch*0.5));
+        if (c-rv-rp<0 || c+rv+rp>n-1) return NaN;
+        let peak=-Infinity;
+        for(let x=c-rp;x<=c+rp;x++) if(P[x]>peak) peak=P[x];
+        let vL=Infinity, vR=Infinity;
+        for(let x=c-rv-rp;x<=c-rp;x++) if(P[x]<vL) vL=P[x];
+        for(let x=c+rp;x<=c+rv+rp;x++) if(P[x]<vR) vR=P[x];
+        const valley=(vL+vR)/2, s=peak+valley;
+        if (!(s>0)) return NaN;
+        const m=(peak-valley)/s;
+        return (m>0.0005 && m<1) ? m : NaN;      // 0 = ticks fully washed out
+    }
+
+    // OLS x = a·i + b, plus the slope's standard error — σ(a) is what ultimately
+    // sets σ(pixels), so it is the number the span optimiser minimises.
+    function _micOls(xa, ia){
+        const m=xa.length; if (m<3) return null;
+        let sx=0,si=0,sii=0,sxi=0;
+        for(let k=0;k<m;k++){ sx+=xa[k]; si+=ia[k]; sii+=ia[k]*ia[k]; sxi+=xa[k]*ia[k]; }
+        const den=m*sii-si*si; if (!den) return null;
+        const a=(m*sxi-si*sx)/den, b=(sx-a*si)/m;
+        let sse=0; for(let k=0;k<m;k++){ const r=xa[k]-(a*ia[k]+b); sse+=r*r; }
+        const ib=si/m; let sc=0; for(let k=0;k<m;k++){ const d=ia[k]-ib; sc+=d*d; }
+        const s=Math.sqrt(sse/Math.max(1,m-2));            // residual sd (n−2 dof)
+        return { a, b, n:m, rms:Math.sqrt(sse/m), se: sc>0 ? s/Math.sqrt(sc) : NaN };
+    }
+
+    // Quadratic OLS y = A + Bx + Cx² (Cramer), plus the SSE of the best straight
+    // line through the same points — the null hypothesis "there is no wedge".
+    function _micQuadFit(xs, ys){
+        const m=xs.length; if (m<6) return null;
+        let s1=0,s2=0,s3=0,s4=0,t0=0,t1=0,t2=0; const s0=m;
+        for(let k=0;k<m;k++){ const x=xs[k], y=ys[k], x2=x*x;
+            s1+=x; s2+=x2; s3+=x2*x; s4+=x2*x2; t0+=y; t1+=x*y; t2+=x2*y; }
+        const det=s0*(s2*s4-s3*s3)-s1*(s1*s4-s3*s2)+s2*(s1*s3-s2*s2);
+        if (!det) return null;
+        const A=(t0*(s2*s4-s3*s3)-s1*(t1*s4-s3*t2)+s2*(t1*s3-s2*t2))/det;
+        const B=(s0*(t1*s4-s3*t2)-t0*(s1*s4-s3*s2)+s2*(s1*t2-t1*s2))/det;
+        const C=(s0*(s2*t2-t1*s3)-s1*(s1*t2-t1*s2)+t0*(s1*s3-s2*s2))/det;
+        let sseQ=0; for(let k=0;k<m;k++){ const x=xs[k], r=ys[k]-(A+B*x+C*x*x); sseQ+=r*r; }
+        const dn=m*s2-s1*s1, la=dn?(m*t1-s1*t0)/dn:0, lb=(t0-la*s1)/m;
+        let sseL=0; for(let k=0;k<m;k++){ const r=ys[k]-(la*xs[k]+lb); sseL+=r*r; }
+        return { A, B, C, sseQ, sseL, n:m };
+    }
+
+    // ONE detection pass over the whole frame: tick centroids, each tick's index on
+    // the grid, and each tick's modulation in three horizontal sub-bands. The wedge
+    // fit and the span optimiser both read this — the image is touched once.
+    function _micTickTable(imageData, opts){
+        const gb=_micGrayBand(imageData); const {g,W,H,y0,y1}=gb;
+        if (y1-y0 < 6) return { error:'no tick band found' };
+        const colSum=(ya,yb)=>{ const P=new Float32Array(W);
+            for(let y=ya;y<=yb;y++){ const row=y*W; for(let x=0;x<W;x++) P[x]+=g[row+x]; } return P; };
+        const promOf=(P,r)=>{ const b=_micBox(P,r), q=new Float32Array(W); let mx=0;
+            for(let x=0;x<W;x++){ q[x]=Math.max(0,P[x]-b[x]); if(q[x]>mx)mx=q[x]; } return {q,mx}; };
+        const cap=Math.max(500, Math.min(1400, W>>3));
+        const P=colSum(y0,y1);
+        // Two-pass baseline. The measurement path's fixed 80-px radius is only valid
+        // while the pitch is well under it; at high magnification the pitch can
+        // approach or exceed 80 px, and the baseline then tracks the ticks and eats
+        // their own prominence. So: rough pitch first, then re-derive the radius from it.
+        let pr=promOf(P,80); if(!(pr.mx>0)) return { error:'no ticks detected' };
+        let pitch=_micPitchAC(pr.q, W, cap);
+        const bR=Math.max(20, Math.min(600, Math.round(pitch*3)));
+        pr=promOf(P,bR); if(!(pr.mx>0)) return { error:'no ticks detected' };
+        pitch=_micPitchAC(pr.q, W, cap);
+        const q=pr.q, mx=pr.mx;
+
+        const minSep=Math.max(3,Math.round(pitch*0.55)), thr=mx*0.22, pk=[];
+        for(let x=1;x<W-1;x++) if(q[x]>thr && q[x]>=q[x-1] && q[x]>=q[x+1]){
+            if(pk.length && x-pk[pk.length-1].x<minSep){ if(q[x]>pk[pk.length-1].q) pk[pk.length-1]={x,q:q[x]}; }
+            else pk.push({x,q:q[x]});
+        }
+        if (pk.length<6) return { error:'too few ticks' };
+        const hw=Math.max(2,Math.round(pitch*0.4));
+        for(const p of pk){ let sw=0,swx=0;
+            for(let x=Math.max(0,p.x-hw);x<=Math.min(W-1,p.x+hw);x++){ const w=q[x]; sw+=w; swx+=w*x; }
+            p.xs = sw>0 ? swx/sw : p.x; }
+        let pm=0; for(const p of pk) if(p.q>pm) pm=p.q;
+        let kept=pk.filter(p=>p.q>=0.45*pm).map(p=>p.xs).sort((a,b)=>a-b);
+        if (kept.length<6) kept=pk.map(p=>p.xs).sort((a,b)=>a-b);
+        if (kept.length<6) return { error:'too few ticks' };
+        pitch=_micMedSpacing(kept)||pitch;
+        // index assignment by rounded gaps — tolerates missing ticks; then a
+        // residual-gated refit drops strays (same shape as _micFitTicks).
+        const idx=[0];
+        for(let i=1;i<kept.length;i++) idx.push(idx[i-1]+Math.max(1,Math.round((kept[i]-kept[i-1])/pitch)));
+        let f=_micOls(kept,idx); if(!f) return { error:'tick fit failed' };
+        const xs2=[], id2=[];
+        for(let i=0;i<kept.length;i++){ const id=Math.round((kept[i]-f.b)/f.a);
+            if(Math.abs(kept[i]-(f.a*id+f.b))<f.a*0.4){ xs2.push(kept[i]); id2.push(id); } }
+        if (xs2.length<6) return { error:'tick fit failed' };
+        f=_micOls(xs2,id2); if(!f) return { error:'tick fit failed' };
+        pitch=f.a;
+
+        // three horizontal sub-bands: the x-parabola of each gives THAT band's
+        // focus-crossing column, and how the column moves with y is the second tilt
+        // component (see _micWedge). Modulation is read off the RAW projection —
+        // prominence has already had its local mean removed, which is exactly the
+        // denominator the Michelson ratio needs.
+        const bh=Math.floor((y1-y0+1)/3), bands=[];
+        for(let b=0;b<3;b++){
+            const ya=y0+b*bh, yb=(b===2)? y1 : (ya+bh-1);
+            bands.push({ yc:(ya+yb)/2, P: colSum(ya,yb) });
+        }
+        const ticks=xs2.map((x,k)=>({ x, i:id2[k],
+            modAll: _micModAt(P, x, pitch),
+            mod: bands.map(b=>_micModAt(b.P, x, pitch)) }));
+        // a genuine SCALE GRADIENT across the frame (perspective from out-of-plane
+        // tilt in a non-telecentric train) shows up as curvature in x-vs-index. It
+        // needs no NA at all, and it biases pixelsSpan depending on WHERE you measure.
+        const qf=_micQuadFit(id2, xs2);
+        const gradPerIdx = (qf && f.a) ? (2*qf.C)/f.a : 0;      // fractional pitch change per tick
+
+        return { W, H, y0, y1, pitch, scale:(opts.imageW||W)/W,
+                 umpxWork: (opts.pitchMm*1000)/pitch,          // µm of object per working px
+                 ticks, bands: bands.map(b=>b.yc), fit:f,
+                 errFrac: f.rms/Math.abs(f.a),
+                 scaleGradPctPerMm: 100*gradPerIdx/opts.pitchMm };
+    }
+
+    // The log-contrast parabola → tilt. Runs per sub-band, so the second axis is free.
+    function _micWedge(table, NA){
+        const um=table.umpxWork, p=table.pitch, perBand=[];
+        for(let b=0;b<3;b++){
+            const xs=[], ys=[];
+            for(const t of table.ticks){ const m=t.mod[b];
+                if(isFinite(m) && m>0){ xs.push(t.x); ys.push(Math.log(m)); }   // work in px; convert at the end
+            }
+            if (xs.length<8){ perBand.push(null); continue; }
+            const xbar=xs.reduce((s,v)=>s+v,0)/xs.length;
+            const qq=_micQuadFit(xs.map(v=>v-xbar), ys);       // centered: keeps x⁴ conditioned
+            perBand.push(qq ? { q:qq, xbar } : null);
+        }
+        // The MID band drives the primary (x) gradient. Pooling all rows would blend
+        // any y-gradient into it and inflate the apparent x tilt.
+        const mid=perBand[1] || perBand[0] || perBand[2];
+        // Defocus can only DESTROY contrast, so the parabola must open DOWNWARD.
+        if (!mid || !(mid.q.C<0)) return { ok:false, flat:true };
+        const q=mid.q;
+        const gain=(q.sseL - q.sseQ)/Math.max(q.sseQ,1e-12);   // must beat a straight line
+        // A wedge indistinguishable from a straight line IS a flat field — never dress
+        // a noise-level curvature up as a small angle.
+        if (!(gain>0.25)) return { ok:false, flat:true, gain };
+        // ln C = lnC0 − (2π²s²/p²)·(x−x0)²  ⇒  s = p·√(−C / 2π²)   [blur sigma per px]
+        const s=p*Math.sqrt(-q.C/(2*Math.PI*Math.PI));
+        const gx=2*s/NA;                                       // Δz = 2σ/NA (disc blur, σ = b/4)
+        const x0=mid.xbar - q.B/(2*q.C);                       // px — focus-plane crossing
+        // y component: how the focus-crossing column shifts between sub-bands.
+        // Δz = gx·x + gy·y + c ⇒ the in-focus locus has dx0/dy = −gy/gx.
+        let gy=0; const pts=[];
+        for(let b=0;b<3;b++){ const pb=perBand[b];
+            if(pb && pb.q.C<0) pts.push([table.bands[b], pb.xbar - pb.q.B/(2*pb.q.C)]); }
+        if (pts.length===3){
+            let sy=0,sx=0,syy=0,sxy=0; const n=pts.length;
+            for(const [yy,xx] of pts){ sy+=yy; sx+=xx; syy+=yy*yy; sxy+=yy*xx; }
+            const dn=n*syy-sy*sy;
+            if (dn) gy = -gx*((n*sxy-sy*sx)/dn);               // slope is px/px — unit-free, so no um needed
+        }
+        const g=Math.hypot(gx,gy), D=180/Math.PI;
+        return { ok:true, flat:false, gain, gx, gy,
+                 x0um: x0*um, x0Frac: x0/table.W,
+                 c0: Math.exp(q.A),                            // modulation at best focus
+                 thetaX:Math.atan(gx)*D, thetaY:Math.atan(gy)*D, theta:Math.atan(g)*D,
+                 dof: 0.55/(NA*NA) };                          // µm — same formula the FOV screen uses
+    }
+
+    // For each candidate span, slide a window of that length across the frame and
+    // score the span as a whole. Every candidate reports px per DEMARC DIST whatever
+    // span it measured over — the fitted pitch is simply scaled up, so the firmware
+    // contract and the global Demarc Dist are untouched.
+    //
+    // The score is NOT the slope's standard error alone. That was the first cut, and
+    // measuring it against this repo's 14 reference frames showed why it is a trap:
+    // it always picked the SHORTEST span (σ ≈ 0.1 px) while those windows disagreed
+    // with the full-span answer by up to 8 px. A short window is *precise about a
+    // locally-wrong scale* — the pitch genuinely drifts across the frame (lens
+    // distortion / perspective), and extrapolating a local pitch ×40 amplifies that
+    // drift. So the systematic term is measured empirically and honestly: slide the
+    // window and see HOW MUCH THE ANSWER MOVES. That spread is the error the slope
+    // SE cannot see, and on a real lens it dominates.
+    //
+    //     σ_total = √( σ_stat² + σ_syst² )
+    //
+    // Now a short span only wins when it has to — when part of the frame is soft and
+    // dropping it genuinely buys more than the extrapolation costs.
+    function _micSpanScan(table, opts){
+        const K=opts.demarcMm/opts.pitchMm, T=table.ticks, out=[];
+        let modBest=0;                                    // the frame's sharpest region
+        for(const t of T) if(isFinite(t.modAll) && t.modAll>modBest) modBest=t.modAll;
+        for (const fr of MIC_SPAN_FRACS){
+            const spanMm=+(opts.demarcMm*fr).toFixed(3);
+            const need=Math.round(spanMm/opts.pitchMm);
+            if (need<3) continue;
+            const place=[];
+            for (let s=0;s<T.length;s++){
+                const i0=T[s].i, sub=[];
+                for (let k=s;k<T.length && T[k].i<=i0+need;k++) sub.push(T[k]);
+                if (sub.length < Math.max(4, need*0.6)) continue;              // too many ticks missing
+                if (sub[sub.length-1].i - i0 < need*0.9) continue;             // window not actually covered
+                const f=_micOls(sub.map(t=>t.x), sub.map(t=>t.i));
+                if (!f || !isFinite(f.se)) continue;
+                place.push({ px: f.a*table.scale*K, sig: f.se*table.scale*K,
+                             rms: f.rms, n: f.n, mod: _micMedian(sub.map(t=>t.mod[1])),
+                             xa: sub[0].x, xb: sub[sub.length-1].x });
+            }
+            if (!place.length) continue;
+            // Only placements that are actually in focus get a vote. On a tilted frame
+            // this is precisely what lets a short span dodge the soft end instead of
+            // averaging it in — and on a clean frame it changes nothing.
+            const sharpEnough=place.filter(pp=>isFinite(pp.mod) && pp.mod>=0.6*modBest);
+            const use=sharpEnough.length>=3 ? sharpEnough : place;
+            const pxs=use.map(pp=>pp.px), med=_micMedian(pxs);
+            const sigSys=_micMedian(pxs.map(v=>Math.abs(v-med)))*1.4826;       // robust sd (MAD)
+            const sigStat=_micMedian(use.map(pp=>pp.sig));
+            const sharp=use.reduce((a,b)=> (b.mod>a.mod ? b : a), use[0]);     // the sharpest placement
+            out.push({ spanMm, fr, px: med, nTicks: sharp.n, nPlace: use.length,
+                       sigmaStat: sigStat, sigmaSys: sigSys,
+                       sigmaPx: Math.hypot(sigStat, sigSys),
+                       mod: sharp.mod, xa: sharp.xa, xb: sharp.xb });
+        }
+        if (!out.length) return out;
+        // The full span is the DEFAULT, and a shorter one has to earn the switch by a
+        // clear margin — "measurably more accurate" means measurably, not a tie. On the
+        // reference frames the three spans often land within a couple of percent of each
+        // other; recommending a shorter one there would move the answer by a few px for
+        // no real gain. A short span wins only when the in-focus band is genuinely
+        // narrower than the demarc span, which is exactly the photo worth rescuing.
+        const full=out.find(s=>s.fr===1.0);
+        let win=full || out[0];
+        for (const s of out) if (s.sigmaPx < win.sigmaPx*MIC_SPAN_MARGIN) win=s;
+        win.best=true;
+        return out;
+    }
+
+    // Calibrated against the 14 reference frames (modulation 0.20–0.46, falling with
+    // magnification) and synthetic uniform blur (a 16-px box on a 32-px pitch — a
+    // properly soft photo — still reads 0.21, and tick detection itself dies around
+    // 0.10). So these sit low deliberately: a low-contrast frame whose centroids are
+    // still crisp measures fine, and crying "soft" at it would be a false alarm.
+    const MIC_MOD_SOFT = 0.10, MIC_MOD_MARGINAL = 0.15;
+
+    // Orchestrator → one verdict object.
+    // opts: {pitchMm, demarcMm, imageW, NA, basePx}
+    //   basePx — the value the SHIPPED analyzeMicrometer path measured. The full-span
+    //   chip reports it verbatim, so choosing "0.40 mm" hands back exactly the number
+    //   this tool has always handed back; only opting into a shorter span changes it.
+    function analyzeMicrometerFocus(imageData, opts){
+        const t=_micTickTable(imageData, opts);
+        if (t.error) return { error:t.error };
+        const NA=(opts.NA>0)?opts.NA:0.29;
+        const w=_micWedge(t, NA);
+        const spans=_micSpanScan(t, opts);
+        // NO usable span is not an error — it is the loudest possible diagnosis: the
+        // in-focus band is narrower than even the shortest candidate span. Bailing out
+        // here would withhold the tilt angle from exactly the photo that needs it most.
+        // Carry on with a null `best`; the caller shows the diagnosis and blocks USE.
+        if (opts.basePx>0){ const full=spans.find(s=>s.fr===1.0); if (full) full.px=opts.basePx; }
+        const best=spans.find(s=>s.best) || spans[0] || null;
+
+        // Modulation is the soft-photo test. Contrast, unlike tick width, keeps
+        // falling as focus degrades — see the header note.
+        const mods=t.ticks.map(k=>k.modAll).filter(v=>isFinite(v));
+        const modMed=_micMedian(mods);
+        let modBest=0; for(const m of mods) if(m>modBest) modBest=m;
+
+        // z swing across the chosen span, and the worst defocus inside it (gx is
+        // dimensionless — µm of defocus per µm across — so px × µm/px gives µm). With
+        // no usable span, measure the swing across the whole demarc width instead.
+        const um=t.umpxWork;
+        let dzSpan=NaN, dzMax=NaN;
+        if (w.ok){
+            if (best){
+                const xa=best.xa*um, xb=best.xb*um;
+                dzSpan=Math.abs(w.gx)*Math.abs(xb-xa);
+                dzMax =Math.abs(w.gx)*Math.max(Math.abs(xa-w.x0um), Math.abs(xb-w.x0um));
+            } else {
+                dzSpan=Math.abs(w.gx)*opts.demarcMm*1000;
+            }
+        }
+        // The in-focus band: how wide a strip of the slide is inside the DOF. When this
+        // is narrower than the demarc span, no span placement can be fully sharp — which
+        // is the physical reason `spans` can come back empty.
+        const bandUm = (w.ok && w.gx>0) ? (w.dof/w.gx) : Infinity;
+
+        let verdict='good';
+        if (!best) verdict = w.ok ? 'tilt' : 'soft';
+        else if (modBest < MIC_MOD_SOFT) verdict='soft';
+        else if (w.ok && isFinite(dzSpan) && dzSpan > w.dof) verdict='tilt';
+        else if (modMed < MIC_MOD_MARGINAL) verdict='marginal';
+
+        // which end of the frame is soft — from where the focus plane crosses it
+        const softSide = w.ok
+            ? ((w.x0Frac<0.15) ? 'right' : (w.x0Frac>0.85) ? 'left' : 'both ends')
+            : null;
+
+        return { ok:true, verdict, spans, best, noSpan: !best, wedge:w, table:t,
+                 modMed, modBest, softSide, dzSpan, dzMax, bandUm,
+                 dof: w.dof || (0.55/(NA*NA)), NA,
+                 umpxWork: um, pitchPx: t.pitch,
+                 scaleGradPctPerMm: t.scaleGradPctPerMm, errFrac: t.errFrac };
+    }
+
     // ── modal driver ──
     let _calPhotoPx = null, _calPhotoDropBound = false, _calPhotoGen = 0;
     function _calPhotoResetUse(){
@@ -6942,11 +7446,15 @@
         _calPhotoPx = null;
         document.getElementById('calphoto-prev').style.display='none';
         document.getElementById('calphoto-prevcap').style.display='none';
+        _calPhotoHideFocus();
     }
     function openCalPhoto(){
         const m = document.getElementById('calphoto');
         document.getElementById('calphoto-span').textContent  = (state.demarcDist||0.4).toFixed(2);
         document.getElementById('calphoto-pitch').textContent = (state.tickPitch||0.01).toFixed(3);
+        const dz0 = document.getElementById('calphoto-drop');    // restore the full drop zone
+        dz0.style.padding='12px 8px'; dz0.style.fontSize='10px'; dz0.style.lineHeight='1.5';
+        dz0.innerHTML='Drop micrometer photo here<br><span style="color:#5a8;">or tap to choose a .jpg</span>';
         document.getElementById('calphoto-result').textContent = '';
         document.getElementById('calphoto-warn').textContent = '';
         _calPhotoGen++;                 // orphan any in-flight decode from a prior session
@@ -7009,6 +7517,7 @@
     const _MTF_LUT=(()=>{ const t=new Float64Array(256); for(let i=0;i<256;i++){ const v=i/255; t[i]=v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); } return t; })();
     function openMtf(){
         const m=document.getElementById('mtf');
+        document.getElementById('mtf-na').value = state.effNA;   // shared with FOCUS, persisted
         if (!_mtfDropBound){
             const dz=document.getElementById('mtf-drop');
             dz.addEventListener('dragover', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#0d2a1e';});
@@ -7042,6 +7551,286 @@
     function mtfToggleHelp(){ const h=document.getElementById('mtf-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
     function mtfChosen(input){ if (input.files && input.files.length) mtfHandleFiles(input.files); input.value=''; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FOCUS / TILT panel — rank candidate shots, diagnose out-of-plane tilt.
+    // Read-only, like CENTERING and MTF: it hands nothing back to the calibration
+    // (the per-point span choice lives in MEASURE FROM PHOTO, where it belongs).
+    // ─────────────────────────────────────────────────────────────────────────
+    let _focDropBound=false, _focGen=0, _focFiles=[], _focSel=-1, _focBest=-1;
+
+    function openFocus(){
+        const m=document.getElementById('focus');
+        document.getElementById('foc-na').value = state.effNA;
+        if (!_focDropBound){
+            const dz=document.getElementById('foc-drop');
+            dz.addEventListener('dragover', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#0d2a1e';});
+            dz.addEventListener('dragleave',e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';});
+            dz.addEventListener('drop', e=>{e.preventDefault();e.stopPropagation();dz.style.background='#08140f';
+                if (e.dataTransfer && e.dataTransfer.files.length) focusHandleFiles(e.dataTransfer.files);});
+            document.addEventListener('pointerdown', e=>{      // click outside the ? help closes it
+                const h=document.getElementById('foc-help');
+                if(h.style.display==='block' && !h.contains(e.target) && e.target.id!=='foc-info')
+                    h.style.display='none';
+            }, true);
+            _focDropBound=true;
+        }
+        _focGen++; _focFiles=[]; _focSel=-1; _focBest=-1;
+        document.getElementById('foc-verdict').innerHTML='Drop one or more shots to rank them.';
+        document.getElementById('foc-thumbs').style.display='none';
+        document.getElementById('foc-plotwrap').style.display='none';
+        document.getElementById('foc-spans').style.display='none';
+        document.getElementById('foc-note').textContent='';
+        document.getElementById('foc-help').style.display='none';
+        document.getElementById('foc-scale').textContent=
+            'pitch ' + (state.tickPitch||0.01).toFixed(3) + ' mm · span ' + (state.demarcDist||0.4).toFixed(2) + ' mm';
+        m.style.display='flex';
+    }
+    function closeFocus(){ _focGen++; document.getElementById('focus').style.display='none'; }
+    function focusToggleHelp(){ const h=document.getElementById('foc-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
+    function focusChosen(input){ if (input.files && input.files.length) focusHandleFiles(input.files); input.value=''; }
+
+    // Worse verdict = higher rank number; ties broken by the total uncertainty of the
+    // recommended span. So the winner is the shot that is both trustworthy AND precise.
+    const _FOC_RANK = { good:0, marginal:1, tilt:2, soft:3 };
+    function _focScore(fa){
+        if (!fa || fa.error) return [9, Infinity];
+        return [ _FOC_RANK[fa.verdict] ?? 4, fa.best ? fa.best.sigmaPx : Infinity ];
+    }
+
+    async function focusHandleFiles(files){
+        const vd=document.getElementById('foc-verdict');
+        const myGen=++_focGen;
+        const list=[...files].filter(f=>/\.(jpe?g|png)$/i.test(f.name)||/^image\//.test(f.type));
+        if (!list.length){ vd.innerHTML='<span style="color:#ff6a6a;">No JPEG/PNG in that drop.</span>'; return; }
+        const dz=document.getElementById('foc-drop');
+        dz.innerHTML='Analyzing&hellip;';
+        _focFiles=[];
+        const pitchMm=(state.tickPitch>0)?state.tickPitch:0.01;
+        const demarcMm=(state.demarcDist>0)?state.demarcDist:0.4;
+        for (let i=0;i<list.length;i++){
+            vd.innerHTML='Analyzing '+(i+1)+' / '+list.length+' &mdash; '+list[i].name;
+            await new Promise(r=>setTimeout(r,0));            // let the UI paint between frames
+            let entry=null;
+            try { entry=await _focAnalyze(list[i], pitchMm, demarcMm); } catch(e){ entry=null; }
+            if (myGen!==_focGen) return;                      // newer run started, or panel closed
+            if (entry) _focFiles.push(entry);
+        }
+        if (!_focFiles.length){
+            vd.innerHTML='<span style="color:#ff6a6a;">Could not analyse any of those frames.</span>';
+            dz.innerHTML='Drop your candidate micrometer shots here<br><span style="color:#5a8;">or click to choose</span>';
+            return;
+        }
+        // rank
+        let bi=0;
+        for (let i=1;i<_focFiles.length;i++){
+            const a=_focScore(_focFiles[i].fa), b=_focScore(_focFiles[bi].fa);
+            if (a[0]<b[0] || (a[0]===b[0] && a[1]<b[1])) bi=i;
+        }
+        _focBest=bi;
+        dz.innerHTML='&#10003; '+_focFiles.length+' frame'+(_focFiles.length>1?'s':'')+
+                     ' · click to load a different set';
+        _focRenderThumbs();
+        _focSelect(bi);
+    }
+
+    function _focAnalyze(file, pitchMm, demarcMm){
+        return new Promise((resolve)=>{
+            const url=URL.createObjectURL(file);
+            const img=new Image();
+            img.onerror=()=>{ URL.revokeObjectURL(url); resolve(null); };
+            img.onload=()=>{
+                try {
+                    const NW=img.naturalWidth, NH=img.naturalHeight;
+                    const cw=Math.min(NW,4000), ch=Math.round(NH*cw/NW);
+                    const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+                    const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(img,0,0,cw,ch);
+                    // same deskew the measurement path uses — the wedge must be measured
+                    // on ticks that are actually vertical
+                    const angle=estimateTickAngle(cx.getImageData(0,0,cw,ch));
+                    let srcCv=cv;
+                    if (Math.abs(angle)>0.005){
+                        const rc=document.createElement('canvas'); rc.width=cw; rc.height=ch;
+                        const rx=rc.getContext('2d',{willReadFrequently:true});
+                        rx.fillStyle='#bcbfb9'; rx.fillRect(0,0,cw,ch);
+                        rx.translate(cw/2,ch/2); rx.rotate(angle*Math.PI/180); rx.drawImage(cv,-cw/2,-ch/2);
+                        srcCv=rc;
+                    }
+                    const imd=srcCv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cw,ch);
+                    const base=analyzeMicrometer(imd,{ pitchMm, spanMm:demarcMm, imageW: state.photoWidth||NW });
+                    const fa=analyzeMicrometerFocus(imd,{ pitchMm, demarcMm, imageW: state.photoWidth||NW,
+                                                          NA: state.effNA,
+                                                          basePx: base.error ? 0 : Math.round(base.pixelsSpan) });
+                    // keep only a thumbnail — a full ImageData per frame would blow memory
+                    const th=document.createElement('canvas'); th.width=98; th.height=64;
+                    const tg=th.getContext('2d');
+                    const sc=Math.min(98/cw, 64/ch);
+                    tg.fillStyle='#000'; tg.fillRect(0,0,98,64);
+                    tg.drawImage(srcCv, (98-cw*sc)/2, (64-ch*sc)/2, cw*sc, ch*sc);
+                    URL.revokeObjectURL(url);
+                    resolve({ name:file.name, thumb:th, fa, angle, demarcMm });
+                } catch(e){ URL.revokeObjectURL(url); resolve(null); }
+            };
+            img.src=url;
+        });
+    }
+
+    function _focRenderThumbs(){
+        const tb=document.getElementById('foc-thumbs');
+        tb.style.display=_focFiles.length?'flex':'none';
+        tb.innerHTML='';
+        _focFiles.forEach((en,i)=>{
+            const fa=en.fa, v=(fa&&!fa.error)?fa.verdict:'failed';
+            const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a', failed:'#ff6a6a'}[v]||'#fa6';
+            const div=document.createElement('div');
+            div.className='foc-thumb'+(i===_focSel?' sel':'')+(i===_focBest?' best':'');
+            div.appendChild(en.thumb);
+            const lab=document.createElement('div');
+            lab.innerHTML=(i===_focBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
+                '<span style="color:'+col+';">'+v.toUpperCase()+'</span><br>'+
+                '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
+            div.appendChild(lab);
+            div.onclick=()=>_focSelect(i);
+            tb.appendChild(div);
+        });
+    }
+
+    function _focSelect(i){
+        if (!_focFiles[i]) return;
+        _focSel=i;
+        _focRenderThumbs();
+        const en=_focFiles[i], fa=en.fa;
+        const vd=document.getElementById('foc-verdict');
+        const sp=document.getElementById('foc-spans');
+        const note=document.getElementById('foc-note');
+        const pw=document.getElementById('foc-plotwrap');
+        if (!fa || fa.error){
+            vd.innerHTML='<b style="color:#ff6a6a;">'+en.name+' — analysis failed</b><br>'+
+                '<span style="font-size:11px;">'+((fa&&fa.error)||'unknown')+'</span>';
+            pw.style.display='none'; sp.style.display='none'; note.textContent=''; return;
+        }
+        const w=fa.wedge, n1=v=>v.toFixed(1);
+        const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a'}[fa.verdict];
+        let head, body;
+        if (fa.verdict==='soft'){
+            head='&#9888; SOFT — refocus and re-shoot';
+            body='Tick contrast is only '+fa.modMed.toFixed(2)+'. Nothing here is worth measuring.';
+        } else if (fa.verdict==='tilt'){
+            head='&#9888; TILTED &asymp; '+w.theta.toFixed(1)+'&deg; &nbsp;<span style="font-size:11px; color:#8a9;">('+
+                 'about the vertical axis '+w.thetaX.toFixed(1)+'&deg;, horizontal '+Math.abs(w.thetaY).toFixed(1)+'&deg;)</span>';
+            body='The <b>'+fa.softSide+'</b> of the frame is out of focus. Across the '+
+                 en.demarcMm.toFixed(2)+' mm span the slide climbs <b>'+n1(fa.dzSpan)+' µm</b>, '+
+                 'against a depth of field of '+n1(fa.dof)+' µm — so the span cannot all be sharp. '+
+                 'The in-focus band is '+Math.round(fa.bandUm)+' µm wide.'+
+                 (fa.noSpan ? ' <span style="color:#ff6a6a;">That is narrower than every span option — '+
+                              'this frame cannot be measured reliably at all.</span>' : '');
+        } else if (w.ok){
+            // A tilt WAS measured, it just doesn't matter: the span stays inside the
+            // depth of field. Saying "flat" here would contradict the plot beside it.
+            head='&#10003; SHARP ACROSS THE SPAN';
+            body='A slight tilt is measurable (&asymp; '+w.theta.toFixed(1)+'&deg;), but the slide only climbs <b>'+
+                 n1(fa.dzSpan)+' µm</b> across the '+en.demarcMm.toFixed(2)+' mm span — inside the '+n1(fa.dof)+
+                 ' µm depth of field, so the whole span stays in focus. Nothing to fix. Tick contrast '+
+                 fa.modMed.toFixed(2)+'.';
+        } else {
+            head='&#10003; FLAT — square to the optic axis';
+            body='No tilt rises above the noise. Tick contrast '+fa.modMed.toFixed(2)+
+                 (fa.verdict==='marginal' ? ' <span style="color:#fd5;">(low — usable, but a sharper frame would measure better)</span>' : '')+'.';
+        }
+        vd.innerHTML='<b style="color:'+col+';">'+head+'</b><br><span style="font-size:12px; color:var(--text-disabled);">'+body+'</span>';
+
+        // span table
+        if (fa.spans.length){
+            sp.innerHTML='<table><tr><th>span</th><th>pixels / demarc</th><th>&plusmn; total</th>'+
+                '<th>fit noise</th><th>window drift</th><th>ticks</th></tr>'+
+                fa.spans.map(s=>'<tr class="'+(s.best?'best':'')+'"><td>'+(s.best?'&#9733; ':'')+
+                    s.spanMm.toFixed(2)+' mm</td><td>'+Math.round(s.px)+'</td><td>&plusmn;'+s.sigmaPx.toFixed(1)+
+                    '</td><td>'+s.sigmaStat.toFixed(2)+'</td><td>'+s.sigmaSys.toFixed(1)+'</td><td>'+
+                    s.nTicks+'</td></tr>').join('')+'</table>';
+            sp.style.display='block';
+        } else { sp.style.display='none'; }
+        note.innerHTML='Scale drift across the field '+fa.scaleGradPctPerMm.toFixed(2)+' %/mm · '+
+            'µm per photo px '+(fa.umpxWork/ (state.photoWidth||6960) * fa.table.W).toFixed(4)+
+            ' · deskewed '+en.angle.toFixed(2)+'&deg; · NA '+fa.NA+
+            (w.ok ? ' · focus crosses the frame at '+Math.round(100*w.x0Frac)+'% across' : '') +
+            '<br>Which way to tilt is not knowable from one photo — nudge it either way and re-shoot; ' +
+            'if the angle grows, go the other way.';
+        pw.style.display='block';
+        _focDrawPlot(fa);
+    }
+
+    // Contrast across the frame + the fitted wedge. This is the picture that makes
+    // the diagnosis obvious: a flat slide gives a flat cloud of dots, a tilted one
+    // gives a hump whose peak is where the focus plane crosses.
+    function _focDrawPlot(fa){
+        const cv=document.getElementById('foc-plot');
+        const H=cv.getBoundingClientRect().height||230;
+        const { ctx, PW, PH, S } = _ctrHiDPI(cv, H);
+        const ML=44*S, MR=12*S, MT=14*S, MB=26*S;
+        const W=fa.table.W, plotW=PW-ML-MR, plotH=PH-MT-MB;
+        const mods=fa.table.ticks.map(t=>t.mod[1]).filter(v=>isFinite(v));
+        let mMax=0; for(const m of mods) if(m>mMax) mMax=m;
+        mMax=Math.max(mMax*1.15, 0.05);
+        const toX=x=>ML+(x/W)*plotW, toY=m=>MT+plotH-(m/mMax)*plotH;
+        ctx.fillStyle='#000'; ctx.fillRect(0,0,PW,PH);
+        // in-focus band (within DOF of best focus) — the region worth measuring in
+        if (fa.wedge.ok && isFinite(fa.bandUm)){
+            const halfPx=(fa.bandUm/2)/fa.umpxWork, x0=fa.wedge.x0um/fa.umpxWork;
+            const a=Math.max(0,x0-halfPx), b=Math.min(W,x0+halfPx);
+            if (b>a){ ctx.fillStyle='rgba(61,219,122,0.10)'; ctx.fillRect(toX(a),MT,toX(b)-toX(a),plotH); }
+        }
+        // axes
+        ctx.strokeStyle='#243'; ctx.lineWidth=Math.max(1,S);
+        ctx.beginPath(); ctx.moveTo(ML,MT); ctx.lineTo(ML,MT+plotH); ctx.lineTo(ML+plotW,MT+plotH); ctx.stroke();
+        ctx.fillStyle='#5e8c7e'; ctx.font=Math.round(10*S)+'px monospace';
+        ctx.textAlign='right'; ctx.textBaseline='middle';
+        ctx.fillText(mMax.toFixed(2), ML-4*S, MT);
+        ctx.fillText('0', ML-4*S, MT+plotH);
+        ctx.save(); ctx.translate(11*S, MT+plotH/2); ctx.rotate(-Math.PI/2);
+        ctx.textAlign='center'; ctx.fillText('tick contrast', 0, 0); ctx.restore();
+        ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillText('across the frame  →', ML+plotW/2, MT+plotH+8*S);
+        // the measured span window
+        if (fa.best){
+            ctx.strokeStyle='#2a7a9a'; ctx.setLineDash([4*S,3*S]);
+            ctx.beginPath(); ctx.moveTo(toX(fa.best.xa),MT); ctx.lineTo(toX(fa.best.xa),MT+plotH);
+            ctx.moveTo(toX(fa.best.xb),MT); ctx.lineTo(toX(fa.best.xb),MT+plotH); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle='#2a7a9a'; ctx.textAlign='center'; ctx.textBaseline='top';
+            ctx.fillText(fa.best.spanMm.toFixed(2)+' mm window',
+                         (toX(fa.best.xa)+toX(fa.best.xb))/2, MT+2*S);
+        }
+        // per-tick contrast
+        ctx.fillStyle='#5ad6ff';
+        for (const t of fa.table.ticks){
+            const m=t.mod[1]; if(!isFinite(m)) continue;
+            ctx.beginPath(); ctx.arc(toX(t.x), toY(m), Math.max(1,1.6*S), 0, 6.284); ctx.fill();
+        }
+        // the fitted wedge, drawn back through exp() into contrast space
+        if (fa.wedge.ok){
+            const w=fa.wedge, p=fa.table.pitch, x0=w.x0um/fa.umpxWork;
+            // ln C = ln C0 − (2π²σ²/p²)(x−x0)² — recover σ back out of gx (= 2σ/NA)
+            const sig=(w.gx*fa.NA)/2;
+            // Only draw the fit where ticks were actually found. Sweeping it across the
+            // empty part of the frame would show a confident curve over no evidence.
+            const xs=fa.table.ticks.map(t=>t.x);
+            const xLo=Math.min(...xs), xHi=Math.max(...xs);
+            ctx.strokeStyle='#ffb347'; ctx.lineWidth=Math.max(1,1.4*S);
+            ctx.beginPath();
+            let first=true;
+            for (let x=xLo; x<=xHi; x+=Math.max(2, W/600)){
+                const d=x-x0;
+                const m=w.c0*Math.exp(-(2*Math.PI*Math.PI*sig*sig*d*d)/(p*p));
+                const yy=toY(m);
+                if (first){ ctx.moveTo(toX(x), yy); first=false; } else ctx.lineTo(toX(x), yy);
+            }
+            ctx.stroke();
+            ctx.strokeStyle='#3ddb7a'; ctx.setLineDash([3*S,3*S]);
+            ctx.beginPath(); ctx.moveTo(toX(x0),MT); ctx.lineTo(toX(x0),MT+plotH); ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    }
     function _mtfSetRoi(x,y,w,h){
         const cv=document.getElementById('mtf-prev');
         w=Math.max(24,Math.min(w,cv.width)); h=Math.max(24,Math.min(h,cv.height));
@@ -7613,6 +8402,7 @@
         const G=parseInt(document.getElementById('mtf-group').value),
               E=parseInt(document.getElementById('mtf-elem').value),
               NA=parseFloat(document.getElementById('mtf-na').value)||0.29;
+        saveEffNA(NA);                       // typed here, remembered for FOCUS and next session
         if(!(G>=0&&G<=9)||!(E>=1&&E<=6)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
         const lpmmKnown=Math.pow(2, G+(E-1)/6);
         res.style.color='var(--text-primary)'; res.textContent='Measuring…'; await new Promise(r=>setTimeout(r,0));
@@ -7981,8 +8771,8 @@
                     rx.translate(cw/2, ch/2); rx.rotate(angle*Math.PI/180); rx.drawImage(cv,-cw/2,-ch/2);
                     srcCv = rc;
                 }
-                const r = analyzeMicrometer(srcCv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cw,ch),
-                                            { pitchMm, spanMm, imageW: photoW });
+                const imd = srcCv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cw,ch);
+                const r = analyzeMicrometer(imd, { pitchMm, spanMm, imageW: photoW });
                 if (r.error){ res.style.color='#ff6a6a'; res.textContent='Analysis failed: ' + r.error; URL.revokeObjectURL(url); return; }
                 r.angleDeg = angle;
                 const px = Math.round(r.pixelsSpan);
@@ -8021,10 +8811,96 @@
                     const use = document.getElementById('calphoto-use');
                     use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
                 }
+                // Collapse the drop zone to a one-line status — on a 240 px screen its
+                // full height is the difference between the span picker being visible
+                // and being below the fold.
+                const dz0 = document.getElementById('calphoto-drop');
+                dz0.style.padding='5px 8px'; dz0.style.fontSize='9px'; dz0.style.lineHeight='1.3';
+                dz0.innerHTML='&#10003; '+file.name.slice(0,22)+' · tap to load another';
+                // Focus / tilt pass. Advisory only — it never blocks a measurement the
+                // gates above allowed, it just says how much to trust it and offers a
+                // shorter span when the frame can't hold a sharp full one. basePx keeps
+                // the full-span option byte-identical to what this tool always returned.
+                const fa = analyzeMicrometerFocus(imd, { pitchMm, demarcMm: spanMm,
+                                                         imageW: photoW, NA: state.effNA, basePx: px });
+                calPhotoRenderFocus(fa, spanMm, bad);
             } catch(e){ res.style.color='#ff6a6a'; res.textContent='Analysis error: ' + e.message; }
             URL.revokeObjectURL(url);
         };
         img.src = url;
+    }
+
+    // ── FOCUS verdict + span picker inside MEASURE FROM PHOTO ──
+    let _calPhotoSpans = null, _calPhotoSpanSel = -1;
+    function _calPhotoHideFocus(){
+        _calPhotoSpans = null; _calPhotoSpanSel = -1;
+        for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanhint'])
+            document.getElementById(id).style.display='none';
+    }
+    function calPhotoRenderFocus(fa, spanMm, bad){
+        const fx = document.getElementById('calphoto-focus');
+        const sp = document.getElementById('calphoto-spans');
+        const hint = document.getElementById('calphoto-spanhint');
+        if (!fa || fa.error){ _calPhotoHideFocus(); return; }
+        const w = fa.wedge, n1 = v => v.toFixed(1);
+        const col = fa.verdict==='good' ? '#7fd8c0' : fa.verdict==='soft' ? '#ff6a6a' : '#fa6';
+        let head, body='';
+        if (fa.verdict==='soft'){
+            head = '&#9888; PHOTO IS SOFT';
+            body = 'Tick contrast ' + fa.modMed.toFixed(2) + ' — too low to trust. Refocus and re-shoot.';
+        } else if (fa.verdict==='tilt'){
+            head = '&#9888; SLIDE TILTED &asymp; ' + w.theta.toFixed(1) + '&deg;';
+            body = 'The <b>' + fa.softSide + '</b> of the frame is out of focus: &Delta;z ' + n1(fa.dzSpan) +
+                   ' µm across the span vs ' + n1(fa.dof) + ' µm depth of field' +
+                   (fa.noSpan ? ' — the sharp band is only ' + Math.round(fa.bandUm) +
+                                ' µm wide, narrower than every span option.' : '.') +
+                   '<br><span style="color:#8a9;">Which way to tilt isn\'t knowable from one photo — ' +
+                   'adjust either way and re-shoot; this reading should drop.</span>';
+        } else if (w.ok){
+            // Tilt measured but harmless — the span stays inside the depth of field.
+            head = '&#10003; SHARP ACROSS THE SPAN';
+            body = 'Slight tilt (&asymp;' + w.theta.toFixed(1) + '&deg;), but &Delta;z ' + n1(fa.dzSpan) +
+                   ' µm is inside the ' + n1(fa.dof) + ' µm depth of field · contrast ' + fa.modMed.toFixed(2);
+        } else {
+            head = '&#10003; FOCUS FLAT ACROSS THE SPAN';
+            body = 'No tilt detectable · contrast ' + fa.modMed.toFixed(2) +
+                   (isFinite(fa.scaleGradPctPerMm) ? ' · scale drift ' +
+                        fa.scaleGradPctPerMm.toFixed(2) + ' %/mm' : '');
+            if (fa.verdict==='marginal') body += '<br><span style="color:#fa6;">Contrast is low — usable, but a sharper frame would measure better.</span>';
+        }
+        fx.innerHTML = '<b style="color:'+col+';">'+head+'</b><br>'+body;
+        fx.style.display='block';
+
+        // span picker — only worth showing when there is something to choose
+        _calPhotoSpans = fa.spans; _calPhotoSpanSel = -1;
+        if (!fa.spans.length || bad){ sp.style.display='none'; hint.style.display='none'; return; }
+        sp.innerHTML = fa.spans.map((s,i)=>{
+            const px = Math.round(s.px);
+            return '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')" '+
+                   'style="display:flex; justify-content:space-between; align-items:center; '+
+                   'padding:4px 6px; margin-bottom:3px; border-radius:3px; cursor:pointer; '+
+                   'font-size:10px; border:1px solid #24485c; background:#0a1c26;">'+
+                   '<span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
+                   (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+'</span>'+
+                   '<span style="color:#9cc;">'+px+' px <span style="color:#678;">&plusmn;'+
+                   s.sigmaPx.toFixed(1)+'</span></span></div>';
+        }).join('');
+        sp.style.display='block'; hint.style.display='block';
+        const bi = fa.spans.findIndex(s=>s.best);
+        calPhotoPickSpan(bi<0 ? 0 : bi);
+    }
+    function calPhotoPickSpan(i){
+        if (!_calPhotoSpans || !_calPhotoSpans[i]) return;
+        _calPhotoSpanSel = i;
+        const px = Math.max(1, Math.round(_calPhotoSpans[i].px));
+        _calPhotoPx = px;
+        document.querySelectorAll('#calphoto-spans .calphoto-chip').forEach((el,k)=>{
+            const on = (k===i);
+            el.style.borderColor = on ? '#3ddb7a' : '#24485c';
+            el.style.background  = on ? '#0e3323' : '#0a1c26';
+        });
+        const use = document.getElementById('calphoto-use');
+        use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
     }
     // Preview: a legible zoom of the sharpest region (from the DESKEWED working
     // image, so ticks are vertical) plus the contrast profile beneath it. Orange
