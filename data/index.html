@@ -2757,6 +2757,10 @@
                border-top:1px solid #16323f; font-size:11px; line-height:1.5;
                color:var(--text-disabled);"></div>
           <div id="calphoto-spans" style="display:none;"></div>
+          <!-- why the starred option won, when the ± column seems to say otherwise -->
+          <div id="calphoto-spanwhy" style="display:none; font-size:9px; line-height:1.45;
+               color:#8fb0a4; background:#0a1f1a; border-left:2px solid #2a7a6a;
+               padding:5px 7px; margin-bottom:4px;"></div>
           <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.4;
                color:#667;"><b>*</b> The big number is always pixels per <b>Demarc&nbsp;Dist</b> —
                that is what CAPTURE&nbsp;&amp;&nbsp;SAVE receives and what the firmware expects. A
@@ -2772,7 +2776,9 @@
             <div style="font-size:9px; color:#5e8c7e; margin-top:2px;">
               tick profile across the whole frame ·
               <span style="color:#fb0;">|</span> detected centroid ·
-              <span style="color:#3ddb7a;">green</span> = the window the selected span measures
+              <span style="color:#3ddb7a;">green</span> = the window the selected span measures ·
+              <span style="color:#ffb347;">orange dashed</span> = the column in best focus
+              (only drawn when a tilt is measurable at all)
             </div>
           </div>
           <!-- fills whatever height is left in the column, rather than leaving the
@@ -2865,8 +2871,17 @@
         &plusmn; is the total uncertainty of the pixel count: the fit's own noise, plus how much
         the answer <i>moves</i> when the measuring window slides along the frame. That second part
         is usually the bigger one — it is real scale drift across the field, and it is why a
-        <i>shorter</i> span is not automatically a better one. A short span is only recommended
-        when the in-focus band is genuinely too narrow to hold the full one.
+        <i>shorter</i> span is not automatically a better one.
+        <div style="margin-top:5px; padding:5px 7px; border-left:2px solid #d9a441;
+                    background:#20180a; color:#e8c98a;">
+          A shorter span can show a lower &plusmn; and still <b>not</b> be recommended. The full span
+          is measured directly, while a shorter one is <b>scaled up</b> to the demarc — which
+          multiplies any local scale error along with the reading. And the &plusmn; is itself only a
+          spread over a handful of window placements, so a few-percent gap between options is inside
+          its own noise. A shorter span therefore has to beat the full one by <b>&ge;25%</b> to win —
+          which in practice happens when part of the frame is soft or obstructed and the short
+          window steps around it. You can always pick one by hand.
+        </div>
         <div style="color:#3ddb7a; font-weight:bold; margin-top:8px;">eff NA</div>
         Needed to turn blur into microns. Shared with the MTF tool — set it once.
         <span style="color:#7a958c;">(click anywhere to close)</span>
@@ -7911,7 +7926,8 @@
                     '</td><td>'+s.sigmaStat.toFixed(2)+'</td><td>'+s.sigmaSys.toFixed(1)+'</td><td>'+
                     s.nTicks+'</td></tr>').join('')+'</table>'+
                 '<div style="font-size:9px; color:#5e8c7e; margin-top:3px;">click a row to see the ticks it uses · '+
-                'a shorter span is measured over fewer ticks and scaled up to the demarc</div>';
+                'a shorter span is measured over fewer ticks and scaled up to the demarc, so it must beat '+
+                'the full span by &ge;25% to be recommended — see the <b>?</b></div>';
             sp.style.display='block';
         } else { sp.style.display='none'; }
         note.innerHTML='Scale drift across the field '+fa.scaleGradPctPerMm.toFixed(2)+' %/mm · '+
@@ -9018,7 +9034,7 @@
 
     function _calPhotoHideFocus(){
         _calPhotoSpans = null; _calPhotoSpanSel = -1; _calPhotoFa = null; _calPhotoStrip = null;
-        for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanhint','calphoto-profwrap'])
+        for (const id of ['calphoto-focus','calphoto-spans','calphoto-spanwhy','calphoto-spanhint','calphoto-profwrap'])
             document.getElementById(id).style.display='none';
     }
 
@@ -9136,7 +9152,11 @@
 
         // span picker — only worth showing when there is something to choose
         _calPhotoSpans = fa.spans; _calPhotoSpanSel = -1;
-        if (!fa.spans.length || bad){ sp.style.display='none'; hint.style.display='none'; return; }
+        if (!fa.spans.length || bad){
+            sp.style.display='none'; hint.style.display='none';
+            document.getElementById('calphoto-spanwhy').style.display='none';
+            return;
+        }
         // Each chip states BOTH numbers. The headline is always pixels-per-Demarc-Dist —
         // that is what CAPTURE & SAVE receives — but for a shorter span that figure is
         // scaled up from a smaller measurement, and hiding that arithmetic would make the
@@ -9157,6 +9177,34 @@
               '<div class="cc-sub">'+sub+'</div></div>';
         }).join('');
         sp.style.display='block'; hint.style.display='block';
+
+        // The ± column can show a shorter span as the lowest number while the FULL span
+        // is starred, which reads as a contradiction unless the tie-break is stated. It
+        // is not a tie-break on ± alone: a shorter span is EXTRAPOLATED (its fitted pitch
+        // is multiplied up to the demarc), so any local scale error is multiplied with it
+        // — and the ± itself is only a spread over a handful of window placements, so a
+        // few-percent gap between options is inside the noise of the estimate. Hence the
+        // margin. Say all this where the confusion happens, not in a comment.
+        const why = document.getElementById('calphoto-spanwhy');
+        const full = fa.spans.find(s=>s.fr===1.0);
+        const low  = fa.spans.reduce((a,b)=> (b.sigmaPx<a.sigmaPx ? b : a), fa.spans[0]);
+        if (full && full.best && low !== full && low.sigmaPx < full.sigmaPx){
+            const gain = Math.round(100*(1 - low.sigmaPx/full.sigmaPx));
+            why.innerHTML = '<b>Why 0.40 mm, when ' + low.spanMm.toFixed(2) + ' mm shows a lower &plusmn;?</b> '+
+                'The full span is measured directly; a shorter one is scaled up (&times;' +
+                (1/low.fr).toFixed(2) + '), which multiplies any local scale error along with the '+
+                'reading. So it only wins if it beats the full span by <b>&ge;25%</b> — this one is '+
+                'just <b>' + gain + '%</b> better, and that gap is smaller than the uncertainty of the '+
+                '&plusmn; figure itself. Click it anyway if you have reason to.';
+            why.style.display='block';
+        } else if (full && !full.best && fa.best){
+            why.innerHTML = '<b>Why ' + fa.best.spanMm.toFixed(2) + ' mm?</b> It beats the full span by '+
+                Math.round(100*(1 - fa.best.sigmaPx/(full.sigmaPx||fa.best.sigmaPx))) + '% — enough to be '+
+                'worth the scaling. Usually that means part of the frame is soft or obstructed and the '+
+                'shorter window steps around it.';
+            why.style.display='block';
+        } else { why.style.display='none'; }
+
         const bi = fa.spans.findIndex(s=>s.best);
         calPhotoPickSpan(bi<0 ? 0 : bi);
     }
