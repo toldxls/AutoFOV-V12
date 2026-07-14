@@ -2708,6 +2708,11 @@
       #cph-title { color:#5ad6ff; font-weight:bold; letter-spacing:1px; font-size:14px; }
       #cph-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
         padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #cph-help { display:none; position:absolute; top:46px; left:16px; z-index:20;
+        max-width:560px; max-height:calc(100% - 60px); overflow-y:auto;
+        background:#07202b; border:1px solid #2a7a9a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
       #cph-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
       #cph-left { flex:0 0 360px; display:flex; flex-direction:column; gap:8px;
         min-height:0; overflow-y:auto; }
@@ -2731,8 +2736,58 @@
     </style>
     <div id="calphoto">
       <div id="cph-head">
-        <div id="cph-title">&#128247; MEASURE FROM PHOTO</div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div id="cph-title">&#128247; MEASURE FROM PHOTO</div>
+          <div id="cph-info" class="help-btn lg" onclick="calPhotoToggleHelp()"
+               title="How to read this">?</div>
+        </div>
         <div id="cph-close" onclick="closeCalPhoto()">CLOSE &#10005;</div>
+      </div>
+      <!-- The detail that used to sit permanently beside every photo. It is reference
+           material, not a running commentary — it belongs behind the ?. -->
+      <div id="cph-help" onclick="calPhotoToggleHelp()">
+        <div style="color:#5ad6ff; font-weight:bold;">What this does</div>
+        It finds the micrometer's tick marks, fits their spacing, and converts that to the
+        pixel count across your Demarc Dist — the number CAPTURE&nbsp;&amp;&nbsp;SAVE needs.
+
+        <div style="color:#5ad6ff; font-weight:bold; margin-top:9px;">Which span should I pick?</div>
+        Normally the starred one. Every option measures the <i>same</i> quantity — pixels per
+        Demarc Dist — just over a different number of ticks, then rescales. So the span you
+        <i>measure</i> need not match the span you <i>calibrate across</i>.
+        <div style="margin-top:5px;">
+          <b>Longer is usually better.</b> A wide window averages more of the frame, and the
+          frame-average scale is exactly what the firmware assumes when it computes
+          <span style="color:#fff;">FOV = demarc &times; width &divide; pixels</span>. On the
+          reference photos the longest span is about <b>10&times;</b> more certain than the
+          0.40&nbsp;mm one.
+        </div>
+        <div style="margin-top:5px;">
+          <b>A shorter span is the risky one.</b> It scales a <i>local</i> pitch <i>up</i>, so any
+          local scale error is multiplied too. It only gets recommended when it is clearly better —
+          usually because part of the frame is soft or obstructed and it steps around the bad
+          patch. You can always pick any option by hand.
+        </div>
+
+        <div style="color:#5ad6ff; font-weight:bold; margin-top:9px;">What &plusmn; means</div>
+        Three things added together:
+        <div style="margin-top:4px;">
+          <b>fit noise</b> — the scatter of the tick fit itself. Always small.<br>
+          <b>window drift</b> — how much the answer changes as the window slides along the frame.
+          This is real: your lens's scale drifts slightly across the field.<br>
+          <b>vs whole frame</b> — how far this window's answer sits from a fit over <i>every</i> tick.
+        </div>
+        <div style="margin-top:5px; padding:5px 7px; border-left:2px solid #d9a441;
+                    background:#20180a; color:#e8c98a;">
+          &plusmn; is an estimate, with slop of its own. Treat a few-percent difference between two
+          options as a tie, not a winner.
+        </div>
+
+        <div style="color:#5ad6ff; font-weight:bold; margin-top:9px;">The tilt reading</div>
+        If the slide is not square to the optic axis, focus sweeps across the frame and one end of
+        the span goes soft. The tool measures that angle from how tick contrast falls off. It cannot
+        tell you <i>which way</i> to tilt — blur looks the same above and below focus — so adjust
+        either way and re-shoot: if the angle grows, go back the other way.
+        <span style="color:#7a958c;">(click anywhere to close)</span>
       </div>
       <div id="cph-body">
         <div id="cph-left">
@@ -2761,16 +2816,10 @@
           <div id="calphoto-spanwhy" style="display:none; font-size:9px; line-height:1.45;
                color:#8fb0a4; background:#0a1f1a; border-left:2px solid #2a7a6a;
                padding:5px 7px; margin-bottom:4px;"></div>
-          <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.4;
-               color:#667;"><b>*</b> The big number is always pixels per <b>Demarc&nbsp;Dist</b> —
-               that is what CAPTURE&nbsp;&amp;&nbsp;SAVE receives and what the firmware expects. Every
-               option measures the tick pitch over its own window and rescales it to the demarc; they
-               are the same quantity from different amounts of data, not different quantities.
-               <b>Longer is usually better</b> — it averages more of the frame, which is the scale the
-               FOV formula assumes.<br>
-               <b>&plusmn;</b> is fit noise + how much the answer moves as the window slides + how far it
-               sits from a fit over <i>every</i> tick in the frame. It is an estimate, not a
-               guarantee — treat a few-percent difference between options as a tie.</div>
+          <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.45;
+               color:#667;"><b>*</b> Rescaled to the Demarc Dist. Every option reports the same
+               quantity — pixels per <b>Demarc&nbsp;Dist</b> — measured over a different number of
+               ticks. Tap <b>?</b> for how to choose and what <b>&plusmn;</b> means.</div>
           <div id="calphoto-use" onclick="calPhotoUse()">USE MEASUREMENT</div>
         </div>
         <div id="cph-right">
@@ -7475,6 +7524,16 @@
     // still crisp measures fine, and crying "soft" at it would be a false alarm.
     const MIC_MOD_SOFT = 0.10, MIC_MOD_MARGINAL = 0.15;
 
+    // "The <softSide> of the frame is out of focus" is fine for "left"/"right" and broken
+    // English for "both ends" — the slot only fits a noun. Build a whole sentence per case
+    // rather than interpolating a phrase into one.
+    function _micSoftSentence(side){
+        if (side === 'both ends') return 'Both ends of the frame are out of focus.';
+        if (side === 'left' || side === 'right')
+            return 'The ' + side + ' side of the frame is out of focus.';
+        return 'Part of the frame is out of focus.';
+    }
+
     // Orchestrator → one verdict object.
     // opts: {pitchMm, demarcMm, imageW, NA, basePx}
     //   basePx — the value the SHIPPED analyzeMicrometer path measured. The full-span
@@ -7649,8 +7708,11 @@
     }
     function closeCalPhoto(){
         document.getElementById('calphoto').style.display = 'none';
+        document.getElementById('cph-help').style.display = 'none';
         _calPhotoStrip = null;          // drop the retained band strip
     }
+    function calPhotoToggleHelp(){ const h=document.getElementById('cph-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
 
     // ── LENS CENTERING (lateral-CA neutral-point test) ──
     // Entry point + drop zone. The left/right analysis (per-channel column-
@@ -7929,12 +7991,12 @@
         } else if (fa.verdict==='tilt'){
             head='&#9888; TILTED &asymp; '+w.theta.toFixed(1)+'&deg; &nbsp;<span style="font-size:11px; color:#8a9;">('+
                  'about the vertical axis '+w.thetaX.toFixed(1)+'&deg;, horizontal '+Math.abs(w.thetaY).toFixed(1)+'&deg;)</span>';
-            body='The <b>'+fa.softSide+'</b> of the frame is out of focus. Across the '+
-                 en.demarcMm.toFixed(2)+' mm span the slide climbs <b>'+n1(fa.dzSpan)+' µm</b>, '+
-                 'against a depth of field of '+n1(fa.dof)+' µm — so the span cannot all be sharp. '+
-                 'The in-focus band is '+Math.round(fa.bandUm)+' µm wide.'+
-                 (fa.noSpan ? ' <span style="color:#ff6a6a;">That is narrower than every span option — '+
-                              'this frame cannot be measured reliably at all.</span>' : '');
+            body=_micSoftSentence(fa.softSide)+' Across the '+en.demarcMm.toFixed(2)+
+                 ' mm span the slide rises <b>'+n1(fa.dzSpan)+' µm</b>, against a depth of field of '+
+                 n1(fa.dof)+' µm, so the span cannot be sharp end to end. The in-focus band is '+
+                 Math.round(fa.bandUm)+' µm wide.'+
+                 (fa.noSpan ? ' <span style="color:#ff6a6a;">That is narrower than every span option, '+
+                              'so this frame cannot be measured reliably at all.</span>' : '');
         } else if (w.ok){
             // A tilt WAS measured, it just doesn't matter: the span stays inside the
             // depth of field. Saying "flat" here would contradict the plot beside it.
@@ -9162,20 +9224,22 @@
         let head, body='';
         if (fa.verdict==='soft'){
             head = '&#9888; PHOTO IS SOFT';
-            body = 'Tick contrast ' + fa.modMed.toFixed(2) + ' — too low to trust. Refocus and re-shoot.';
+            body = 'Tick contrast is only ' + fa.modMed.toFixed(2) + '. Refocus and re-shoot.';
         } else if (fa.verdict==='tilt'){
             head = '&#9888; SLIDE TILTED &asymp; ' + w.theta.toFixed(1) + '&deg;';
-            body = 'The <b>' + fa.softSide + '</b> of the frame is out of focus: &Delta;z ' + n1(fa.dzSpan) +
-                   ' µm across the span vs ' + n1(fa.dof) + ' µm depth of field' +
-                   (fa.noSpan ? ' — the sharp band is only ' + Math.round(fa.bandUm) +
-                                ' µm wide, narrower than every span option.' : '.') +
-                   '<br><span style="color:#8a9;">Which way to tilt isn\'t knowable from one photo — ' +
-                   'adjust either way and re-shoot; this reading should drop.</span>';
+            body = _micSoftSentence(fa.softSide) + ' The slide rises <b>' + n1(fa.dzSpan) +
+                   ' µm</b> across the span, against a ' + n1(fa.dof) + ' µm depth of field, so the '+
+                   'span cannot be sharp end to end.' +
+                   (fa.noSpan ? ' The sharp band is only ' + Math.round(fa.bandUm) +
+                                ' µm wide — narrower than every span option.' : '') +
+                   '<br><span style="color:#8a9;">One photo cannot tell you which way to tilt. '+
+                   'Adjust either way and re-shoot: if the angle grows, go the other way.</span>';
         } else if (w.ok){
             // Tilt measured but harmless — the span stays inside the depth of field.
             head = '&#10003; SHARP ACROSS THE SPAN';
-            body = 'Slight tilt (&asymp;' + w.theta.toFixed(1) + '&deg;), but &Delta;z ' + n1(fa.dzSpan) +
-                   ' µm is inside the ' + n1(fa.dof) + ' µm depth of field · contrast ' + fa.modMed.toFixed(2);
+            body = 'A slight tilt is measurable (&asymp;' + w.theta.toFixed(1) + '&deg;), but the slide rises '+
+                   'only ' + n1(fa.dzSpan) + ' µm across the span — well inside the ' + n1(fa.dof) +
+                   ' µm depth of field. Nothing to fix.';
         } else {
             head = '&#10003; FOCUS FLAT ACROSS THE SPAN';
             body = 'No tilt detectable · contrast ' + fa.modMed.toFixed(2) +
@@ -9232,29 +9296,28 @@
         const full = fa.spans.find(s=>s.fr===1.0);
         const b    = fa.best;
         const dmm  = (state.demarcDist>0 ? state.demarcDist : 0.4).toFixed(2);
+        // Keep this to one or two plain sentences. The reasoning behind it lives in the ? —
+        // a paragraph of theory beside every photo is noise, not help.
         if (b && full && b !== full && b.fr > 1.0){
-            const gain = Math.round(100*(1 - b.sigmaPx/full.sigmaPx));
-            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm, which is longer than the demarc?</b> '+
-                'Nothing requires the measured span to equal the calibration span — a longer one scales '+
-                '<i>down</i> (&times;' + (1/b.fr).toFixed(2) + ') instead of up. And measuring across more of '+
-                'the frame estimates the <b>frame-average scale</b>, which is exactly what the firmware\'s '+
-                'FOV = demarc &times; width &divide; px assumes. Here it is <b>' + gain + '%</b> more certain '+
-                'than the ' + dmm + ' mm span.';
+            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> A longer window covers more of '+
+                'the frame, so it measures the average scale the FOV formula assumes. It is <b>' +
+                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '%</b> more certain than the ' + dmm +
+                ' mm span. <span style="color:#6d8a99;">See <b>?</b></span>';
             why.style.display='block';
         } else if (b && full && b !== full && b.fr < 1.0){
-            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> It beats the ' + dmm + ' mm span by '+
-                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '% — enough to be worth extrapolating. That '+
-                'usually means part of the frame is soft or obstructed and the shorter window steps around it.';
+            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> It is <b>' +
+                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '%</b> more certain than the ' + dmm +
+                ' mm span — usually because part of the frame is soft or obstructed, and this shorter '+
+                'window steps around it. <span style="color:#6d8a99;">See <b>?</b></span>';
             why.style.display='block';
         } else if (b && full && b === full){
             const low = fa.spans.reduce((a,c)=> (c.sigmaPx<a.sigmaPx ? c : a), fa.spans[0]);
             if (low !== full && low.fr < 1.0){
-                why.innerHTML = '<b>Why ' + dmm + ' mm, when ' + low.spanMm.toFixed(2) + ' mm shows a lower '+
-                    '&plusmn;?</b> A shorter span extrapolates a local pitch up to the demarc (&times;' +
-                    (1/low.fr).toFixed(2) + '), multiplying any local scale error with it — so it must beat '+
-                    'this by <b>&ge;25%</b>, and it is only <b>' +
-                    Math.round(100*(1 - low.sigmaPx/full.sigmaPx)) + '%</b> better. That gap is inside the '+
-                    'noise of the &plusmn; itself. Click it anyway if you have reason to.';
+                why.innerHTML = '<b>Why ' + dmm + ' mm, when ' + low.spanMm.toFixed(2) + ' mm shows a '+
+                    'lower &plusmn;?</b> A shorter span has to be <b>25%</b> better to be worth '+
+                    'extrapolating, and it is only <b>' +
+                    Math.round(100*(1 - low.sigmaPx/full.sigmaPx)) + '%</b> better — a tie. Pick it by hand '+
+                    'if you disagree. <span style="color:#6d8a99;">See <b>?</b></span>';
                 why.style.display='block';
             } else { why.style.display='none'; }
         } else { why.style.display='none'; }
