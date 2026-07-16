@@ -2020,6 +2020,15 @@
         margin:0 1px; }
       #vibp-close { cursor:pointer; background:#780000; border:1px solid #ff6600;
         padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      /* Axes explainer overlay (mirrors the MTF/vibmenu ? panels). */
+      #vibp-help { display:none; position:absolute; top:52px; left:50%;
+        transform:translateX(-50%); z-index:30;
+        width:min(660px, calc(100% - 24px)); max-height:calc(100% - 66px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
+      #vibp-help svg { display:block; width:100%; height:auto; margin:6px 0 2px;
+        background:#08170f; border:1px solid #1f3a33; border-radius:5px; }
       #vibp-body { flex:1 1 auto; display:flex; flex-direction:column;
         gap:6px; padding:8px 12px 12px; min-height:0; }
       .vibp-pane { display:flex; flex-direction:column; min-height:0; }
@@ -3012,8 +3021,89 @@
             <span id="vibp-blur-nb">narrowband &mdash;</span>
             <span id="vibp-blur-bb">broadband&nbsp; &mdash;</span>
           </span>
+          <span id="vibp-info" class="help-btn lg" onclick="vibPanelToggleHelp()"
+                title="How the V / H axes are derived">?</span>
           <span id="vibp-close" onclick="vibClosePanel()">&#10005; CLOSE</span>
         </span>
+      </div>
+      <!-- Axes explainer (tap anywhere on it to close) -->
+      <div id="vibp-help" onclick="vibPanelToggleHelp()">
+        <b style="color:#3ddb7a;">How the analyzer derives its axes</b><br>
+        <span style="color:#7a958c;">Gravity-referenced, not chip-referenced: the DSP finds
+        &ldquo;down&rdquo; by itself, so mounting angle never matters.</span>
+        <svg viewBox="0 0 760 545" role="img" aria-label="Axes diagram: gravity down, vertical channel along it, one horizontal plane perpendicular to it holding the e1 and e2 basis axes.">
+          <defs>
+            <marker id="vaxG" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#ffb347"/></marker>
+            <marker id="vaxV" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#36d6ff"/></marker>
+            <marker id="vaxH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#ff5bd0"/></marker>
+            <marker id="vaxD" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#5a7a6e"/></marker>
+          </defs>
+          <line x1="380" y1="84" x2="380" y2="524" stroke="#24413a" stroke-width="1" stroke-dasharray="3 4"/>
+          <rect x="320" y="262" width="120" height="76" rx="7" fill="#0f2a20" stroke="#3a5a50" stroke-width="1.4"/>
+          <rect x="334" y="276" width="58" height="40" rx="3" fill="#081812" stroke="#2a4a40" stroke-width="1"/>
+          <circle cx="416" cy="296" r="7" fill="none" stroke="#2a4a40" stroke-width="1.2"/>
+          <text x="336" y="332" fill="#5a7a6e" font-size="11">AutoFOV</text>
+          <line x1="420" y1="286" x2="420" y2="222" stroke="#5a7a6e" stroke-width="1.2" marker-end="url(#vaxD)"/>
+          <line x1="420" y1="286" x2="485" y2="332" stroke="#5a7a6e" stroke-width="1.2" marker-end="url(#vaxD)"/>
+          <line x1="420" y1="286" x2="350" y2="264" stroke="#5a7a6e" stroke-width="1.2" marker-end="url(#vaxD)"/>
+          <text x="426" y="220" fill="#5a7a6e" font-size="12">Xc</text>
+          <text x="491" y="344" fill="#5a7a6e" font-size="12">Yc</text>
+          <text x="330" y="258" fill="#5a7a6e" font-size="12">Zc</text>
+          <text x="94" y="526" fill="#5a7a6e" font-size="12">this rig (gimbal): Xc &#8776; vertical &#183; Yc dips below the plane</text>
+          <text x="94" y="540" fill="#5a7a6e" font-size="12">(the DSP never assumes this &#8212; any tilt still works)</text>
+          <ellipse cx="380" cy="300" rx="230" ry="66" fill="rgba(255,91,208,0.05)" stroke="#ff5bd0" stroke-width="1.4"/>
+          <line x1="380" y1="300" x2="560" y2="330" stroke="#ff5bd0" stroke-width="1.8" marker-end="url(#vaxH)"/>
+          <line x1="380" y1="300" x2="252" y2="262" stroke="#ff5bd0" stroke-width="1.8" marker-end="url(#vaxH)"/>
+          <text x="548" y="354" fill="#ff5bd0" font-size="13.5">e1 = g&#770; &#215; r&#770;</text>
+          <text x="170" y="250" fill="#ff5bd0" font-size="13.5">e2 = g&#770; &#215; e1</text>
+          <text x="712" y="236" text-anchor="end" fill="#ff5bd0" font-size="13.5">horizontal plane &#8869; g&#770;</text>
+          <text x="712" y="252" text-anchor="end" fill="#9a6a8e" font-size="12">one plane &#183; two axes</text>
+          <line x1="606" y1="244" x2="570" y2="266" stroke="#8a5a80" stroke-width="1" stroke-dasharray="2 3"/>
+          <text x="88" y="350" fill="#9a6a8e" font-size="12">in-plane rotation arbitrary &#8212;</text>
+          <text x="88" y="366" fill="#9a6a8e" font-size="12">combined power is basis-invariant</text>
+          <line x1="380" y1="128" x2="380" y2="238" stroke="#36d6ff" stroke-width="2"
+                marker-start="url(#vaxV)" marker-end="url(#vaxV)"/>
+          <text x="394" y="140" fill="#36d6ff" font-size="13.5">V &#8212; vertical channel</text>
+          <text x="394" y="157" fill="#5e8ca0" font-size="12">signed motion along the gravity line</text>
+          <text x="394" y="172" fill="#5e8ca0" font-size="12">V = AC &#183; g&#770;</text>
+          <line x1="380" y1="362" x2="380" y2="502" stroke="#ffb347" stroke-width="2" marker-end="url(#vaxG)"/>
+          <text x="394" y="474" fill="#ffb347" font-size="13.5">g&#770; &#8212; gravity &#183; &ldquo;down&rdquo;</text>
+          <text x="394" y="491" fill="#9a8a66" font-size="12">slow per-axis EMA of the raw accel</text>
+          <text x="394" y="506" fill="#9a8a66" font-size="12">&#945; = 0.002 @ 416 Hz &#8594; &#964; &#8776; 1.2 s</text>
+        </svg>
+        <div style="text-align:center; font-size:10px; color:#7a958c; margin:2px 0 10px;">
+          world axes come from g&#770; alone &mdash; vertical = the gravity line &middot;
+          horizontal = the one plane &#8869; it &middot; chip Xc/Yc/Zc never used downstream
+        </div>
+        <b style="color:#3ddb7a;">One plane, not two</b><br>
+        g&#770; is a slow per-axis EMA of the raw accel (&#945; = 0.002 @ 416 Hz,
+        &#964; &#8776; 1.2 s): it follows tilt, ignores vibration. (At rest the chip
+        reads +1 g along &ldquo;up&rdquo; &mdash; the sign never matters, g&#770; marks the
+        vertical <i>line</i>.) <b style="color:#36d6ff;">V</b> = AC &#183; g&#770; &mdash;
+        signed motion along that line, the axis that shifts focus &rarr; its own 512-pt
+        FFT. <b style="color:#ff5bd0;">H</b> is everything left over and lives in ONE
+        plane &#8869; g&#770;: its in-plane coordinates (hx, hy) on e1/e2 are packed into
+        one complex FFT (hx real, hy imag) whose magnitude is the single H trace.<br><br>
+        <b style="color:#3ddb7a;">What H can &mdash; and can&rsquo;t &mdash; tell you</b><br>
+        The rotation of e1/e2 inside the plane is arbitrary and the combined power
+        doesn&rsquo;t depend on it: H shows <b>how much</b> horizontal energy at each
+        frequency, never front&ndash;back vs left&ndash;right. V is the only physically
+        distinguished direction, because gravity marks it. Gravity is projected out
+        <i>first</i>, so both channels stay linear &mdash; no &#8730;(g&#178;+&#948;&#178;)
+        squaring artifact.<br><br>
+        <b style="color:#3ddb7a;">Basis stability</b><br>
+        r&#770; = chip-Z, switching to chip-X when gravity sits near chip-Z
+        (|gz| &gt; 0.9, released at 0.85 &mdash; hysteresis so micro-dither can&rsquo;t flip
+        the basis between FFTs; with gravity living on chip-X here, the default chip-Z
+        reference stays active); the basis then stays frozen until the rig actually tilts
+        &#8776;2&deg;, so every FFT window sees one consistent frame. None of this changes
+        the numbers &mdash; only keeps them stable. 416 Hz ODR &middot; 512-pt FFT &middot;
+        0.8125 Hz/bin &middot; 0&ndash;208 Hz.
+        <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibp-body">
         <div class="vibp-pane" id="vibp-spec-pane">
@@ -3225,6 +3315,8 @@
     let vibSigs = [];       // saved-signature filenames
 
     function vibToggleHelp(){ const h=document.getElementById('vibmenu-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
+    function vibPanelToggleHelp(){ const h=document.getElementById('vibp-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
     function vibEnter() {
         const m = document.getElementById('vibmenu');
@@ -3725,6 +3817,7 @@
         if (!p) return;
         p.classList.add('open');
         vibPanelOpen = true;
+        const hp = document.getElementById('vibp-help'); if (hp) hp.style.display='none';
         sendCommand('vibPanel', 1);        // ensure the spectrum stream is running
         vibWfInit = false;
         vibPanelReadout();
