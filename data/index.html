@@ -2647,6 +2647,18 @@
         0.7 µm for a 20x NA 0.42). A &#9888; warning means MTF10 exceeds the
         objective&rsquo;s diffraction limit — physically impossible, so check
         Grp/Elem and the selected objective.<br><br>
+        <b style="color:#3ddb7a;">Trusting the numbers</b><br>
+        The last stretch before the cutoff usually wiggles and rides a little high —
+        residual noise the flat floor subtraction can&rsquo;t fully remove (the floor
+        tilts up with frequency). Treat everything at and beyond <b>MTF5</b> as noise,
+        not resolution. Diffraction-shaped blur gives <b>MTF10 &asymp; 2&times;
+        MTF50</b>; a clearly larger ratio — the curve steeper than the green fit
+        through the mid-band, then above it in the tail — is the <b>defocus</b>
+        fingerprint (spurious resolution). On such shots only MTF50 is a fair
+        blur comparison; record <b>equiv NA</b> and MTF10/MTF5 from best-focus
+        frames only. A lopsided <b>2 edges (a/b)</b> split means focus tilts
+        across the bar — the two edges sit a bar-width apart on the target —
+        so re-measure a <b>single edge</b> on the sharpest heatmap area.<br><br>
         <b style="color:#3ddb7a;">Tips</b><br>
         Measure both horizontal and vertical bars — a large difference indicates
         astigmatism or focus-plane tilt. Drag the legend if it covers the curve.
