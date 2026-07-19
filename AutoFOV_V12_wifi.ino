@@ -356,6 +356,20 @@ static void ensureMdns() {
     }
 }
 
+// V12.6: idempotent SNTP start. configTime() only (re)configures lwIP's SNTP
+// client — non-blocking, syncs in the background, re-syncs hourly. Used solely
+// to stamp stack-start with a UTC epoch for the vibration report's wall-clock
+// cross-check; the stamp site sanity-gates on the epoch value, so no sync
+// (isolated LAN / portal mode) simply means the stamp stays 0 and the
+// dashboard maps times from device millis alone. UTC only — the browser
+// localizes. Never add a blocking getLocalTime() wait anywhere.
+static bool sntpStarted = false;
+static void ensureSntp() {
+    if (sntpStarted) return;
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    sntpStarted = true;
+}
+
 // Uniform random index in [0, n) using rejection sampling — drops esp_random()
 // draws that fall into the partial bucket so the result is bias-free for any n.
 // (Alphabets of 32 chars have no modulo bias on a uint32_t to begin with; the
@@ -845,6 +859,7 @@ void wifiLoop() {
                 // in this session — without it, mDNS would stay unregistered
                 // for the rest of the boot.
                 ensureMdns();
+                ensureSntp();
                 String out; buildFullStateJson(out, false);    // reconnect: skip calGraphPoints
                 wsServer.textAll(out);
             } else {
@@ -1283,6 +1298,7 @@ static void staConnectTask(void* arg) {
         // Heads-up: Android Chrome doesn't resolve .local from the URL bar;
         // desktop browsers and iOS do.
         ensureMdns();
+        ensureSntp();
     } else {
         // AUTH-class disconnect = wrong password / key exchange failure. Reopen
         // the setup portal so the friend can fix it. Deliberately EXCLUDES
@@ -1762,6 +1778,99 @@ static void startFullServer() {
         dp.end();
         String out; serializeJson(doc, out);
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
+        r->addHeader("Cache-Control", "no-store");
+        req->send(r);
+    });
+
+    // GET /vibhist — V12.6: the deep per-stack vibration history, binary.
+    // JSON is a non-starter here: 2048 frame records would need a ~200 KB
+    // JsonDocument pool + a ~70 KB output String on the AsyncTCP task's heap.
+    // Instead the callback-filler response memcpy's straight out of the two
+    // PSRAM arrays — no heap block at all. Wire layout (LE, mirrors the 'VS'
+    // spectrum frame doc style):
+    //
+    //   byte  0-1  : magic 'V','H'
+    //   byte  2    : version (= 1)
+    //   byte  3    : state — 0 empty, 1 recording (live fetch), 2 complete,
+    //                3 aborted (partial data kept)
+    //   byte  4-7  : stackId (vibStackStartSeq of this history — staleness echo)
+    //   byte  8-11 : devMs   — millis() when this response was built; the
+    //                browser anchors wall-clock mapping to it
+    //   byte 12-15 : startMs — millis() at stack start
+    //   byte 16-19 : startEpoch — UTC s at stack start, 0 = SNTP never synced
+    //   byte 20-21 : frameCount (records that follow)
+    //   byte 22-23 : totalFrames (> frameCount ⇒ tail not recorded)
+    //   byte 24-25 : shutterDenom (blur computed for T = 1/N s)
+    //   byte 26-27 : envCount
+    //   byte 28-31 : envFirstMs / 32-35 : envLastMs (millis of env[0]/env[last])
+    //   byte 36-37 : envPeriodMsX10 (informational: 3077 × 2^decimation)
+    //   byte 38-47 : reserved (= 0)
+    //   byte 48 …  : frameCount × VibFrameRec (12 B, see main tab)
+    //   then       : envCount × { u16 vRms, u16 hRms }  (mg × 100)
+    //
+    // Race notes: state 2/3 = frozen, fully race-free. A live fetch (state 1)
+    // snapshots the counts here with acquire (pairs with vibTask's release
+    // stores, so entries [0, count) are complete); the only soft spot is the
+    // in-place envelope decimation at the 15-min boundary racing a concurrent
+    // read — a one-fetch cosmetic garble of the strip, self-correcting on the
+    // next fetch. Accepted for a live preview.
+    httpServer.on("/vibhist", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!apiAuthed(req)) { req->send(403, "text/plain", "forbidden"); return; }
+        static_assert(sizeof(VibFrameRec) == 12, "wire format assumes 12-byte VibFrameRec");
+        struct Hdr { uint8_t b[48]; };
+        Hdr h; memset(h.b, 0, sizeof(h.b));
+        uint32_t fc = 0, ec = 0;
+        if (vibHistReady) {
+            fc = vibHistFrameCount.load(std::memory_order_acquire);
+            ec = vibHistEnvCount.load(std::memory_order_acquire);
+        }
+        uint32_t u32; uint16_t u16;
+        h.b[0] = 'V'; h.b[1] = 'H'; h.b[2] = 1;
+        h.b[3] = vibHistReady ? (uint8_t)vibHistState.load() : 0;
+        u32 = vibHistStackId.load();          memcpy(h.b + 4,  &u32, 4);
+        u32 = millis();                       memcpy(h.b + 8,  &u32, 4);
+        u32 = vibStackStartMs.load();         memcpy(h.b + 12, &u32, 4);
+        u32 = vibStackStartEpoch.load();      memcpy(h.b + 16, &u32, 4);
+        u16 = (uint16_t)fc;                   memcpy(h.b + 20, &u16, 2);
+        uint32_t tf = vibHistTotalFrames.load();
+        u16 = (tf > 65535) ? 65535 : (uint16_t)tf; memcpy(h.b + 22, &u16, 2);
+        u16 = vibShutterDenom;                memcpy(h.b + 24, &u16, 2);
+        u16 = (uint16_t)ec;                   memcpy(h.b + 26, &u16, 2);
+        u32 = vibHistEnvFirstMs;              memcpy(h.b + 28, &u32, 4);
+        u32 = vibHistEnvLastMs;               memcpy(h.b + 32, &u32, 4);
+        uint32_t per = 3077u << vibHistEnvShift;
+        u16 = (per > 65535) ? 65535 : (uint16_t)per; memcpy(h.b + 36, &u16, 2);
+
+        const size_t fBytes = (size_t)fc * sizeof(VibFrameRec);
+        const size_t eBytes = (size_t)ec * 4;
+        const size_t total  = sizeof(h.b) + fBytes + eBytes;
+        AsyncWebServerResponse* r = req->beginResponse(
+            "application/octet-stream", total,
+            [h, fBytes, eBytes](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+                const size_t eOff  = sizeof(Hdr::b) + fBytes;
+                const size_t total = eOff + eBytes;
+                size_t pos = index, written = 0;
+                while (written < maxLen && pos < total) {
+                    size_t n;
+                    if (pos < sizeof(Hdr::b)) {
+                        n = sizeof(Hdr::b) - pos;
+                        if (n > maxLen - written) n = maxLen - written;
+                        memcpy(buf + written, h.b + pos, n);
+                    } else if (pos < eOff) {
+                        n = eOff - pos;
+                        if (n > maxLen - written) n = maxLen - written;
+                        memcpy(buf + written,
+                               (const uint8_t*)vibHistFrames + (pos - sizeof(Hdr::b)), n);
+                    } else {
+                        n = total - pos;
+                        if (n > maxLen - written) n = maxLen - written;
+                        memcpy(buf + written,
+                               (const uint8_t*)vibHistEnv + (pos - eOff), n);
+                    }
+                    written += n; pos += n;
+                }
+                return written;
+            });
         r->addHeader("Cache-Control", "no-store");
         req->send(r);
     });
@@ -3103,6 +3212,8 @@ static void buildFastTelemJson(String& out) {
     doc["vst"] = (int)vibState.load();
     doc["vcw"] = vibCurrentWaitMs;                               // controller WAIT setting
     doc["vsh"] = (int)vibShutterDenom;                           // analyzer/PNG-card shutter 1/N s
+    // V12.6: live frames-shot counter — 0 when no sequence is active.
+    doc["sp"]  = isSequenceActive ? (int)stackPulseCount : 0;
 
     serializeJson(doc, out);
 }
@@ -3331,6 +3442,26 @@ void wifiNotifyStackComplete() {
 void wifiNotifyTestAlert() {
     if (wsServer.count() == 0) return;
     wsServer.textAll("{\"beep\":1}");
+}
+
+// V12.6: one-shot stack-start event — the dashboard arms its live progress
+// display and remembers the stack id for /vibhist staleness checks. Runs on
+// Core 1 loop() like wifiNotifyStackComplete.
+void wifiNotifyStackStart() {
+    if (wsServer.count() == 0) return;
+    StaticJsonDocument<128> doc;
+    doc["stackStart"] = 1;
+    doc["sid"] = vibStackStartSeq.load();
+    doc["ep"]  = vibStackStartEpoch.load();
+    String out; serializeJson(doc, out);
+    wsServer.textAll(out);
+}
+
+// V12.6: sequence ended before MIN_ACTIVE_DURATION (single shot / abort) —
+// dashboard clears its live progress without opening a report.
+void wifiNotifyStackAbort() {
+    if (wsServer.count() == 0) return;
+    wsServer.textAll("{\"stackAbort\":1}");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

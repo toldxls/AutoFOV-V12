@@ -2385,6 +2385,8 @@
           <span class="help-btn lg" onclick="vibToggleHelp()" title="How to read this">?</span>
           <span id="vib-units-toggle" onclick="vibToggleUnits()"
                 title="Toggle units: acceleration (mg) ↔ displacement (µm)">mg</span>
+          <span class="vm-analyze" onclick="vibRepFetch(false)"
+                title="Per-frame vibration report of the last stack — worst frames to cull">LAST STACK</span>
           <span class="vm-analyze" onclick="vibOpenPanel()"
                 title="Open the full multi-pane analyzer (spectrum + waterfall + RMS trend)">ANALYZE&nbsp;&#9654;</span>
           <span class="vm-close" onclick="goBack('screen-settings')" title="Close">&#10005;</span>
@@ -2488,6 +2490,84 @@
       <div id="vibwait-body">
         <canvas id="vib-waitscreen-canvas"></canvas>
         <div class="vw-hint">resonance frequency → settle wait — the curve updates on each shutter pulse</div>
+      </div>
+    </div>
+
+    <!-- ===== V12.6: STACK VIBRATION REPORT (#vibrep) — per-frame history of
+         the last stack fetched from GET /vibhist, for culling shaky frames.
+         Auto-opens on stackDone; also via the LAST STACK button above. -->
+    <style>
+      #vibrep { display:none; position:fixed; inset:0; z-index:395;
+        background:#06120f; color:#cfe7df; font-family:monospace; flex-direction:column; }
+      #vibrep.open { display:flex; }
+      #vibrep-head { flex:0 0 auto; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+        padding:10px 18px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #vibrep .vr-title { color:#00c8b4; font-weight:bold; letter-spacing:3px; font-size:16px; }
+      #vibrep #vibrep-meta { font-size:11px; color:#7ab4a2; line-height:1.5; }
+      #vibrep .vw-close { margin-left:auto; cursor:pointer; background:#5a1414; border:1px solid #ff6600;
+        color:#ffd0c0; padding:6px 14px; border-radius:4px; font-size:15px; font-weight:bold; line-height:1; }
+      #vibrep-controls { flex:0 0 auto; display:flex; align-items:center; gap:10px 18px; flex-wrap:wrap;
+        padding:9px 18px; border-bottom:1px solid #14302a; font-size:11px; }
+      #vibrep-controls .vr-k { color:#7a958c; }
+      #vibrep-thresh { width:150px; accent-color:#3ddb7a; }
+      #vibrep-thresh-num { width:52px; background:#08140f; border:1px solid #2a7a6a; color:#cfe7df;
+        font-family:monospace; font-size:12px; padding:2px 4px; border-radius:3px; }
+      #vibrep-flagged { color:#ffcc44; font-weight:bold; }
+      #vibrep .vr-btn { cursor:pointer; background:#13403a; border:1px solid #00c8b4; color:#9fe6cf;
+        padding:5px 12px; border-radius:4px; font-size:11px; font-weight:bold; }
+      #vibrep .vr-btn:active { filter:brightness(1.3); }
+      #vibrep-strip-wrap { flex:0 0 auto; padding:10px 18px 4px; }
+      #vibrep-strip { display:block; width:100%; height:110px;
+        background:#040d0b; border:1px solid #1f3a33; border-radius:6px; }
+      #vibrep-body { flex:1 1 auto; overflow-y:auto; padding:6px 18px 14px; min-height:0; }
+      #vibrep table { border-collapse:collapse; width:100%; font-size:12px; }
+      #vibrep th { text-align:right; color:#7a958c; font-weight:bold; padding:4px 10px;
+        border-bottom:1px solid #1f3a33; position:sticky; top:0; background:#06120f;
+        cursor:pointer; white-space:nowrap; }
+      #vibrep th:first-child, #vibrep td:first-child { text-align:left; }
+      #vibrep td { text-align:right; padding:3px 10px; border-bottom:1px solid #0d201b;
+        white-space:nowrap; }
+      #vibrep tr.vr-flag td { background:#2a1414; color:#ffb0a0; }
+      #vibrep tr.vr-flag td:first-child { color:#ff6644; font-weight:bold; }
+      #vibrep-empty { padding:30px 10px; text-align:center; color:#7a958c; font-size:12px; line-height:1.7; }
+      @media (max-width: 640px) {
+        #vibrep-head { gap:8px 10px; padding:8px 12px; }
+        #vibrep-controls { gap:8px 12px; padding:8px 12px; }
+        #vibrep-strip-wrap, #vibrep-body { padding-left:10px; padding-right:10px; }
+      }
+    </style>
+    <div id="vibrep">
+      <div id="vibrep-head">
+        <span class="vr-title">STACK VIBRATION REPORT</span>
+        <span id="vibrep-meta">no stack recorded yet</span>
+        <span class="vw-close" onclick="vibRepClose()" title="Close">&#10005;</span>
+      </div>
+      <div id="vibrep-controls">
+        <span class="vr-k">flag frames blurred &gt;</span>
+        <input id="vibrep-thresh" type="range" min="0.2" max="5" step="0.1" value="1"
+               oninput="vibRepSetThresh(this.value)">
+        <input id="vibrep-thresh-num" type="number" min="0.05" max="50" step="0.1" value="1"
+               onchange="vibRepSetThresh(this.value)">
+        <span class="vr-k">px &nbsp;(<span id="vibrep-umpx">--</span> &micro;m/px at the subject)</span>
+        <span id="vibrep-flagged">--</span>
+        <span class="vr-btn" onclick="vibRepCopy()" title="Copy the flagged-frame cull list to the clipboard">COPY CULL LIST</span>
+      </div>
+      <div id="vibrep-strip-wrap"><canvas id="vibrep-strip"></canvas></div>
+      <div id="vibrep-body">
+        <div id="vibrep-empty">No stack history yet.<br>
+          Run a stack (&ge;20 s of shutter pulses) and the report opens here automatically.</div>
+        <table id="vibrep-table" style="display:none;">
+          <thead><tr>
+            <th onclick="vibRepSortBy('n')" title="Sort by photo number">PHOTO #</th>
+            <th onclick="vibRepSortBy('t')" title="Sort by time">TIME +s</th>
+            <th>CLOCK</th>
+            <th onclick="vibRepSortBy('blur')" title="Sort by blur (worst first)">BLUR V &micro;m</th>
+            <th onclick="vibRepSortBy('blur')">BLUR H &micro;m</th>
+            <th onclick="vibRepSortBy('blur')">PX EQUIV</th>
+            <th onclick="vibRepSortBy('settle')" title="Sort by settle time">SETTLE ms</th>
+          </tr></thead>
+          <tbody id="vibrep-rows"></tbody>
+        </table>
       </div>
     </div>
 
@@ -3857,6 +3937,293 @@
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape' && vibPanelOpen) vibClosePanel();
     });
+
+    // ── V12.6: STACK VIBRATION REPORT (#vibrep) ─────────────────────────────
+    // Fetches GET /vibhist (binary, see the firmware wire doc) and renders the
+    // per-frame blur history of the last stack so the worst frames can be
+    // culled. vibRepCache holds the last COMPLETE report in JS memory — the
+    // device clears its history at every sequence start (even a lone test
+    // shot), so the cache, not the device, is the "LAST STACK" source of truth.
+    let vibRepData = null, vibRepCache = null, vibRepOpenFlag = false;
+    let vibRepThreshPx = 1.0, vibRepSort = 'blur';
+    let vibRepRecording = false, vibRepLiveSid = 0;
+
+    function vibRepParse(buf) {
+        if (!buf || buf.byteLength < 48) return null;
+        const dv = new DataView(buf);
+        if (dv.getUint8(0) !== 0x56 || dv.getUint8(1) !== 0x48) return null;  // 'V','H'
+        if (dv.getUint8(2) !== 1) return null;                                // version
+        const m = {
+            state:      dv.getUint8(3),
+            stackId:    dv.getUint32(4,  true),
+            devMs:      dv.getUint32(8,  true),
+            startMs:    dv.getUint32(12, true),
+            epoch:      dv.getUint32(16, true),
+            frameCount: dv.getUint16(20, true),
+            totalFrames:dv.getUint16(22, true),
+            shutter:    dv.getUint16(24, true),
+            envCount:   dv.getUint16(26, true),
+            envFirstMs: dv.getUint32(28, true),
+            envLastMs:  dv.getUint32(32, true),
+            envPeriodMsX10: dv.getUint16(36, true),
+            fetchedAt:  Date.now()
+        };
+        if (buf.byteLength < 48 + m.frameCount * 12 + m.envCount * 4) return null;
+        const frames = [];
+        for (let i = 0; i < m.frameCount; i++) {
+            const o = 48 + i * 12;
+            frames.push({
+                n:  i + 1,
+                tMs: dv.getUint32(o, true),
+                bV: dv.getUint16(o + 4, true),   // centi-µm; 0xFFFF = not captured
+                bH: dv.getUint16(o + 6, true),
+                settle: dv.getUint16(o + 8, true),
+                fl: dv.getUint16(o + 10, true)
+            });
+        }
+        // 48 + 12k stays 4-byte aligned, so a typed view straight onto the
+        // buffer is legal — no copy.
+        const env = new Uint16Array(buf, 48 + m.frameCount * 12, m.envCount * 2);
+        return { meta: m, frames: frames, env: env };
+    }
+
+    async function vibRepFetch(auto) {
+        let fresh = null;
+        try {
+            const r = await calioAuthedFetch('/vibhist', { cache: 'no-store' });
+            if (r.ok) fresh = vibRepParse(await r.arrayBuffer());
+        } catch (e) {}
+        if (fresh && fresh.frames.length > 0) {
+            fresh.fovMm = (_stackDoneData && _stackDoneData.fov) || state._pendingFov || 0;
+            if (fresh.meta.state >= 2) {
+                vibRepCache = fresh;             // complete/aborted → becomes LAST STACK
+                vibRepData  = fresh;
+            } else if (!vibRepCache) {
+                vibRepData = fresh;              // mid-stack live peek, nothing cached yet
+            } else {
+                vibRepData = vibRepCache;        // recording → keep showing the last report
+            }
+        } else {
+            vibRepData = vibRepCache;
+        }
+        if (!vibRepData && auto) return;         // auto-open with nothing to show: stay quiet
+        vibRepOpen();
+    }
+
+    function vibRepOpen()  {
+        vibRepOpenFlag = true;
+        document.getElementById('vibrep').classList.add('open');
+        vibRepRender();
+    }
+    function vibRepClose() {
+        vibRepOpenFlag = false;
+        document.getElementById('vibrep').classList.remove('open');
+    }
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && vibRepOpenFlag) vibRepClose();
+    });
+    window.addEventListener('resize', () => { if (vibRepOpenFlag) vibRepDrawStrip(); });
+
+    function vibRepSetThresh(v) {
+        v = parseFloat(v);
+        if (!Number.isFinite(v) || v <= 0) return;
+        vibRepThreshPx = v;
+        document.getElementById('vibrep-thresh').value = Math.min(v, 5);
+        document.getElementById('vibrep-thresh-num').value = v;
+        vibRepRender();
+    }
+    function vibRepSortBy(k) {
+        vibRepSort = (k === vibRepSort && k === 'blur') ? 'n' : k;
+        vibRepRender();
+    }
+
+    // µm per pixel at the subject plane — same conversion the analyzer's
+    // pixel-blur row uses: object-plane px size = FOV mm × 1000 / image width.
+    function vibRepUmPerPx(d) {
+        const fov = d.fovMm || 0;
+        const w   = state.photoWidth || 6960;
+        return (fov > 0 && w > 0) ? fov * 1000 / w : 0;
+    }
+    // Worst-axis blur in µm; NaN when the record never got its hop backfill.
+    function vibRepBlurUm(f) {
+        if (f.bV === 0xFFFF && f.bH === 0xFFFF) return NaN;
+        const v = f.bV === 0xFFFF ? 0 : f.bV / 100;
+        const h = f.bH === 0xFFFF ? 0 : f.bH / 100;
+        return Math.max(v, h);
+    }
+    function vibRepWallClock(d, tMs) {
+        // Anchor: the browser received the response at fetchedAt, when the
+        // device clock read devMs. Everything else is offsets from there.
+        return new Date(d.meta.fetchedAt - (d.meta.devMs - d.meta.startMs - tMs));
+    }
+    function vibRepFmtT(ms) {
+        const s = ms / 1000;
+        return s >= 60 ? Math.floor(s / 60) + 'm' + ('0' + (s % 60).toFixed(0)).slice(-2) + 's'
+                       : s.toFixed(1) + 's';
+    }
+
+    function vibRepRender() {
+        const d = vibRepData;
+        const empty = document.getElementById('vibrep-empty');
+        const table = document.getElementById('vibrep-table');
+        const meta  = document.getElementById('vibrep-meta');
+        if (!d) {
+            empty.style.display = ''; table.style.display = 'none';
+            meta.innerText = 'no stack recorded yet';
+            document.getElementById('vibrep-flagged').innerText = '--';
+            vibRepDrawStrip();
+            return;
+        }
+        empty.style.display = 'none'; table.style.display = '';
+
+        const umPerPx = vibRepUmPerPx(d);
+        document.getElementById('vibrep-umpx').innerText =
+            umPerPx > 0 ? umPerPx.toFixed(2) : '?';
+        const threshUm = umPerPx > 0 ? vibRepThreshPx * umPerPx : Infinity;
+
+        // Meta line. Wall-clock start comes from the millis mapping; the SNTP
+        // epoch (when synced) is only cross-checked against it and surfaced if
+        // they disagree by more than a few seconds.
+        const start = vibRepWallClock(d, 0);
+        const durMs = d.frames.length ? d.frames[d.frames.length - 1].tMs : 0;
+        let mtxt = d.frames.length + ' frames · ' + vibRepFmtT(durMs) +
+                   ' · started ' + start.toLocaleTimeString() +
+                   ' · shutter 1/' + d.meta.shutter;
+        if (d.meta.epoch) {
+            const ntpStart = d.meta.epoch * 1000;
+            if (Math.abs(ntpStart - start.getTime()) > 3000)
+                mtxt += ' · NTP says ' + new Date(ntpStart).toLocaleTimeString();
+        }
+        if (d.meta.state === 1) mtxt = 'RECORDING · ' + mtxt;
+        if (d.meta.state === 3) mtxt += ' · ABORTED (partial)';
+        if (d.meta.totalFrames > d.meta.frameCount)
+            mtxt += ' · ' + (d.meta.totalFrames - d.meta.frameCount) + ' frames past cap not recorded';
+        meta.innerText = mtxt;
+
+        // Score + sort + render rows.
+        const rows = d.frames.slice();
+        const key = vibRepSort;
+        rows.sort((a, b) =>
+            key === 'blur'   ? (vibRepBlurUm(b) || 0) - (vibRepBlurUm(a) || 0) :
+            key === 'settle' ? b.settle - a.settle :
+            key === 't'      ? a.tMs - b.tMs : a.n - b.n);
+        let flagged = 0, html = '';
+        for (const f of rows) {
+            const bu  = vibRepBlurUm(f);
+            const isF = Number.isFinite(bu) && bu > threshUm;
+            if (isF) flagged++;
+            const px  = (Number.isFinite(bu) && umPerPx > 0) ? (bu / umPerPx).toFixed(2) : '--';
+            html += '<tr' + (isF ? ' class="vr-flag"' : '') + '><td>' + f.n + '</td>' +
+                '<td>+' + (f.tMs / 1000).toFixed(1) + '</td>' +
+                '<td>' + vibRepWallClock(d, f.tMs).toLocaleTimeString() + '</td>' +
+                '<td>' + (f.bV === 0xFFFF ? '--' : (f.bV / 100).toFixed(2)) + '</td>' +
+                '<td>' + (f.bH === 0xFFFF ? '--' : (f.bH / 100).toFixed(2)) + '</td>' +
+                '<td>' + px + '</td>' +
+                '<td>' + ((f.fl & 2) ? f.settle : '--') + '</td></tr>';
+        }
+        document.getElementById('vibrep-rows').innerHTML = html;
+        document.getElementById('vibrep-flagged').innerText =
+            flagged ? flagged + ' flagged' : 'none flagged';
+        vibRepDrawStrip();
+    }
+
+    function vibRepDrawStrip() {
+        const c = document.getElementById('vibrep-strip');
+        if (!c || !vibRepOpenFlag) return;
+        c.width  = c.clientWidth  || 600;
+        c.height = c.clientHeight || 110;
+        const g = c.getContext('2d'), W = c.width, H = c.height;
+        g.fillStyle = '#040d0b'; g.fillRect(0, 0, W, H);
+        const d = vibRepData;
+        if (!d) return;
+        const m = d.meta;
+        const durMs = Math.max(
+            d.frames.length ? d.frames[d.frames.length - 1].tMs : 0,
+            m.envCount ? (m.envLastMs - m.startMs) : 0, 1);
+        const mL = 6, mR = 6, mT = 8, mB = 16;
+        const pw = W - mL - mR, ph = H - mT - mB;
+        const x = t => mL + pw * t / durMs;
+
+        // Envelope traces — V green, H blue. Y autoscaled to the p98 value so
+        // one monster spike doesn't flatten the whole strip.
+        if (m.envCount > 1) {
+            const vals = [];
+            for (let i = 0; i < m.envCount * 2; i++) vals.push(d.env[i]);
+            vals.sort((a, b) => a - b);
+            const yMax = Math.max(vals[Math.floor(vals.length * 0.98)] * 1.3, 10);
+            const envT = i => (m.envFirstMs - m.startMs) +
+                              (m.envLastMs - m.envFirstMs) * i / (m.envCount - 1);
+            for (const ch of [0, 1]) {
+                g.strokeStyle = ch ? '#4db8ff' : '#3ddb7a';
+                g.lineWidth = 1.2; g.beginPath();
+                for (let i = 0; i < m.envCount; i++) {
+                    const yv = Math.min(d.env[2 * i + ch] / yMax, 1);
+                    const xx = x(envT(i)), yy = mT + ph * (1 - yv);
+                    i ? g.lineTo(xx, yy) : g.moveTo(xx, yy);
+                }
+                g.stroke();
+            }
+        }
+        // Frame ticks along the bottom — flagged ones tall and red.
+        const umPerPx = vibRepUmPerPx(d);
+        const threshUm = umPerPx > 0 ? vibRepThreshPx * umPerPx : Infinity;
+        for (const f of d.frames) {
+            const bu = vibRepBlurUm(f);
+            const isF = Number.isFinite(bu) && bu > threshUm;
+            g.strokeStyle = isF ? '#ff6644' : '#2a5e58';
+            g.lineWidth = isF ? 2 : 1;
+            g.beginPath();
+            g.moveTo(x(f.tMs), H - mB + (isF ? 0 : 6));
+            g.lineTo(x(f.tMs), H - 3);
+            g.stroke();
+        }
+        g.fillStyle = '#7a958c'; g.font = '10px monospace';
+        g.fillText('0s', mL, H - 5);
+        const endLbl = vibRepFmtT(durMs);
+        g.fillText(endLbl, W - mR - g.measureText(endLbl).width, H - 5);
+    }
+
+    function vibRepCopy() {
+        const d = vibRepData;
+        if (!d) return;
+        const umPerPx = vibRepUmPerPx(d);
+        const threshUm = umPerPx > 0 ? vibRepThreshPx * umPerPx : Infinity;
+        const lines = ['AutoFOV stack vibration report'];
+        lines.push('started ' + vibRepWallClock(d, 0).toLocaleString() +
+                   '  ·  ' + d.frames.length + ' frames' +
+                   '  ·  threshold ' + vibRepThreshPx + ' px (' +
+                   (umPerPx > 0 ? (vibRepThreshPx * umPerPx).toFixed(2) : '?') + ' µm)');
+        const flagged = d.frames.filter(f => {
+            const bu = vibRepBlurUm(f);
+            return Number.isFinite(bu) && bu > threshUm;
+        }).sort((a, b) => vibRepBlurUm(b) - vibRepBlurUm(a));
+        lines.push('flagged ' + flagged.length + ' frames (worst first):');
+        for (const f of flagged) {
+            lines.push('  #' + f.n + '  +' + (f.tMs / 1000).toFixed(1) + 's  ' +
+                       vibRepWallClock(d, f.tMs).toLocaleTimeString() +
+                       '  V ' + (f.bV === 0xFFFF ? '--' : (f.bV / 100).toFixed(2)) +
+                       'µm  H ' + (f.bH === 0xFFFF ? '--' : (f.bH / 100).toFixed(2)) +
+                       'µm  ' + (umPerPx > 0 ? (vibRepBlurUm(f) / umPerPx).toFixed(2) + 'px' : ''));
+        }
+        lines.push('cull: ' + flagged.map(f => f.n).sort((a, b) => a - b).join(','));
+        const text = lines.join('\n');
+        try {
+            navigator.clipboard.writeText(text).catch(() => { vibRepCopyFallback(text); });
+        } catch (e) { vibRepCopyFallback(text); }
+    }
+    function vibRepCopyFallback(text) {
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            ta.setAttribute('readonly', '');
+            document.body.appendChild(ta);
+            ta.select(); ta.setSelectionRange(0, text.length);
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (!ok) showDiagCopyModal(text);
+        } catch (e) { showDiagCopyModal(text); }
+    }
 
     function vibDrawSpectrum(updateScale = true) {
         const c = document.getElementById('vibp-spec');
@@ -11110,6 +11477,15 @@
                 vibBlurEma = null;
             }
         }
+        // V12.6: live frames-shot counter (0 = no active sequence).
+        if (data.sp !== undefined) {
+            state.stackPulses = data.sp;
+            if (vibRepRecording && vibRepOpenFlag && data.sp > 0) {
+                const meta = document.getElementById('vibrep-meta');
+                if (meta) meta.innerText = 'RECORDING · frame ' + data.sp +
+                    ' · report opens when the stack completes';
+            }
+        }
         if (data.vs  !== undefined) {
             vibSpec = data.vs;
             if (state.screen === 'screen-vibration') vibSchedulePaint(VP_SPEC_BASIC);
@@ -11311,7 +11687,18 @@
                 stackStartActive = false;
                 applyStackStartState();
             }
+            // V12.6: fetch the per-frame vibration history and auto-open the
+            // report. The short delay lets vibTask freeze the history (state 2)
+            // so the fetch is guaranteed race-free.
+            vibRepRecording = false;
+            setTimeout(() => vibRepFetch(true), 800);
         }
+        // V12.6: one-shot stack lifecycle events for the vibration report.
+        if (data.stackStart) {
+            vibRepRecording = true;
+            vibRepLiveSid = data.sid || 0;   // /vibhist stackId must match this
+        }
+        if (data.stackAbort) vibRepRecording = false;
         // TEST ALERT button (device or web) — BLE-free beep confirmation.
         if (data.beep) playAlertBeeps();
 
