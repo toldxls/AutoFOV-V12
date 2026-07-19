@@ -2516,6 +2516,8 @@
       #vibrep .vr-btn { cursor:pointer; background:#13403a; border:1px solid #00c8b4; color:#9fe6cf;
         padding:5px 12px; border-radius:4px; font-size:11px; font-weight:bold; }
       #vibrep .vr-btn:active { filter:brightness(1.3); }
+      #vibrep-hist { background:#08140f; border:1px solid #2a7a6a; color:#cfe7df;
+        font-family:monospace; font-size:11px; padding:3px 4px; border-radius:3px; max-width:200px; }
       #vibrep-strip-wrap { flex:0 0 auto; padding:10px 18px 4px; }
       #vibrep-strip { display:block; width:100%; height:110px;
         background:#040d0b; border:1px solid #1f3a33; border-radius:6px; }
@@ -2583,9 +2585,11 @@
         <b style="color:#3ddb7a;">Buttons</b><br>
         <b>COPY CULL LIST</b> &mdash; flagged frames + a bare comma list for
         batch tools. <b>SAVE PNG</b> &mdash; the stack-summary card (same as
-        the stack-done popup), available any time. The report shows the last
-        <i>completed</i> stack: a stray test shot can't overwrite it, and it
-        survives page reloads.
+        the stack-done popup), available any time. <b>SAVED</b> &mdash; the
+        last 8 completed stacks, archived in this browser: they survive new
+        stacks, page reloads and device resets (the device itself only holds
+        the last stack, in volatile memory). A stray test shot can't overwrite
+        any of it.
         <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibrep-controls">
@@ -2599,6 +2603,8 @@
         <span class="vr-btn" onclick="vibRepCopy()" title="Copy the flagged-frame cull list to the clipboard">COPY CULL LIST</span>
         <span class="vr-btn" id="vibrep-savepng" onclick="vibRepSavePng()"
               title="Save the stack-summary PNG card (same card as the stack-done popup)">SAVE PNG</span>
+        <select id="vibrep-hist" onchange="vibRepLoadSaved(this.value)"
+                title="Saved reports — kept in this browser, so they survive new stacks and device resets"></select>
       </div>
       <div id="vibrep-strip-wrap"><canvas id="vibrep-strip"></canvas></div>
       <div id="vibrep-body">
@@ -2609,9 +2615,9 @@
             <th onclick="vibRepSortBy('n')" title="Sort by photo number">PHOTO #</th>
             <th onclick="vibRepSortBy('t')" title="Sort by time">TIME +s</th>
             <th>CLOCK</th>
-            <th onclick="vibRepSortBy('blur')" title="Sort by blur (worst first)">BLUR V &micro;m</th>
-            <th onclick="vibRepSortBy('blur')">BLUR H &micro;m</th>
-            <th onclick="vibRepSortBy('blur')">PX EQUIV</th>
+            <th onclick="vibRepSortBy('blurV')" title="Sort by vertical blur (worst first)">BLUR V &micro;m</th>
+            <th onclick="vibRepSortBy('blurH')" title="Sort by horizontal blur (worst first)">BLUR H &micro;m</th>
+            <th onclick="vibRepSortBy('blur')" title="Sort by worst-axis pixel blur (worst first)">PX EQUIV</th>
             <th onclick="vibRepSortBy('settle')"
                 title="Pre-shot ring-down time, 77 ms steps. '&#8212;' = no clean decay found in the 2.5 s window — normal on a quiet bench (flat noise never 'decays'); suspect only when blur is also high. Click to sort.">SETTLE ms</th>
           </tr></thead>
@@ -4049,13 +4055,82 @@
         return { meta: m, frames: frames, env: env };
     }
 
+    // ── Saved-report archive (localStorage). The device keeps only the LAST
+    // stack, in volatile PSRAM — a new stack or any reset wipes it. Archiving
+    // the raw /vibhist binary browser-side (~3-16 KB each, capped at 8) makes
+    // past reports survive both, with zero device flash wear.
+    const VIBREP_SAVED_MAX = 8;
+    function vibRepB64(buf) {
+        const u8 = new Uint8Array(buf); let s = '';
+        for (let i = 0; i < u8.length; i += 8192)
+            s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+        return btoa(s);
+    }
+    function vibRepUnB64(b64) {
+        const bin = atob(b64), buf = new ArrayBuffer(bin.length), u8 = new Uint8Array(buf);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        return buf;
+    }
+    function vibRepSavedList() {
+        try { return JSON.parse(localStorage.getItem('afovVibReports') || '[]'); }
+        catch (e) { return []; }
+    }
+    function vibRepStoreReport(buf, d) {
+        const key = d.meta.stackId + '_' + d.meta.startMs + '_' + d.meta.frameCount;
+        const entry = {
+            k: key, ts: vibRepWallClock(d, 0).getTime(),
+            n: d.frames.length,
+            durMs: d.frames.length ? d.frames[d.frames.length - 1].tMs : 0,
+            fov: d.fovMm || 0, sd: d.stackDone || null,
+            b64: vibRepB64(buf)
+        };
+        let list = vibRepSavedList().filter(e => e.k !== key);   // re-fetch of same stack replaces
+        list.unshift(entry);
+        list = list.slice(0, VIBREP_SAVED_MAX);
+        try { localStorage.setItem('afovVibReports', JSON.stringify(list)); }
+        catch (e) {
+            // Quota — retry with just the newest two before giving up.
+            try { localStorage.setItem('afovVibReports', JSON.stringify(list.slice(0, 2))); }
+            catch (e2) {}
+        }
+        vibRepPopulateHist();
+    }
+    function vibRepPopulateHist() {
+        const sel = document.getElementById('vibrep-hist');
+        if (!sel) return;
+        const list = vibRepSavedList();
+        let html = '<option value="">SAVED (' + list.length + ')</option>';
+        list.forEach((e, i) => {
+            const when = new Date(e.ts).toLocaleString([], {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            html += '<option value="' + i + '">' + when + ' · ' + e.n + 'f · ' +
+                    vibRepFmtT(e.durMs) + '</option>';
+        });
+        sel.innerHTML = html;
+    }
+    function vibRepLoadSaved(v) {
+        if (v === '' || v === undefined) return;
+        const e = vibRepSavedList()[+v];
+        if (!e) return;
+        const d = vibRepParse(vibRepUnB64(e.b64));
+        if (!d) return;
+        // The archived binary carries device-relative times from a session that
+        // may be long gone — anchor wall clocks to the archived start instead.
+        d.meta.fetchedAt = e.ts + vibRepDMs(d.meta.devMs, d.meta.startMs);
+        d.fovMm = e.fov || (d.meta.fovCm ? d.meta.fovCm / 100 : 0);
+        d.stackDone = e.sd;
+        vibRepData = d;
+        vibRepSelN = 0;
+        vibRepRender();
+    }
+
     // Fetch + parse + cache-decision. Returns true when a report worth keeping
     // (complete, or aborted with a meaningful frame count) was cached.
     async function vibRepFetchCore() {
-        let fresh = null;
+        let fresh = null, freshBuf = null;
         try {
             const r = await calioAuthedFetch('/vibhist', { cache: 'no-store' });
-            if (r.ok) fresh = vibRepParse(await r.arrayBuffer());
+            if (r.ok) { freshBuf = await r.arrayBuffer(); fresh = vibRepParse(freshBuf); }
         } catch (e) {}
         if (fresh && fresh.frames.length > 0) {
             // µm/px scale priority: the FOV the firmware stamped at stack end
@@ -4068,15 +4143,21 @@
             // shot's 1-frame state-3 history must NOT displace the last report.
             const keep = fresh.meta.state === 2 ||
                         (fresh.meta.state === 3 && fresh.frames.length >= 10);
-            if (keep) { vibRepCache = fresh; vibRepData = fresh; return true; }
+            if (keep) {
+                vibRepCache = fresh; vibRepData = fresh;
+                vibRepStoreReport(freshBuf, fresh);   // archive → survives resets/new stacks
+                return true;
+            }
             if (fresh.meta.state === 1 && !vibRepCache) { vibRepData = fresh; return false; }
         }
         vibRepData = vibRepCache;
         return false;
     }
-    // Manual LAST STACK button — single fetch, open whatever we have.
+    // Manual LAST STACK button — single fetch, open whatever we have; fall
+    // back to the newest archived report (device may have reset since).
     async function vibRepFetch(auto) {
         await vibRepFetchCore();
+        if (!vibRepData && vibRepSavedList().length) vibRepLoadSaved(0);
         if (!vibRepData && auto) return;         // auto-open with nothing to show: stay quiet
         vibRepOpen();
     }
@@ -4107,6 +4188,7 @@
     function vibRepOpen()  {
         vibRepOpenFlag = true;
         document.getElementById('vibrep').classList.add('open');
+        vibRepPopulateHist();
         if (!_vibRepStripBound) {
             _vibRepStripBound = true;
             const c = document.getElementById('vibrep-strip');
@@ -4156,7 +4238,8 @@
         vibRepRender();
     }
     function vibRepSortBy(k) {
-        vibRepSort = (k === vibRepSort && k === 'blur') ? 'n' : k;
+        // Re-clicking the active metric column returns to photo order.
+        vibRepSort = (k === vibRepSort && k !== 'n' && k !== 't') ? 'n' : k;
         vibRepRender();
     }
 
@@ -4237,8 +4320,13 @@
         if (unmeasured)
             meta.innerText = mtxt + ' · ' + unmeasured + ' unmeasured';
         const key = vibRepSort;
+        // Per-axis sort values: 0xFFFF (not captured) sinks to the bottom.
+        const axV = f => f.bV === 0xFFFF ? -1 : f.bV;
+        const axH = f => f.bH === 0xFFFF ? -1 : f.bH;
         rows.sort((a, b) =>
             key === 'blur'   ? (vibRepBlurUm(b) || 0) - (vibRepBlurUm(a) || 0) :
+            key === 'blurV'  ? axV(b) - axV(a) :
+            key === 'blurH'  ? axH(b) - axH(a) :
             key === 'settle' ? b.settle - a.settle :
             key === 't'      ? a.tMs - b.tMs : a.n - b.n);
         let flagged = 0, html = '';

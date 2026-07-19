@@ -8,7 +8,7 @@ import gzip, os, re, shutil, subprocess, tempfile
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
-VERSION_MINOR = 4   # bump manually for milestone releases
+VERSION_MINOR = 5   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
 # REAL commit count at the bump commit so patch = real_count - base.  Without
 # this, each new series would inherit the old running count instead of starting
@@ -29,7 +29,12 @@ VERSION_MINOR = 4   # bump manually for milestone releases
 # 2026-07-06: base rebased 166 -> 155 when ci:/chore:/docs: tooling & docs
 # commits were also excluded (they don't change firmware, so they must not bump
 # the patch). 212 real commits at v12.4.57: 212 - 155 = 57.
-VERSION_PATCH_BASE = 155
+# 12.5: deep per-stack vibration history — /vibhist binary endpoint, the web
+# cull report (per-frame blur, timeline strip, threshold flagging, saved-report
+# archive), SNTP stack-start stamp, stackStart/sp telemetry.
+# 2026-07-19: base rebased 155 -> 236 at the 12.5 bump (236 real commits at
+# v12.5.0).
+VERSION_PATCH_BASE = 236
 # Subject prefixes excluded from the version count — commits that don't change
 # firmware behaviour, so they must not bump the patch number:
 #   * release.sh's follow-up `build: regenerate web_ui.h` artifact commits
