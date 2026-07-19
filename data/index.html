@@ -959,10 +959,7 @@
                      shared "?" help badge so every menu's help reads the same). -->
                 <div class="help-btn" style="position:absolute; left: 118px; top: 8px;"
                      onclick="openCalHelp()" title="How to calibrate">?</div>
-                <!-- V12.3: backup / restore / share calibration (firmware /calib endpoints) -->
-                <div class="gfx-btn" style="left: 148px; top: 5px; width: 87px; height: 26px;
-                     background:#0a3344; border:1px solid #2a7a9a; font-size:10px;"
-                     onclick="calioOpen()">CAL I/O</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
                 <!-- Rows are tap-to-type (shared numeric overlay) — no arrow steppers
                      here, unlike the device, which has no keyboard. Tick pitch sits
@@ -994,7 +991,7 @@
                 <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #780000;"
                      onclick="resetAll()">RESET ALL</div>
                 <!-- Three secondary analysis tools, 68 px each — the only way to fit a
-                     third without disturbing START CAL / CANCEL (no free vertical band
+                     third without disturbing START CAL / CAL I/O (no free vertical band
                      on this screen is wider than 14 px). -->
                 <div class="gfx-btn flat" style="left: 10px; top: 250px; width: 68px; height: 26px; font-size: 10px;"
                      onclick="openCentering()" title="Left/right lens centering from a calibration set">&#9678; CENTER</div>
@@ -1002,8 +999,10 @@
                      onclick="openMtf()" title="Slanted-edge MTF / resolution from a USAF target shot"><svg width="16" height="12" viewBox="0 0 20 14" style="margin-right: 4px; flex: none;" aria-hidden="true"><rect x="2" y="0" width="3" height="14" fill="#000"/><rect x="8.5" y="0" width="3" height="14" fill="#000"/><rect x="15" y="0" width="3" height="14" fill="#000"/><path d="M0 2.5 C 7 3, 9 11, 20 11.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>MTF</div>
                 <div class="gfx-btn flat" style="left: 162px; top: 250px; width: 68px; height: 26px; font-size: 10px;"
                      onclick="openFocus()" title="Rank candidate shots; measure out-of-plane tilt of the slide">&#9679; FOCUS</div>
-                <div class="gfx-btn" style="left: 60px; top: 285px; width: 120px; height: 25px; background: #FF0000;"
-                     onclick="switchScreen('screen-main')">CANCEL</div>
+                <!-- V12.3: backup / restore / share calibration (firmware /calib endpoints) -->
+                <div class="gfx-btn" style="left: 60px; top: 285px; width: 120px; height: 25px;
+                     background:#0a3344; border:1px solid #2a7a9a; font-size:10px;"
+                     onclick="calioOpen()">CAL I/O</div>
             </div>
 
             <!-- ===================== CAL RUN ===================== -->
@@ -2567,6 +2566,14 @@
         <div id="mtf-close" onclick="closeMtf()">CLOSE &#10005;</div>
       </div>
       <div id="mtf-help" onclick="mtfToggleHelp()">
+        <b style="color:#3ddb7a;">What it does</b><br>
+        Measures the real-world <b>resolving power</b> of the whole imaging train
+        &mdash; objective, relay/tube optics and camera together &mdash; from a photo of a
+        USAF-1951 target, via the slanted-edge method. It plots contrast vs.
+        spatial frequency (the MTF curve) against the diffraction-limited ideal
+        for your objective and boils it down to <b>MTF50 / MTF10 / MTF5</b> and
+        the <b>equivalent NA</b> the system actually delivers &mdash; how much of the
+        objective&rsquo;s theoretical resolution survives the rest of the stack.<br><br>
         <b style="color:#3ddb7a;">Shooting</b><br>
         Photograph a USAF-1951 target: pick an element that fills most of the frame
         and <b>keep it near the frame center</b> — edge/periphery elements read lower
