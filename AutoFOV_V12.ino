@@ -4353,7 +4353,10 @@ void vibBegin() {
   // feature only (vibHistReady false → vibTask skips recording, /vibhist
   // reports state 0); the rest of the vib monitor is unaffected.
   size_t histFB = (size_t)VIB_HIST_FRAMES_MAX * sizeof(VibFrameRec);
-  size_t histEB = (size_t)VIB_HIST_ENV_MAX * 2 * sizeof(uint16_t);
+  // 4 × u16 per envelope entry (wire format v2): {vRms mg×100, hRms mg×100,
+  // vDisp nm, hDisp nm} — acceleration AND true broadband displacement, so the
+  // report's mg/µm toggle shows genuinely different curves.
+  size_t histEB = (size_t)VIB_HIST_ENV_MAX * 4 * sizeof(uint16_t);
   vibHistFrames = (VibFrameRec*)ps_malloc(histFB);
   if (!vibHistFrames) vibHistFrames = (VibFrameRec*)malloc(histFB);
   vibHistEnv = (uint16_t*)ps_malloc(histEB);
@@ -4890,12 +4893,17 @@ void vibTask(void *pvParameters) {
       float horizMg = sqrtf((float)(sumSqH / VIB_FFT_SIZE)) * VIB_MG_PER_LSB;
       vibHorizRms.store((uint32_t)lroundf(horizMg * 100.0f));
 
-      // ── V12.6: deep-history envelope — one {V,H} RMS pair per hop while a
-      // stack is recording. At capacity, decimate in place (average adjacent
-      // pairs, halve the count) AND drop the append rate to match — entry
-      // spacing must stay uniform because the report's timeline linearly
-      // interpolates entry times between envFirstMs and envLastMs. envHopCnt
-      // phase-gates appends to every 2^shift-th hop after each decimation.
+      // ── V12.6: deep-history envelope — one entry of 4 × u16 per hop while a
+      // stack is recording: {vRms mg×100, hRms mg×100, vDisp nm, hDisp nm}.
+      // Displacement is the true broadband per-bin double integration
+      // (amplitude/ω², noise floor subtracted, RMS over bins ≥ VIB_DISP_MIN_BIN
+      // — the analyzer's µm view without shutter weighting), so the report's
+      // µm curve is genuinely different from the mg curve, not a rescale.
+      // At capacity, decimate in place (average adjacent entries, halve the
+      // count) AND drop the append rate to match — entry spacing must stay
+      // uniform because the report linearly interpolates entry times between
+      // envFirstMs and envLastMs. envHopCnt phase-gates appends to every
+      // 2^shift-th hop after each decimation.
       if (inStack && vibHistReady &&
           vibHistState.load(std::memory_order_relaxed) == 1 &&
           (envHopCnt++ & ((1u << vibHistEnvShift) - 1)) == 0) {
@@ -4904,8 +4912,9 @@ void vibTask(void *pvParameters) {
           // 2925 is odd — the unpaired last entry is dropped (one 0.3 s hop
           // per 15 min); entries 0..2923 average pairwise.
           for (uint32_t i = 0; i < VIB_HIST_ENV_MAX / 2; i++) {
-            vibHistEnv[2*i]   = (uint16_t)(((uint32_t)vibHistEnv[4*i]   + vibHistEnv[4*i+2]) / 2);
-            vibHistEnv[2*i+1] = (uint16_t)(((uint32_t)vibHistEnv[4*i+1] + vibHistEnv[4*i+3]) / 2);
+            for (int c = 0; c < 4; c++)
+              vibHistEnv[4*i+c] =
+                  (uint16_t)(((uint32_t)vibHistEnv[8*i+c] + vibHistEnv[8*i+4+c]) / 2);
           }
           n = VIB_HIST_ENV_MAX / 2;
           vibHistEnvShift++;
@@ -4913,9 +4922,29 @@ void vibTask(void *pvParameters) {
           // fetch can't read [n, MAX) as if still valid.
           vibHistEnvCount.store(n, std::memory_order_release);
         }
+        // Broadband displacement RMS per channel (floor-subtracted; the floor
+        // is frozen for the whole stack, so entries are mutually comparable).
+        const uint16_t *dstH2 = vibSpecH[specSeq & 1];
+        const float k_a2 = 9.81e-3f / 10.0f;          // deci-mg → m/s²
+        double dSqV = 0.0, dSqH = 0.0;
+        for (int b = VIB_DISP_MIN_BIN; b < VIB_FFT_BINS; b++) {
+          const float omega = 2.0f * (float)M_PI * (b * VIB_BIN_HZ);
+          const float invW2 = 1.0f / (omega * omega);
+          float aV = (float)dst[b]   - vibBaseV[b]; if (aV < 0) aV = 0;
+          float aH = (float)dstH2[b] - vibBaseH[b]; if (aH < 0) aH = 0;
+          const float dV = (aV * k_a2) * invW2;       // m, amplitude
+          const float dH = (aH * k_a2) * invW2;
+          dSqV += (double)dV * dV;
+          dSqH += (double)dH * dH;
+        }
+        // amplitude → RMS (√(Σd²/2)), metres → nm.
+        float dispVnm = sqrtf((float)(dSqV * 0.5)) * 1e9f;
+        float dispHnm = sqrtf((float)(dSqH * 0.5)) * 1e9f;
         float cV = rmsMg * 100.0f, cH = horizMg * 100.0f;
-        vibHistEnv[2*n]   = (cV >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cV);
-        vibHistEnv[2*n+1] = (cH >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cH);
+        vibHistEnv[4*n]   = (cV >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cV);
+        vibHistEnv[4*n+1] = (cH >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cH);
+        vibHistEnv[4*n+2] = (dispVnm >= 65534.0f) ? 0xFFFE : (uint16_t)lroundf(dispVnm);
+        vibHistEnv[4*n+3] = (dispHnm >= 65534.0f) ? 0xFFFE : (uint16_t)lroundf(dispHnm);
         if (n == 0) vibHistEnvFirstMs = millis();
         vibHistEnvLastMs = millis();
         vibHistEnvCount.store(n + 1, std::memory_order_release);

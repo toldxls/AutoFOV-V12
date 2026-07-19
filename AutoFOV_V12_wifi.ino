@@ -1790,7 +1790,8 @@ static void startFullServer() {
     // spectrum frame doc style):
     //
     //   byte  0-1  : magic 'V','H'
-    //   byte  2    : version (= 1)
+    //   byte  2    : version (= 2; v1 envelope entries were 2 × u16 mg-only —
+    //                the dashboard parser still accepts archived v1 blobs)
     //   byte  3    : state — 0 empty, 1 recording (live fetch), 2 complete,
     //                3 aborted (partial data kept)
     //   byte  4-7  : stackId (vibStackStartSeq of this history — staleness echo)
@@ -1812,7 +1813,8 @@ static void startFullServer() {
     //                stack's own f₀ even on archived reports; 0 = unknown
     //   byte 42-47 : reserved (= 0)
     //   byte 48 …  : frameCount × VibFrameRec (12 B, see main tab)
-    //   then       : envCount × { u16 vRms, u16 hRms }  (mg × 100)
+    //   then       : envCount × { u16 vRms mg×100, u16 hRms mg×100,
+    //                             u16 vDisp nm, u16 hDisp nm }   (8 B, v2)
     //
     // Race notes: the whole payload is memcpy'd into a PSRAM snapshot buffer
     // HERE, at request time — the chunked send then reads only the snapshot,
@@ -1833,7 +1835,7 @@ static void startFullServer() {
             ec = vibHistEnvCount.load(std::memory_order_acquire);
         }
         uint32_t u32; uint16_t u16;
-        hb[0] = 'V'; hb[1] = 'H'; hb[2] = 1;
+        hb[0] = 'V'; hb[1] = 'H'; hb[2] = 2;   // v2: 8-byte envelope entries
         hb[3] = vibHistReady ? (uint8_t)vibHistState.load() : 0;
         memcpy(hb + 4, &sid, 4);
         u32 = millis();                       memcpy(hb + 8,  &u32, 4);
@@ -1853,7 +1855,7 @@ static void startFullServer() {
         u16 = (uint16_t)lroundf(vibResonanceHz * 10.0f); memcpy(hb + 40, &u16, 2);
 
         const size_t fBytes = (size_t)fc * sizeof(VibFrameRec);
-        const size_t eBytes = (size_t)ec * 4;
+        const size_t eBytes = (size_t)ec * 8;   // v2: 4 × u16 per entry
         const size_t total  = sizeof(hb) + fBytes + eBytes;
         uint8_t* snap = (uint8_t*)ps_malloc(total);
         if (!snap) snap = (uint8_t*)malloc(total);

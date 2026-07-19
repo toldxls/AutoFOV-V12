@@ -2584,10 +2584,11 @@
         <b style="color:#ff6644;">tall red</b> = flagged. Hover for a time
         cursor; <b>click a table row</b> (or the strip) to pin a gold marker —
         the translucent gold band is the history window that frame's blur was
-        measured from. The <b>&micro;m / mg</b> toggle switches the cursor
-        readout between stage displacement (&micro;m at the stack's locked
-        resonance f&#8320; &mdash; comparable to the blur columns; the default)
-        and raw acceleration (mg). A strip spike with LOW blur on the nearby
+        measured from. The <b>&micro;m / mg</b> toggle switches the curves
+        between stage <b>displacement</b> (&micro;m, per-frequency 1/f&sup2;
+        integration — comparable to the blur columns; the default) and raw
+        <b>acceleration</b> (mg): the two genuinely differ, µm emphasizes slow
+        motion, mg emphasizes buzz. A strip spike with LOW blur on the nearby
         frame is normal, not a miss: blur measures <i>displacement during the
         shutter</i> — high frequencies shrink by 1/f&sup2; and slow sway barely
         moves within a 1/125 s exposure. Spikes between exposures (the stage
@@ -4031,8 +4032,13 @@
         if (!buf || buf.byteLength < 48) return null;
         const dv = new DataView(buf);
         if (dv.getUint8(0) !== 0x56 || dv.getUint8(1) !== 0x48) return null;  // 'V','H'
-        if (dv.getUint8(2) !== 1) return null;                                // version
+        const ver = dv.getUint8(2);
+        // v1: envelope = {vMg,hMg} (2×u16). v2: + true broadband displacement
+        // {vMg,hMg,vDispNm,hDispNm} (4×u16). Archived v1 blobs stay readable.
+        if (ver !== 1 && ver !== 2) return null;
+        const stride = ver === 2 ? 4 : 2;
         const m = {
+            ver: ver, envStride: stride,
             state:      dv.getUint8(3),
             stackId:    dv.getUint32(4,  true),
             devMs:      dv.getUint32(8,  true),
@@ -4049,7 +4055,7 @@
             resHz:      dv.getUint16(40, true) / 10, // resonance lock at stack time, 0 = unknown
             fetchedAt:  Date.now()
         };
-        if (buf.byteLength < 48 + m.frameCount * 12 + m.envCount * 4) return null;
+        if (buf.byteLength < 48 + m.frameCount * 12 + m.envCount * stride * 2) return null;
         const frames = [];
         for (let i = 0; i < m.frameCount; i++) {
             const o = 48 + i * 12;
@@ -4064,7 +4070,7 @@
         }
         // 48 + 12k stays 4-byte aligned, so a typed view straight onto the
         // buffer is legal — no copy.
-        const env = new Uint16Array(buf, 48 + m.frameCount * 12, m.envCount * 2);
+        const env = new Uint16Array(buf, 48 + m.frameCount * 12, m.envCount * stride);
         return { meta: m, frames: frames, env: env };
     }
 
@@ -4430,16 +4436,23 @@
         // the whole strip.
         const envT = i => vibRepDMs(m.envFirstMs, m.startMs) +
                           vibRepDMs(m.envLastMs, m.envFirstMs) * i / (m.envCount - 1);
+        // Channel selector: v2 blobs carry a real displacement pair, so the µm
+        // view plots a genuinely different curve (low frequencies emphasized by
+        // the 1/ω² integration) — not a rescale of the mg one. v1 archives
+        // only have mg; they keep the mg shape in either mode.
+        const stride = m.envStride || 2;
+        const useDisp = vibRepUnitsUm && stride === 4;
+        const envVal = (i, ch) => d.env[stride * i + (useDisp ? 2 : 0) + ch];
         if (m.envCount > 1) {
             const vals = [];
-            for (let i = 0; i < m.envCount * 2; i++) vals.push(d.env[i]);
+            for (let i = 0; i < m.envCount; i++) { vals.push(envVal(i, 0)); vals.push(envVal(i, 1)); }
             vals.sort((a, b) => a - b);
             const yMax = Math.max(vals[Math.floor(vals.length * 0.98)] * 1.3, 10);
             for (const ch of [0, 1]) {
                 g.strokeStyle = ch ? '#ff5bd0' : '#36d6ff';
                 g.lineWidth = 1.2; g.beginPath();
                 for (let i = 0; i < m.envCount; i++) {
-                    const yv = Math.min(d.env[2 * i + ch] / yMax, 1);
+                    const yv = Math.min(envVal(i, ch) / yMax, 1);
                     const xx = x(envT(i)), yy = mT + ph * (1 - yv);
                     i ? g.lineTo(xx, yy) : g.moveTo(xx, yy);
                 }
@@ -4506,12 +4519,21 @@
                 const span = vibRepDMs(m.envLastMs, m.envFirstMs);
                 const ei = Math.round((ct - vibRepDMs(m.envFirstMs, m.startMs)) / Math.max(span, 1) * (m.envCount - 1));
                 if (ei >= 0 && ei < m.envCount) {
-                    const f0 = vibRepF0(d);
-                    const k  = vibRepUnitsUm ? 248.5 / (f0 * f0) : 1;   // mg → µm at f0
-                    const dp = vibRepUnitsUm ? 3 : 2;
-                    txt += '  V ' + (d.env[2 * ei] / 100 * k).toFixed(dp) +
-                           '  H ' + (d.env[2 * ei + 1] / 100 * k).toFixed(dp) +
-                           (vibRepUnitsUm ? ' µm@' + f0.toFixed(0) + 'Hz' : ' mg');
+                    if (useDisp) {
+                        // v2: true broadband displacement, nm on the wire.
+                        txt += '  V ' + (envVal(ei, 0) / 1000).toFixed(3) +
+                               '  H ' + (envVal(ei, 1) / 1000).toFixed(3) + ' µm';
+                    } else if (vibRepUnitsUm) {
+                        // v1 archive: only mg stored — approximate at f0.
+                        const f0 = vibRepF0(d);
+                        const k  = 248.5 / (f0 * f0);
+                        txt += '  V ' + (envVal(ei, 0) / 100 * k).toFixed(3) +
+                               '  H ' + (envVal(ei, 1) / 100 * k).toFixed(3) +
+                               ' µm@' + f0.toFixed(0) + 'Hz';
+                    } else {
+                        txt += '  V ' + (envVal(ei, 0) / 100).toFixed(2) +
+                               '  H ' + (envVal(ei, 1) / 100).toFixed(2) + ' mg';
+                    }
                 }
             }
             if (nf) txt += '  #' + nf.n;
