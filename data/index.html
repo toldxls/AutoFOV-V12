@@ -2577,14 +2577,30 @@
         normal on a quiet bench (flat noise never &ldquo;decays&rdquo;); suspect
         it only when blur is high too.<br><br>
         <b style="color:#3ddb7a;">Threshold</b><br>
-        Frames blurred beyond N camera pixels are flagged. Ground it against
-        the <b>optical spot</b> shown next to &micro;m/px (needs an eff NA in
-        the MTF tool): the sensor oversamples the optics, so motion blur below
-        the spot size adds almost nothing in quadrature and is invisible &mdash;
-        set the threshold at or above the spot (validated: predictions up to
-        ~3 px produced no measurable softening on a 20&times; setup whose spot
-        is &asymp;3.6 px). Drag the slider and the list, ticks and count update
-        live.<br><br>
+        Frames blurred beyond N camera pixels are flagged; drag the slider and
+        the list, ticks and count update live. Set it at or above the
+        <b>optical spot</b> (shown next to &micro;m/px when the MTF tool has an
+        eff NA) &mdash; here's why:<br><br>
+        <b style="color:#3ddb7a;">Why small blur is invisible &mdash; the optical spot</b><br>
+        A lens can't focus a point to a point: the smallest detail an
+        objective can render at the subject is a disc &asymp;0.61&lambda;/NA
+        across (&asymp;0.8 &micro;m for NA 0.42 in green). Every point in
+        every photo is smeared into at least that disc &mdash; it's the
+        sharpest the system can physically be. The sensor usually samples far
+        finer than that (e.g. 0.22 &micro;m/px under an 0.8 &micro;m spot
+        &rarr; the spot is already &asymp;3.6 px wide in every frame), so
+        &ldquo;pixels of blur&rdquo; overstates small numbers. Blurs combine
+        like the sides of a right triangle: total &asymp;
+        &radic;(spot&sup2; + motion&sup2;) &mdash; motion below the spot fattens
+        the total only a few percent (invisible); motion equal to the spot
+        makes it 41% softer (noticeable); motion at twice the spot dominates
+        (obviously soft). Think of drawing with a fat marker: wiggles smaller
+        than the tip width don't change the line. In general the invisibility
+        floor is whichever is larger &mdash; the optical spot or &asymp;1 pixel
+        at the subject &mdash; which is also why large-pixel cameras tolerate
+        more vibration than high-MP ones: same &micro;m of shake, coarser
+        ruler. (Validated on this rig: predictions up to ~3 px under a
+        &asymp;3.6 px spot produced no measurable softening.)<br><br>
         <b style="color:#3ddb7a;">Timeline</b><br>
         <b style="color:#36d6ff;">V</b> / <b style="color:#ff5bd0;">H</b> RMS
         envelope across the whole stack (same colors as the analyzer), one
