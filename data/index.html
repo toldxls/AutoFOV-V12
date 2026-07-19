@@ -2527,8 +2527,17 @@
       #vibrep th:first-child, #vibrep td:first-child { text-align:left; }
       #vibrep td { text-align:right; padding:3px 10px; border-bottom:1px solid #0d201b;
         white-space:nowrap; }
+      #vibrep tbody tr { cursor:pointer; }
       #vibrep tr.vr-flag td { background:#2a1414; color:#ffb0a0; }
       #vibrep tr.vr-flag td:first-child { color:#ff6644; font-weight:bold; }
+      /* Selected row (click → marker on the timeline strip); declared after
+         vr-flag so a flagged+selected row shows the selection tint. */
+      #vibrep tr.vr-sel td { background:#0e3450; color:#bfe6ff; }
+      #vibrep tr.vr-sel td:first-child { color:#ffd700; font-weight:bold; }
+      #vibrep-help { display:none; position:absolute; top:46px; left:16px; z-index:20;
+        max-width:520px; max-height:calc(100% - 60px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:10px 12px; font-size:11px; line-height:1.55; color:#cfe7df; cursor:pointer; }
       #vibrep-empty { padding:30px 10px; text-align:center; color:#7a958c; font-size:12px; line-height:1.7; }
       @media (max-width: 640px) {
         #vibrep-head { gap:8px 10px; padding:8px 12px; }
@@ -2539,8 +2548,45 @@
     <div id="vibrep">
       <div id="vibrep-head">
         <span class="vr-title">STACK VIBRATION REPORT</span>
+        <span class="help-btn lg" onclick="vibRepToggleHelp()" title="How to read this">?</span>
         <span id="vibrep-meta">no stack recorded yet</span>
         <span class="vw-close" onclick="vibRepClose()" title="Close">&#10005;</span>
+      </div>
+      <!-- How-to overlay (mirrors the MTF/centering ? panels). Tap anywhere to close. -->
+      <div id="vibrep-help" onclick="vibRepToggleHelp()">
+        <b style="color:#3ddb7a;">What it does</b><br>
+        Every shutter pulse of the last stack is scored for <b>during-exposure
+        blur</b> (stage motion, V and H, same math as the analyzer's broadband
+        row) so the shakiest frames can be culled &mdash; with 80%+ overlap,
+        dropping a frame costs nothing. The list is ranked worst-first; rows
+        above the threshold are tinted red.<br><br>
+        <b style="color:#3ddb7a;">Columns</b><br>
+        <b>BLUR V/H &micro;m</b> &mdash; stage movement during that frame's
+        exposure window. <b>PX EQUIV</b> &mdash; the worse axis converted to
+        camera pixels at the subject (µm/px from the stack's FOV &divide; photo
+        width): the number that decides visible softness. <b>SETTLE ms</b>
+        &mdash; pre-shot ring-down at the locked resonance, 77 ms steps.
+        <b>&#8212;</b> means no clean decay was found in the 2.5 s window &mdash;
+        normal on a quiet bench (flat noise never &ldquo;decays&rdquo;); suspect
+        it only when blur is high too.<br><br>
+        <b style="color:#3ddb7a;">Threshold</b><br>
+        Frames blurred beyond N camera pixels are flagged (default 2 px &mdash;
+        1 px is usually invisible after stacking; 3+ px is clearly soft). Drag
+        the slider and the list, ticks and count update live.<br><br>
+        <b style="color:#3ddb7a;">Timeline</b><br>
+        <b style="color:#36d6ff;">V</b> / <b style="color:#ff5bd0;">H</b> RMS
+        envelope across the whole stack (same colors as the analyzer), one
+        entry per FFT hop. Ticks along the bottom are frames &mdash;
+        <b style="color:#ff6644;">tall red</b> = flagged. Hover for a time
+        cursor; <b>click a table row</b> (or the strip) to pin a gold marker on
+        that frame.<br><br>
+        <b style="color:#3ddb7a;">Buttons</b><br>
+        <b>COPY CULL LIST</b> &mdash; flagged frames + a bare comma list for
+        batch tools. <b>SAVE PNG</b> &mdash; the stack-summary card (same as
+        the stack-done popup), available any time. The report shows the last
+        <i>completed</i> stack: a stray test shot can't overwrite it, and it
+        survives page reloads.
+        <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibrep-controls">
         <span class="vr-k">flag frames blurred &gt;</span>
@@ -4044,9 +4090,52 @@
         else if (vibRepData) vibRepOpen();
     }
 
+    let vibRepSelN = 0;          // photo # pinned on the strip (0 = none)
+    let vibRepCursorX = -1;      // hover cursor, canvas px (-1 = off)
+    let vibRepStripGeom = null;  // {mL, pw, durMs} of the last strip paint (hit-testing)
+    let _vibRepStripBound = false;
+
+    function vibRepToggleHelp() {
+        const h = document.getElementById('vibrep-help');
+        h.style.display = (h.style.display === 'block') ? 'none' : 'block';
+    }
+    // Row / strip click → pin a marker on that frame (click again to unpin).
+    function vibRepSelect(n) {
+        vibRepSelN = (vibRepSelN === n) ? 0 : n;
+        vibRepRender();
+    }
     function vibRepOpen()  {
         vibRepOpenFlag = true;
         document.getElementById('vibrep').classList.add('open');
+        if (!_vibRepStripBound) {
+            _vibRepStripBound = true;
+            const c = document.getElementById('vibrep-strip');
+            // Same pattern as the analyzer waterfall: mousemove stores the
+            // cursor, the paint routine draws the line + readout.
+            c.addEventListener('mousemove', e => {
+                const r = c.getBoundingClientRect();
+                vibRepCursorX = (e.clientX - r.left) / r.width * c.width;
+                vibRepDrawStrip();
+            });
+            c.addEventListener('mouseleave', () => { vibRepCursorX = -1; vibRepDrawStrip(); });
+            c.addEventListener('click', e => {
+                const d = vibRepData, gm = vibRepStripGeom;
+                if (!d || !gm) return;
+                const r = c.getBoundingClientRect();
+                const t = ((e.clientX - r.left) / r.width * c.width - gm.mL) / gm.pw * gm.durMs;
+                let best = null, bestDt = Infinity;
+                for (const f of d.frames) {
+                    if (f.fl === 0) continue;
+                    const dt = Math.abs(f.tMs - t);
+                    if (dt < bestDt) { bestDt = dt; best = f; }
+                }
+                if (best) {
+                    vibRepSelect(best.n);
+                    const row = document.querySelector('#vibrep tr.vr-sel');
+                    if (row) row.scrollIntoView({ block: 'nearest' });
+                }
+            });
+        }
         vibRepRender();
     }
     function vibRepClose() {
@@ -4158,7 +4247,9 @@
             const isF = Number.isFinite(bu) && bu > threshUm;
             if (isF) flagged++;
             const px  = (Number.isFinite(bu) && umPerPx > 0) ? (bu / umPerPx).toFixed(2) : '--';
-            html += '<tr' + (isF ? ' class="vr-flag"' : '') + '><td>' + f.n + '</td>' +
+            const cls = (isF ? 'vr-flag' : '') + (f.n === vibRepSelN ? ' vr-sel' : '');
+            html += '<tr' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') +
+                ' onclick="vibRepSelect(' + f.n + ')"><td>' + f.n + '</td>' +
                 '<td>+' + (f.tMs / 1000).toFixed(1) + '</td>' +
                 '<td>' + vibRepWallClock(d, f.tMs).toLocaleTimeString() + '</td>' +
                 '<td>' + (f.bV === 0xFFFF ? '--' : (f.bV / 100).toFixed(2)) + '</td>' +
@@ -4192,18 +4283,20 @@
         const mL = 6, mR = 6, mT = 8, mB = 16;
         const pw = W - mL - mR, ph = H - mT - mB;
         const x = t => mL + pw * t / durMs;
+        vibRepStripGeom = { mL: mL, pw: pw, durMs: durMs };   // for click hit-testing
 
-        // Envelope traces — V green, H blue. Y autoscaled to the p98 value so
-        // one monster spike doesn't flatten the whole strip.
+        // Envelope traces — V cyan / H magenta, the analyzer's channel colors.
+        // Y autoscaled to the p98 value so one monster spike doesn't flatten
+        // the whole strip.
+        const envT = i => vibRepDMs(m.envFirstMs, m.startMs) +
+                          vibRepDMs(m.envLastMs, m.envFirstMs) * i / (m.envCount - 1);
         if (m.envCount > 1) {
             const vals = [];
             for (let i = 0; i < m.envCount * 2; i++) vals.push(d.env[i]);
             vals.sort((a, b) => a - b);
             const yMax = Math.max(vals[Math.floor(vals.length * 0.98)] * 1.3, 10);
-            const envT = i => vibRepDMs(m.envFirstMs, m.startMs) +
-                              vibRepDMs(m.envLastMs, m.envFirstMs) * i / (m.envCount - 1);
             for (const ch of [0, 1]) {
-                g.strokeStyle = ch ? '#4db8ff' : '#3ddb7a';
+                g.strokeStyle = ch ? '#ff5bd0' : '#36d6ff';
                 g.lineWidth = 1.2; g.beginPath();
                 for (let i = 0; i < m.envCount; i++) {
                     const yv = Math.min(d.env[2 * i + ch] / yMax, 1);
@@ -4231,6 +4324,51 @@
         g.fillText('0s', mL, H - 5);
         const endLbl = vibRepFmtT(durMs);
         g.fillText(endLbl, W - mR - g.measureText(endLbl).width, H - 5);
+
+        // Pinned frame marker (row/strip click) — gold, like the analyzer's
+        // peak-hold marker.
+        if (vibRepSelN) {
+            const sf = d.frames.find(f => f.n === vibRepSelN && f.fl !== 0);
+            if (sf) {
+                const sx = x(sf.tMs);
+                g.strokeStyle = '#ffd700'; g.lineWidth = 1.5;
+                g.beginPath(); g.moveTo(sx, mT - 2); g.lineTo(sx, H - 3); g.stroke();
+                g.fillStyle = '#ffd700'; g.font = 'bold 10px monospace';
+                const lbl = '#' + sf.n;
+                const lx = Math.min(Math.max(sx - g.measureText(lbl).width / 2, mL), W - mR - g.measureText(lbl).width);
+                g.fillText(lbl, lx, mT + 8);
+            }
+        }
+        // Hover cursor + readout — mirrors the analyzer waterfall's line.
+        if (vibRepCursorX >= mL && vibRepCursorX <= mL + pw) {
+            const ct = (vibRepCursorX - mL) / pw * durMs;
+            g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(vibRepCursorX, mT - 2); g.lineTo(vibRepCursorX, H - 3); g.stroke();
+            // Nearest measured frame + envelope values at the cursor time.
+            let nf = null, nfDt = Infinity;
+            for (const f of d.frames) {
+                if (f.fl === 0) continue;
+                const dt = Math.abs(f.tMs - ct);
+                if (dt < nfDt) { nfDt = dt; nf = f; }
+            }
+            let txt = '+' + (ct / 1000).toFixed(1) + 's';
+            if (m.envCount > 1) {
+                const span = vibRepDMs(m.envLastMs, m.envFirstMs);
+                const ei = Math.round((ct - vibRepDMs(m.envFirstMs, m.startMs)) / Math.max(span, 1) * (m.envCount - 1));
+                if (ei >= 0 && ei < m.envCount)
+                    txt += '  V ' + (d.env[2 * ei] / 100).toFixed(2) +
+                           '  H ' + (d.env[2 * ei + 1] / 100).toFixed(2) + ' mg';
+            }
+            if (nf) txt += '  #' + nf.n;
+            g.font = '10px monospace';
+            const tw = g.measureText(txt).width + 8;
+            const bx = (vibRepCursorX + 8 + tw > W - mR) ? vibRepCursorX - tw - 8 : vibRepCursorX + 8;
+            g.fillStyle = 'rgba(4,13,11,0.85)';
+            g.fillRect(bx, mT, tw, 14);
+            g.strokeStyle = '#1f3a33'; g.strokeRect(bx, mT, tw, 14);
+            g.fillStyle = '#cfe7df';
+            g.fillText(txt, bx + 4, mT + 10);
+        }
     }
 
     function vibRepCopy() {
