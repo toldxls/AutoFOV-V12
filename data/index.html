@@ -2618,6 +2618,9 @@
               title="Timeline readout units: stage displacement (µm, converted at the stack's locked resonance f0 — comparable to the blur columns) or raw acceleration (mg). The curve shape is auto-scaled either way.">&micro;m</span>
         <select id="vibrep-hist" onchange="vibRepLoadSaved(this.value)"
                 title="Saved reports — kept in this browser, so they survive new stacks and device resets"></select>
+        <span class="vr-btn" id="vibrep-clear" onclick="vibRepClearSaved()"
+              style="background:#2a1414; border-color:#7a3a3a; color:#e7cfcf;"
+              title="Delete all saved reports from this browser (two clicks)">CLEAR</span>
       </div>
       <div id="vibrep-strip-wrap"><canvas id="vibrep-strip"></canvas></div>
       <div id="vibrep-body">
@@ -4126,6 +4129,22 @@
                     vibRepFmtT(e.durMs) + '</option>';
         });
         sel.innerHTML = html;
+    }
+    // Two-step clear: first click arms (SURE?), second within 3 s wipes the
+    // archive. The currently displayed report stays on screen.
+    let _vibRepClearArmed = 0;
+    function vibRepClearSaved() {
+        const b = document.getElementById('vibrep-clear');
+        if (Date.now() - _vibRepClearArmed > 3000) {
+            _vibRepClearArmed = Date.now();
+            b.innerText = 'SURE?';
+            setTimeout(() => { if (Date.now() - _vibRepClearArmed >= 3000) b.innerText = 'CLEAR'; }, 3100);
+            return;
+        }
+        _vibRepClearArmed = 0;
+        try { localStorage.removeItem('afovVibReports'); } catch (e) {}
+        b.innerText = 'CLEAR';
+        vibRepPopulateHist();
     }
     function vibRepLoadSaved(v) {
         if (v === '' || v === undefined) return;
