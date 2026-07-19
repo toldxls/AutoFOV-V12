@@ -1239,6 +1239,13 @@ std::atomic<uint32_t> vibHistStackId{0};     // vibStackStartSeq value this hist
 // FOV (mm × 100) at stack end, stamped by wifiNotifyStackComplete (Core 1) so
 // the report's µm/px scale survives a dashboard reload. 0 = unknown (abort).
 std::atomic<uint32_t> vibHistFovCentimm{0};
+// V12.6: stack max of sub-band displacement (spectrum bins 1-3, ≈0.8-2.4 Hz),
+// µm × 10. These bins are EXCLUDED from the per-frame blur numbers (the 1/ω²
+// noise blowup), but large slow rocking blurs photos via velocity × shutter —
+// a per-frame lottery no accelerometer metric can rank (validated 2026-07-19:
+// 16-34 px streaks on frames predicting ≤3 px). The report banners on this so
+// the per-frame numbers aren't trusted when the band they can't see is hot.
+std::atomic<uint32_t> vibHistLowFUmX10{0};
 // Auto-power-off request for the accelerometer. loop() (Core 1) sets it after
 // 1 h idle; vibTask (Core 0) owns the actual LSM6DSOX power-down/up so all IMU
 // register access stays on one core (see vibTask).
@@ -4548,6 +4555,7 @@ void vibTask(void *pvParameters) {
       vibHistEnvShift   = 0;
       envHopCnt         = 0;
       vibHistFovCentimm.store(0);
+      vibHistLowFUmX10.store(0);
       vibHistStackId.store(ss);
       pendingBlurIdx = -1;
       vibHistState.store(1, std::memory_order_release);
@@ -4940,6 +4948,22 @@ void vibTask(void *pvParameters) {
         // amplitude → RMS (√(Σd²/2)), metres → nm.
         float dispVnm = sqrtf((float)(dSqV * 0.5)) * 1e9f;
         float dispHnm = sqrtf((float)(dSqH * 0.5)) * 1e9f;
+        // Sub-band watchdog: displacement in the bins the blur math excludes
+        // (1..VIB_DISP_MIN_BIN-1 ≈ 0.8-2.4 Hz). Track the stack max.
+        {
+          double lSq = 0.0;
+          for (int b = 1; b < VIB_DISP_MIN_BIN; b++) {
+            const float omega = 2.0f * (float)M_PI * (b * VIB_BIN_HZ);
+            const float invW2 = 1.0f / (omega * omega);
+            float aV = (float)dst[b]   - vibBaseV[b]; if (aV < 0) aV = 0;
+            float aH = (float)dstH2[b] - vibBaseH[b]; if (aH < 0) aH = 0;
+            const float dV = (aV * k_a2) * invW2, dH = (aH * k_a2) * invW2;
+            lSq += (double)dV * dV + (double)dH * dH;
+          }
+          uint32_t lowX10 = (uint32_t)lroundf(sqrtf((float)(lSq * 0.5)) * 1e7f); // m → µm×10
+          if (lowX10 > vibHistLowFUmX10.load(std::memory_order_relaxed))
+            vibHistLowFUmX10.store(lowX10, std::memory_order_relaxed);
+        }
         float cV = rmsMg * 100.0f, cH = horizMg * 100.0f;
         vibHistEnv[4*n]   = (cV >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cV);
         vibHistEnv[4*n+1] = (cH >= 65535.0f) ? 0xFFFF : (uint16_t)lroundf(cH);

@@ -2581,6 +2581,17 @@
         the list, ticks and count update live. Set it at or above the
         <b>optical spot</b> (shown next to &micro;m/px when the MTF tool has an
         eff NA) &mdash; here's why:<br><br>
+        <b style="color:#3ddb7a;">The measured band &mdash; and the ⚠ LOW-FREQ warning</b><br>
+        Blur numbers cover <b>3.25&ndash;208 Hz</b> — resonance ring-down, motor
+        hum, footsteps' fast content. <b>Slower motion (&lt;3 Hz rocking/sway)
+        is excluded</b>: it produces almost no acceleration (a = &omega;&sup2;x),
+        and its photo damage is a per-frame <i>velocity lottery</i> — the 8 ms
+        exposure lands at a swing extreme (frozen) or mid-swing (smeared),
+        which no time-averaged metric can rank (measured: 16&ndash;34 px
+        streaks on frames predicting &le;3 px). When the report detects large
+        sub-band displacement it shows the <b>⚠ LOW-FREQ MOTION</b> banner:
+        treat that stack's per-frame blur as unreliable and fix the slow
+        motion mechanically (isolate the bench, stop leaning on it).<br><br>
         <b style="color:#3ddb7a;">Why small blur is invisible &mdash; the optical spot</b><br>
         A lens can't focus a point to a point: the smallest detail an
         objective can render at the subject is a disc &asymp;0.61&lambda;/NA
@@ -4102,6 +4113,7 @@
             envPeriodMsX10: dv.getUint16(36, true),
             fovCm:      dv.getUint16(38, true),   // FOV mm×100 at stack end, 0 = unknown
             resHz:      dv.getUint16(40, true) / 10, // resonance lock at stack time, 0 = unknown
+            lowFUm:     dv.getUint16(42, true) / 10, // stack max sub-3Hz displacement, µm
             fetchedAt:  Date.now()
         };
         if (buf.byteLength < 48 + m.frameCount * 12 + m.envCount * stride * 2) return null;
@@ -4444,6 +4456,12 @@
         // flag it so the unchanged µm/mg curve doesn't read as a broken toggle.
         if ((d.meta.envStride || 2) === 2)
             mtxt += ' · older recording — µm curve approximated from mg';
+        // Sub-3 Hz rocking warning: large slow motion blurs via velocity — a
+        // per-frame phase lottery the accelerometer band can't rank (validated:
+        // 16-34 px streaks on frames predicting ≤3 px). Threshold ~2 µm.
+        if (d.meta.lowFUm > 2)
+            mtxt += ' · ⚠ LOW-FREQ MOTION ~' + d.meta.lowFUm.toFixed(1) +
+                    ' µm — slow rocking is outside the measured band; per-frame blur unreliable this stack (see ?)';
         if (d.meta.totalFrames > d.meta.frameCount)
             mtxt += ' · ' + (d.meta.totalFrames - d.meta.frameCount) + ' frames past cap not recorded';
         meta.innerText = mtxt;

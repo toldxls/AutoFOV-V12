@@ -1811,7 +1811,11 @@ static void startFullServer() {
     //   byte 40-41 : resonance-lock Hz × 10 (vibResonanceHz) — lets the
     //                report's mg↔µm toggle convert the RMS envelope at the
     //                stack's own f₀ even on archived reports; 0 = unknown
-    //   byte 42-47 : reserved (= 0)
+    //   byte 42-43 : stack max sub-band displacement, µm × 10 (spectrum bins
+    //                1-3 ≈ 0.8-2.4 Hz — the band the blur math excludes).
+    //                Large ⇒ slow rocking dominated; per-frame blur is a
+    //                velocity lottery there and the dashboard banners it.
+    //   byte 44-47 : reserved (= 0)
     //   byte 48 …  : frameCount × VibFrameRec (12 B, see main tab)
     //   then       : envCount × { u16 vRms mg×100, u16 hRms mg×100,
     //                             u16 vDisp nm, u16 hDisp nm }   (8 B, v2)
@@ -1853,6 +1857,8 @@ static void startFullServer() {
         uint32_t fovC = vibHistFovCentimm.load();
         u16 = (fovC > 65535) ? 65535 : (uint16_t)fovC; memcpy(hb + 38, &u16, 2);
         u16 = (uint16_t)lroundf(vibResonanceHz * 10.0f); memcpy(hb + 40, &u16, 2);
+        uint32_t lf = vibHistLowFUmX10.load();
+        u16 = (lf > 65535) ? 65535 : (uint16_t)lf; memcpy(hb + 42, &u16, 2);
 
         const size_t fBytes = (size_t)fc * sizeof(VibFrameRec);
         const size_t eBytes = (size_t)ec * 8;   // v2: 4 × u16 per entry
