@@ -2543,6 +2543,9 @@
         background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
         padding:10px 12px; font-size:11px; line-height:1.55; color:#cfe7df; cursor:pointer; }
       #vibrep-empty { padding:30px 10px; text-align:center; color:#7a958c; font-size:12px; line-height:1.7; }
+      /* Photo-validation columns appear only once photos have been scored. */
+      #vibrep table .vr-val { display:none; }
+      #vibrep table.has-val .vr-val { display:table-cell; }
       @media (max-width: 640px) {
         #vibrep-head { gap:8px 10px; padding:8px 12px; }
         #vibrep-controls { gap:8px 12px; padding:8px 12px; }
@@ -2599,8 +2602,16 @@
         the stack-done popup), available any time. <b>SAVED</b> &mdash; the
         last 8 completed stacks, archived in this browser: they survive new
         stacks, page reloads and device resets (the device itself only holds
-        the last stack, in volatile memory). A stray test shot can't overwrite
-        any of it.
+        the last stack, in volatile memory); <b>CLEAR</b> wipes the archive
+        (two clicks). A stray test shot can't overwrite any of it.
+        <b>VALIDATE&hellip;</b> &mdash; ground-truth check: drop this stack's
+        photos (JPG/PNG, filename order = capture order) and each is
+        sharpness-scored; the SHARP / SOFT-vs-NBRS columns appear and the
+        status line shows the rank correlation between predicted blur and
+        measured softness (overall + per axis). A flat static target &mdash;
+        USAF-1951 is ideal, edges in both axes &mdash; removes the
+        focus-drift confound; for a real stack the vs-neighbors metric
+        compensates for the moving focus plane.
         <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibrep-controls">
@@ -2621,6 +2632,11 @@
         <span class="vr-btn" id="vibrep-clear" onclick="vibRepClearSaved()"
               style="background:#2a1414; border-color:#7a3a3a; color:#e7cfcf;"
               title="Delete all saved reports from this browser (two clicks)">CLEAR</span>
+        <span class="vr-btn" onclick="document.getElementById('vibrep-val-files').click()"
+              title="Ground-truth check: drop this stack's photos (JPG/PNG, named in capture order) — each is sharpness-scored and correlated against the predicted blur">VALIDATE&hellip;</span>
+        <input type="file" id="vibrep-val-files" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+               multiple style="display:none;" onchange="vibRepValidateChosen(this)">
+        <span id="vibrep-val-status" class="vr-k"></span>
       </div>
       <div id="vibrep-strip-wrap"><canvas id="vibrep-strip"></canvas></div>
       <div id="vibrep-body">
@@ -2634,6 +2650,9 @@
             <th onclick="vibRepSortBy('blurV')" title="Sort by vertical blur (worst first)">BLUR V &micro;m</th>
             <th onclick="vibRepSortBy('blurH')" title="Sort by horizontal blur (worst first)">BLUR H &micro;m</th>
             <th onclick="vibRepSortBy('blur')" title="Sort by worst-axis pixel blur (worst first)">PX EQUIV</th>
+            <th class="vr-val" onclick="vibRepSortBy('sharp')" title="Measured sharpness (gradient energy, 100 = sharpest photo)">SHARP</th>
+            <th class="vr-val" onclick="vibRepSortBy('dip')"
+                title="How much softer than the median of its ±2 neighbors — the focus plane drifts through a stack, so softness vs the LOCAL baseline is what vibration shows up as">SOFT vs NBRS %</th>
             <th onclick="vibRepSortBy('settle')"
                 title="Pre-shot ring-down time, 77 ms steps. '&#8212;' = no clean decay found in the 2.5 s window — normal on a quiet bench (flat noise never 'decays'); suspect only when blur is also high. Click to sort.">SETTLE ms</th>
           </tr></thead>
@@ -4394,6 +4413,38 @@
             mtxt += ' · ' + (d.meta.totalFrames - d.meta.frameCount) + ' frames past cap not recorded';
         meta.innerText = mtxt;
 
+        // Photo-validation columns (VALIDATE… button). Arrays are indexed by
+        // frame # − 1 over the raw frame order; scores align by filename order.
+        const val = vibRepPhotoScores;
+        document.getElementById('vibrep-table').classList.toggle('has-val', !!val);
+        let sharpNorm = null, dipTot = null;
+        if (val) {
+            const tot  = d.frames.map(f => (val[f.n - 1] || {}).sharp);
+            const gxs  = d.frames.map(f => (val[f.n - 1] || {}).gx);
+            const gys  = d.frames.map(f => (val[f.n - 1] || {}).gy);
+            const sMax = Math.max.apply(null, tot.filter(Number.isFinite).concat([1]));
+            sharpNorm  = tot.map(s => Number.isFinite(s) ? s / sMax * 100 : NaN);
+            dipTot     = tot.map((_, i) => vibRepNbrDip(tot, i));
+            const dipGx = gxs.map((_, i) => vibRepNbrDip(gxs, i));
+            const dipGy = gys.map((_, i) => vibRepNbrDip(gys, i));
+            // Rank correlations: predicted px blur vs measured softness —
+            // overall (worst axis), and per axis: H blur damps Gx (vertical
+            // edges), V blur damps Gy (horizontal edges).
+            const pxArr = d.frames.map(f => {
+                const bu = vibRepBlurUm(f);
+                return (Number.isFinite(bu) && umPerPx > 0) ? bu / umPerPx : NaN;
+            });
+            const bVpx = d.frames.map(f => f.bV === 0xFFFF ? NaN : f.bV / 100 / umPerPx);
+            const bHpx = d.frames.map(f => f.bH === 0xFFFF ? NaN : f.bH / 100 / umPerPx);
+            const rT = vibRepSpearman(pxArr, dipTot);
+            const rV = vibRepSpearman(bVpx, dipGy);
+            const rH = vibRepSpearman(bHpx, dipGx);
+            const st = document.getElementById('vibrep-val-status');
+            if (rT) st.innerText = 'blur↔softness rank corr r=' + rT.r.toFixed(2) +
+                (rV ? ' · V ' + rV.r.toFixed(2) : '') +
+                (rH ? ' · H ' + rH.r.toFixed(2) : '') + ' (n=' + rT.n + ')';
+        }
+
         // Score + sort + render rows. flags===0 records are unmeasured
         // placeholders (coalesced pulses) — counted in the meta, not listed.
         const rows = d.frames.filter(f => f.fl !== 0);
@@ -4404,10 +4455,14 @@
         // Per-axis sort values: 0xFFFF (not captured) sinks to the bottom.
         const axV = f => f.bV === 0xFFFF ? -1 : f.bV;
         const axH = f => f.bH === 0xFFFF ? -1 : f.bH;
+        const vSharp = f => (sharpNorm && Number.isFinite(sharpNorm[f.n - 1])) ? sharpNorm[f.n - 1] : 1e9;
+        const vDip   = f => (dipTot && Number.isFinite(dipTot[f.n - 1])) ? dipTot[f.n - 1] : -1e9;
         rows.sort((a, b) =>
             key === 'blur'   ? (vibRepBlurUm(b) || 0) - (vibRepBlurUm(a) || 0) :
             key === 'blurV'  ? axV(b) - axV(a) :
             key === 'blurH'  ? axH(b) - axH(a) :
+            key === 'sharp'  ? vSharp(a) - vSharp(b) :        // softest photo first
+            key === 'dip'    ? vDip(b) - vDip(a) :            // biggest local dip first
             key === 'settle' ? b.settle - a.settle :
             key === 't'      ? a.tMs - b.tMs : a.n - b.n);
         let flagged = 0, html = '';
@@ -4424,6 +4479,11 @@
                 '<td>' + (f.bV === 0xFFFF ? '--' : (f.bV / 100).toFixed(2)) + '</td>' +
                 '<td>' + (f.bH === 0xFFFF ? '--' : (f.bH / 100).toFixed(2)) + '</td>' +
                 '<td>' + px + '</td>' +
+                (val ? '<td class="vr-val">' +
+                        (Number.isFinite(sharpNorm[f.n - 1]) ? sharpNorm[f.n - 1].toFixed(0) : '--') + '</td>' +
+                       '<td class="vr-val">' +
+                        (Number.isFinite(dipTot[f.n - 1]) ? dipTot[f.n - 1].toFixed(1) : '--') + '</td>'
+                     : '') +
                 '<td>' + vibRepFmtSettle(f) + '</td></tr>';
         }
         document.getElementById('vibrep-rows').innerHTML = html;
@@ -4606,6 +4666,95 @@
         const sd = (d && d.stackDone) || _stackDoneData;
         if (sd) saveStackCard(sd);
     }
+    // ── Photo validation: ground-truth the predicted blur ───────────────────
+    // Drop the stack's photos (filename order = capture order) and each is
+    // scored for sharpness as Sobel gradient energy on a ≤1200 px grayscale
+    // downscale — split into Gx (vertical-edge strength, damped by HORIZONTAL
+    // motion) and Gy (horizontal-edge strength, damped by VERTICAL motion) so
+    // a USAF-style target validates the V and H blur columns separately.
+    // Because a stack's focus plane drifts, the comparison metric is each
+    // frame's softness vs the median of its ±2 neighbors, rank-correlated
+    // (Spearman) against the predicted pixel blur.
+    let vibRepPhotoScores = null;   // [{name, gx, gy, sharp}] by capture order
+
+    function vibRepSobelScore(img) {
+        const W = Math.min(img.width, 1200);
+        const H = Math.max(2, Math.round(img.height * W / img.width));
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0, W, H);
+        const px = g.getImageData(0, 0, W, H).data;
+        const gray = new Float32Array(W * H);
+        for (let i = 0, j = 0; i < px.length; i += 4, j++)
+            gray[j] = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        let sx = 0, sy = 0;
+        for (let y = 1; y < H - 1; y++) {
+            for (let xx = 1; xx < W - 1; xx++) {
+                const i = y * W + xx;
+                const gx = (gray[i - W + 1] + 2 * gray[i + 1] + gray[i + W + 1]) -
+                           (gray[i - W - 1] + 2 * gray[i - 1] + gray[i + W - 1]);
+                const gy = (gray[i + W - 1] + 2 * gray[i + W] + gray[i + W + 1]) -
+                           (gray[i - W - 1] + 2 * gray[i - W] + gray[i - W + 1]);
+                sx += gx * gx; sy += gy * gy;
+            }
+        }
+        const n = (W - 2) * (H - 2);
+        return { gx: sx / n, gy: sy / n };
+    }
+
+    async function vibRepValidateChosen(input) {
+        const files = [...input.files]; input.value = '';
+        const st = document.getElementById('vibrep-val-status');
+        if (!files.length) return;
+        if (!vibRepData) { st.innerText = 'open a report first'; return; }
+        files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+        const scores = [];
+        for (let i = 0; i < files.length; i++) {
+            st.innerText = 'scoring ' + (i + 1) + '/' + files.length + '…';
+            try {
+                const bmp = await createImageBitmap(files[i]);
+                const s = vibRepSobelScore(bmp);
+                bmp.close();
+                scores.push({ name: files[i].name, gx: s.gx, gy: s.gy, sharp: s.gx + s.gy });
+            } catch (e) {
+                scores.push({ name: files[i].name, gx: NaN, gy: NaN, sharp: NaN });
+            }
+        }
+        vibRepPhotoScores = scores;
+        st.innerText = (files.length === vibRepData.frames.length) ? '' :
+            files.length + ' photos vs ' + vibRepData.frames.length + ' frames — aligned from #1 by name order';
+        vibRepRender();
+    }
+
+    // Softness of arr[i] vs the median of its ±2 neighbors, in % (positive =
+    // softer than the local baseline).
+    function vibRepNbrDip(arr, i) {
+        const nb = [];
+        for (let k = i - 2; k <= i + 2; k++)
+            if (k !== i && k >= 0 && k < arr.length && Number.isFinite(arr[k])) nb.push(arr[k]);
+        if (!nb.length || !Number.isFinite(arr[i])) return NaN;
+        nb.sort((a, b) => a - b);
+        const med = nb[Math.floor(nb.length / 2)];
+        return med > 0 ? (med - arr[i]) / med * 100 : NaN;
+    }
+    function vibRepSpearman(a, b) {
+        const pa = [], pb = [];
+        for (let i = 0; i < Math.min(a.length, b.length); i++)
+            if (Number.isFinite(a[i]) && Number.isFinite(b[i])) { pa.push(a[i]); pb.push(b[i]); }
+        const n = pa.length;
+        if (n < 5) return null;
+        const rank = v => {
+            const idx = v.map((x, i) => [x, i]).sort((p, q) => p[0] - q[0]);
+            const r = new Array(v.length);
+            idx.forEach((p, k) => { r[p[1]] = k; });
+            return r;
+        };
+        const ra = rank(pa), rb = rank(pb);
+        let d2 = 0;
+        for (let i = 0; i < n; i++) d2 += (ra[i] - rb[i]) * (ra[i] - rb[i]);
+        return { r: 1 - 6 * d2 / (n * (n * n - 1)), n: n };
+    }
+
     function vibRepCopyFallback(text) {
         try {
             const ta = document.createElement('textarea');
