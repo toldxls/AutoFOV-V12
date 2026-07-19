@@ -2608,10 +2608,13 @@
         photos (JPG/PNG, filename order = capture order) and each is
         sharpness-scored; the SHARP / SOFT-vs-NBRS columns appear and the
         status line shows the rank correlation between predicted blur and
-        measured softness (overall + per axis). A flat static target &mdash;
-        USAF-1951 is ideal, edges in both axes &mdash; removes the
-        focus-drift confound; for a real stack the vs-neighbors metric
-        compensates for the moving focus plane.
+        measured softness (overall + per axis). Scoring uses a native-resolution
+        <b>center crop</b> (1600&sup2;) &mdash; keep the subject/target near
+        the frame center. A flat static target &mdash; USAF-1951 is ideal,
+        edges in both axes &mdash; removes the focus-drift confound; for a
+        real stack the vs-neighbors metric compensates for the moving focus
+        plane. Correlation needs contrast: include calm AND disturbed frames,
+        or r is just noise (|r| below ~0.4 at n&asymp;25 means nothing).
         <span style="color:#7a958c;">(tap anywhere here to close)</span>
       </div>
       <div id="vibrep-controls">
@@ -4678,11 +4681,17 @@
     let vibRepPhotoScores = null;   // [{name, gx, gy, sharp}] by capture order
 
     function vibRepSobelScore(img) {
-        const W = Math.min(img.width, 1200);
-        const H = Math.max(2, Math.round(img.height * W / img.width));
+        // Score a CENTER CROP at NATIVE resolution — downscaling first would
+        // shrink the blur below gradient-metric sensitivity (a 2 px blur on a
+        // 7000 px frame is 0.35 px after a 1200 px resize: invisible). 1600²
+        // native pixels keeps a 2 px smear 2 px wide, where Sobel sees it.
+        const W = Math.min(img.width, 1600);
+        const H = Math.min(img.height, 1600);
+        const cropX = Math.max(0, (img.width - W) >> 1);
+        const cropY = Math.max(0, (img.height - H) >> 1);
         const c = document.createElement('canvas'); c.width = W; c.height = H;
         const g = c.getContext('2d', { willReadFrequently: true });
-        g.drawImage(img, 0, 0, W, H);
+        g.drawImage(img, cropX, cropY, W, H, 0, 0, W, H);
         const px = g.getImageData(0, 0, W, H).data;
         const gray = new Float32Array(W * H);
         for (let i = 0, j = 0; i < px.length; i += 4, j++)
