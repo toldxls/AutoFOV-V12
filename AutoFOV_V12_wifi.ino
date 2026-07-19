@@ -1807,7 +1807,10 @@ static void startFullServer() {
     //   byte 38-39 : fovCentimm — FOV mm × 100 at stack end, 0 = unknown
     //                (stamped by wifiNotifyStackComplete; keeps the report's
     //                µm/px scale correct after a dashboard reload)
-    //   byte 40-47 : reserved (= 0)
+    //   byte 40-41 : resonance-lock Hz × 10 (vibResonanceHz) — lets the
+    //                report's mg↔µm toggle convert the RMS envelope at the
+    //                stack's own f₀ even on archived reports; 0 = unknown
+    //   byte 42-47 : reserved (= 0)
     //   byte 48 …  : frameCount × VibFrameRec (12 B, see main tab)
     //   then       : envCount × { u16 vRms, u16 hRms }  (mg × 100)
     //
@@ -1847,6 +1850,7 @@ static void startFullServer() {
         u16 = (per > 65535) ? 65535 : (uint16_t)per; memcpy(hb + 36, &u16, 2);
         uint32_t fovC = vibHistFovCentimm.load();
         u16 = (fovC > 65535) ? 65535 : (uint16_t)fovC; memcpy(hb + 38, &u16, 2);
+        u16 = (uint16_t)lroundf(vibResonanceHz * 10.0f); memcpy(hb + 40, &u16, 2);
 
         const size_t fBytes = (size_t)fc * sizeof(VibFrameRec);
         const size_t eBytes = (size_t)ec * 4;

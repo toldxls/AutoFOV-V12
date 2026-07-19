@@ -2584,12 +2584,14 @@
         <b style="color:#ff6644;">tall red</b> = flagged. Hover for a time
         cursor; <b>click a table row</b> (or the strip) to pin a gold marker —
         the translucent gold band is the history window that frame's blur was
-        measured from. A strip spike with LOW blur on the nearby frame is
-        normal, not a miss: the strip is raw acceleration (mg), while blur
-        converts it to stage <i>displacement during the shutter</i> — high
-        frequencies shrink by 1/f&sup2; and slow sway barely moves within a
-        1/125 s exposure. Spikes between exposures (the stage move itself)
-        don't blur anything.<br><br>
+        measured from. The <b>&micro;m / mg</b> toggle switches the cursor
+        readout between stage displacement (&micro;m at the stack's locked
+        resonance f&#8320; &mdash; comparable to the blur columns; the default)
+        and raw acceleration (mg). A strip spike with LOW blur on the nearby
+        frame is normal, not a miss: blur measures <i>displacement during the
+        shutter</i> — high frequencies shrink by 1/f&sup2; and slow sway barely
+        moves within a 1/125 s exposure. Spikes between exposures (the stage
+        move itself) don't blur anything.<br><br>
         <b style="color:#3ddb7a;">Buttons</b><br>
         <b>COPY CULL LIST</b> &mdash; flagged frames + a bare comma list for
         batch tools. <b>SAVE PNG</b> &mdash; the stack-summary card (same as
@@ -2611,6 +2613,8 @@
         <span class="vr-btn" onclick="vibRepCopy()" title="Copy the flagged-frame cull list to the clipboard">COPY CULL LIST</span>
         <span class="vr-btn" id="vibrep-savepng" onclick="vibRepSavePng()"
               title="Save the stack-summary PNG card (same card as the stack-done popup)">SAVE PNG</span>
+        <span class="vr-btn" id="vibrep-units" onclick="vibRepToggleUnits()"
+              title="Timeline readout units: stage displacement (µm, converted at the stack's locked resonance f0 — comparable to the blur columns) or raw acceleration (mg). The curve shape is auto-scaled either way.">&micro;m</span>
         <select id="vibrep-hist" onchange="vibRepLoadSaved(this.value)"
                 title="Saved reports — kept in this browser, so they survive new stacks and device resets"></select>
       </div>
@@ -4042,6 +4046,7 @@
             envLastMs:  dv.getUint32(32, true),
             envPeriodMsX10: dv.getUint16(36, true),
             fovCm:      dv.getUint16(38, true),   // FOV mm×100 at stack end, 0 = unknown
+            resHz:      dv.getUint16(40, true) / 10, // resonance lock at stack time, 0 = unknown
             fetchedAt:  Date.now()
         };
         if (buf.byteLength < 48 + m.frameCount * 12 + m.envCount * 4) return null;
@@ -4274,6 +4279,21 @@
         vibRepSort = (k === vibRepSort && k !== 'n' && k !== 't') ? 'n' : k;
         vibRepRender();
     }
+    // Timeline readout units — µm by default (we're examining movement/blur);
+    // mg for raw accel. One broadband RMS per hop means the µm conversion uses
+    // the stack's locked resonance f0 (where this rig's energy concentrates):
+    // µm = mg × 248.5 / f0² — the analyzer's per-bin double integration,
+    // collapsed to a single frequency. Shape is autoscaled, so toggling only
+    // changes the readout numbers.
+    let vibRepUnitsUm = true;
+    function vibRepToggleUnits() {
+        vibRepUnitsUm = !vibRepUnitsUm;
+        document.getElementById('vibrep-units').innerHTML = vibRepUnitsUm ? '&micro;m' : 'mg';
+        vibRepDrawStrip();
+    }
+    function vibRepF0(d) {
+        return (d && d.meta.resHz) || (state.vibLock > 0 ? state.vibLock / 10 : 0) || 55;
+    }
 
     // µm per pixel at the subject plane — same conversion the analyzer's
     // pixel-blur row uses: object-plane px size = FOV mm × 1000 / image width.
@@ -4485,9 +4505,14 @@
             if (m.envCount > 1) {
                 const span = vibRepDMs(m.envLastMs, m.envFirstMs);
                 const ei = Math.round((ct - vibRepDMs(m.envFirstMs, m.startMs)) / Math.max(span, 1) * (m.envCount - 1));
-                if (ei >= 0 && ei < m.envCount)
-                    txt += '  V ' + (d.env[2 * ei] / 100).toFixed(2) +
-                           '  H ' + (d.env[2 * ei + 1] / 100).toFixed(2) + ' mg';
+                if (ei >= 0 && ei < m.envCount) {
+                    const f0 = vibRepF0(d);
+                    const k  = vibRepUnitsUm ? 248.5 / (f0 * f0) : 1;   // mg → µm at f0
+                    const dp = vibRepUnitsUm ? 3 : 2;
+                    txt += '  V ' + (d.env[2 * ei] / 100 * k).toFixed(dp) +
+                           '  H ' + (d.env[2 * ei + 1] / 100 * k).toFixed(dp) +
+                           (vibRepUnitsUm ? ' µm@' + f0.toFixed(0) + 'Hz' : ' mg');
+                }
             }
             if (nf) txt += '  #' + nf.n;
             g.font = '10px monospace';
