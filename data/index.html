@@ -2577,9 +2577,14 @@
         normal on a quiet bench (flat noise never &ldquo;decays&rdquo;); suspect
         it only when blur is high too.<br><br>
         <b style="color:#3ddb7a;">Threshold</b><br>
-        Frames blurred beyond N camera pixels are flagged (default 2 px &mdash;
-        1 px is usually invisible after stacking; 3+ px is clearly soft). Drag
-        the slider and the list, ticks and count update live.<br><br>
+        Frames blurred beyond N camera pixels are flagged. Ground it against
+        the <b>optical spot</b> shown next to &micro;m/px (needs an eff NA in
+        the MTF tool): the sensor oversamples the optics, so motion blur below
+        the spot size adds almost nothing in quadrature and is invisible &mdash;
+        set the threshold at or above the spot (validated: predictions up to
+        ~3 px produced no measurable softening on a 20&times; setup whose spot
+        is &asymp;3.6 px). Drag the slider and the list, ticks and count update
+        live.<br><br>
         <b style="color:#3ddb7a;">Timeline</b><br>
         <b style="color:#36d6ff;">V</b> / <b style="color:#ff5bd0;">H</b> RMS
         envelope across the whole stack (same colors as the analyzer), one
@@ -2623,7 +2628,8 @@
                oninput="vibRepSetThresh(this.value)">
         <input id="vibrep-thresh-num" type="number" min="0.05" max="50" step="0.1" value="2"
                onchange="vibRepSetThresh(this.value)">
-        <span class="vr-k">px &nbsp;(<span id="vibrep-umpx">--</span> &micro;m/px at the subject)</span>
+        <span class="vr-k">px &nbsp;(<span id="vibrep-umpx">--</span> &micro;m/px at the subject<span id="vibrep-spot"
+              title="Rayleigh spot 0.61λ/NA (λ=550 nm, the MTF panel's eff NA) in sensor pixels — motion blur below the optical spot can't visibly soften the image, so set the flag threshold at or above it"></span>)</span>
         <span id="vibrep-flagged">--</span>
         <span class="vr-btn" onclick="vibRepCopy()" title="Copy the flagged-frame cull list to the clipboard">COPY CULL LIST</span>
         <span class="vr-btn" id="vibrep-savepng" onclick="vibRepSavePng()"
@@ -4391,6 +4397,14 @@
         const umPerPx = vibRepUmPerPx(d);
         document.getElementById('vibrep-umpx').innerText =
             umPerPx > 0 ? umPerPx.toFixed(2) : '?';
+        // Physical anchor for the threshold: motion blur below the optical
+        // spot size is invisible — the sensor oversamples the optics, so small
+        // "pixels of blur" counts overstate their effect.
+        const na = parseFloat(state.effNA) || 0;
+        document.getElementById('vibrep-spot').innerText =
+            (na > 0 && umPerPx > 0)
+                ? ' · optical spot ≈' + (0.61 * 0.55 / na / umPerPx).toFixed(1) + ' px'
+                : '';
         const threshUm = umPerPx > 0 ? vibRepThreshPx * umPerPx : Infinity;
 
         // Meta line. Wall-clock start comes from the millis mapping; the SNTP
