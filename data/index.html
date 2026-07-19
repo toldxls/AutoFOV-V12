@@ -2648,6 +2648,8 @@
               title="Rayleigh spot 0.61λ/NA (λ=550 nm, the MTF panel's eff NA) in sensor pixels — motion blur below the optical spot can't visibly soften the image, so set the flag threshold at or above it"></span>)</span>
         <span id="vibrep-flagged">--</span>
         <span class="vr-btn" onclick="vibRepCopy()" title="Copy the flagged-frame cull list to the clipboard">COPY CULL LIST</span>
+        <span class="vr-btn" onclick="vibRepCopyTable()"
+              title="Copy the full per-frame table as CSV (includes validation columns when photos are scored) — for external analysis">COPY TABLE</span>
         <span class="vr-btn" id="vibrep-savepng" onclick="vibRepSavePng()"
               title="Save the stack-summary PNG card (same card as the stack-done popup)">SAVE PNG</span>
         <span class="vr-btn" id="vibrep-units" onclick="vibRepToggleUnits()"
@@ -4451,6 +4453,7 @@
         const val = vibRepPhotoScores;
         document.getElementById('vibrep-table').classList.toggle('has-val', !!val);
         let sharpNorm = null, dipTot = null;
+        _vibRepSharpNorm = null; _vibRepDipTot = null;   // refreshed below for COPY TABLE
         if (val) {
             const tot  = d.frames.map(f => (val[f.n - 1] || {}).sharp);
             const gxs  = d.frames.map(f => (val[f.n - 1] || {}).gx);
@@ -4458,6 +4461,8 @@
             const sMax = Math.max.apply(null, tot.filter(Number.isFinite).concat([1]));
             sharpNorm  = tot.map(s => Number.isFinite(s) ? s / sMax * 100 : NaN);
             dipTot     = tot.map((_, i) => vibRepNbrDip(tot, i));
+            _vibRepSharpNorm = sharpNorm; _vibRepDipTot = dipTot;
+            _vibRepGx = gxs; _vibRepGy = gys;
             const dipGx = gxs.map((_, i) => vibRepNbrDip(gxs, i));
             const dipGy = gys.map((_, i) => vibRepNbrDip(gys, i));
             // Rank correlations: predicted px blur vs measured softness —
@@ -4692,6 +4697,36 @@
             navigator.clipboard.writeText(text).catch(() => { vibRepCopyFallback(text); });
         } catch (e) { vibRepCopyFallback(text); }
     }
+    // Full-table CSV export — every frame, every column, plus the raw
+    // per-axis photo scores when VALIDATE has run. Built for pasting into
+    // external analysis (or back into a chat) when a correlation needs
+    // explaining rather than trusting.
+    let _vibRepSharpNorm = null, _vibRepDipTot = null, _vibRepGx = null, _vibRepGy = null;
+    function vibRepCopyTable() {
+        const d = vibRepData;
+        if (!d) return;
+        const umPerPx = vibRepUmPerPx(d);
+        const lines = ['photo,tMs,blurV_um,blurH_um,px_equiv,settle_ms,sharp,dip_pct,score_gx,score_gy'];
+        d.frames.forEach((f, i) => {
+            const bu = vibRepBlurUm(f);
+            lines.push([
+                f.n, f.tMs,
+                f.bV === 0xFFFF ? '' : (f.bV / 100).toFixed(2),
+                f.bH === 0xFFFF ? '' : (f.bH / 100).toFixed(2),
+                (Number.isFinite(bu) && umPerPx > 0) ? (bu / umPerPx).toFixed(2) : '',
+                (f.fl & 2) ? f.settle : '',
+                (_vibRepSharpNorm && Number.isFinite(_vibRepSharpNorm[i])) ? _vibRepSharpNorm[i].toFixed(1) : '',
+                (_vibRepDipTot && Number.isFinite(_vibRepDipTot[i])) ? _vibRepDipTot[i].toFixed(2) : '',
+                (_vibRepGx && Number.isFinite(_vibRepGx[i])) ? _vibRepGx[i].toFixed(1) : '',
+                (_vibRepGy && Number.isFinite(_vibRepGy[i])) ? _vibRepGy[i].toFixed(1) : ''
+            ].join(','));
+        });
+        const text = lines.join('\n');
+        try {
+            navigator.clipboard.writeText(text).catch(() => { vibRepCopyFallback(text); });
+        } catch (e) { vibRepCopyFallback(text); }
+    }
+
     // Save the stack-summary PNG card — the same card the stack-done toast
     // offers, reachable again any time from the report.
     function vibRepSavePng() {
