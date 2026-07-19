@@ -4229,6 +4229,30 @@
     });
     window.addEventListener('resize', () => { if (vibRepOpenFlag) vibRepDrawStrip(); });
 
+    // ── Universal help-overlay dismissal ────────────────────────────────────
+    // Every ? help overlay closes on ANY click — inside its bounds, outside
+    // them, anywhere — not just on the exact overlay div (whose own onclick
+    // only caught inside-clicks) or the ? button. Capture phase so we run
+    // before the click's normal target; clicks landing INSIDE an overlay are
+    // swallowed after closing so the overlay's legacy self-toggle can't
+    // immediately reopen it (the overlays are informational text only — no
+    // links or controls to break). Clicks on any .help-btn pass through so
+    // the ? toggles keep working.
+    const HELP_OVERLAY_IDS = ['sensorinfo-help', 'calrun-help', 'centering-help',
+        'vibmenu-help', 'vibrep-help', 'mtf-help', 'cph-help', 'foc-help',
+        'vibp-help', 'calhelp'];
+    document.addEventListener('click', e => {
+        if (e.target.closest && e.target.closest('.help-btn')) return;
+        for (const id of HELP_OVERLAY_IDS) {
+            const h = document.getElementById(id);
+            if (!h) continue;
+            const disp = h.style.display;
+            if (disp === '' || disp === 'none') continue;
+            h.style.display = 'none';
+            if (h.contains(e.target)) { e.stopPropagation(); e.preventDefault(); }
+        }
+    }, true);
+
     function vibRepSetThresh(v) {
         v = parseFloat(v);
         if (!Number.isFinite(v) || v <= 0) return;
