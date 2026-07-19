@@ -4367,6 +4367,10 @@
         }
         if (d.meta.state === 1) mtxt = 'RECORDING · ' + mtxt;
         if (d.meta.state === 3) mtxt += ' · ABORTED (partial)';
+        // v1 archives (pre-12.5.4 firmware) carry no displacement envelope —
+        // flag it so the unchanged µm/mg curve doesn't read as a broken toggle.
+        if ((d.meta.envStride || 2) === 2)
+            mtxt += ' · older recording — µm curve approximated from mg';
         if (d.meta.totalFrames > d.meta.frameCount)
             mtxt += ' · ' + (d.meta.totalFrames - d.meta.frameCount) + ' frames past cap not recorded';
         meta.innerText = mtxt;
