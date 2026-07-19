@@ -1236,6 +1236,9 @@ std::atomic<uint32_t> vibHistTotalFrames{0}; // pulses counted (> frameCount whe
 std::atomic<uint32_t> vibHistEnvCount{0};    // envelope entries published
 std::atomic<uint32_t> vibHistState{0};       // see above
 std::atomic<uint32_t> vibHistStackId{0};     // vibStackStartSeq value this history belongs to
+// FOV (mm × 100) at stack end, stamped by wifiNotifyStackComplete (Core 1) so
+// the report's µm/px scale survives a dashboard reload. 0 = unknown (abort).
+std::atomic<uint32_t> vibHistFovCentimm{0};
 // Auto-power-off request for the accelerometer. loop() (Core 1) sets it after
 // 1 h idle; vibTask (Core 0) owns the actual LSM6DSOX power-down/up so all IMU
 // register access stays on one core (see vibTask).
@@ -4388,7 +4391,10 @@ static float vibGoertzelBlock(uint32_t startPos, float coeff) {
 // Analyse a window of the raw ring: build the decay envelope, fit τ, derive a
 // settle time, publish the results and append to the per-stack log. `startPos`
 // is the ring index of the oldest sample; the window is VIB_SETTLE_SAMPLES long.
-static void vibAnalyzeSettle(uint32_t startPos) {
+// logToStack=false publishes the scalars but skips the per-stack settle log —
+// used for frame 1, whose window is pre-stack bench activity, not a motor-move
+// settle (the old code excluded it by accident of ordering; now explicit).
+static void vibAnalyzeSettle(uint32_t startPos, bool logToStack) {
   const float coeff = 2.0f * cosf(2.0f * (float)M_PI * vibResonanceHz / VIB_SAMPLE_RATE);
   int   peakIdx = 0;
   float peakVal = 0.0f;
@@ -4436,7 +4442,7 @@ static void vibAnalyzeSettle(uint32_t startPos) {
   vibSettleMs.store(settleMs);
   vibSettleTauMs.store(tauMs);
   vibSettleSeq.fetch_add(1);
-  if (vibSettleLogCount < VIB_SETTLE_LOG_MAX)
+  if (logToStack && vibSettleLogCount < VIB_SETTLE_LOG_MAX)
     vibSettleLog[vibSettleLogCount++] = (settleMs > 65535) ? 65535 : (uint16_t)settleMs;
 }
 
@@ -4494,6 +4500,7 @@ void vibTask(void *pvParameters) {
   uint32_t lastDoneSeen  = vibStackDoneSeq.load();
   uint32_t lastAbortSeen = vibStackAbortSeq.load();
   int      pendingBlurIdx = -1;    // V12.6: frame record awaiting its exposure-hop blur
+  uint32_t envHopCnt = 0;          // V12.6: hops since stack start (decimation phase)
   // Per-stack V/H blur accumulators (stage-µm, shutter-weighted). Reset on
   // stack start, published to vibStackBlur{V,H}{Avg,Min,Max} after every FFT
   // hop so wifiNotifyStackComplete() can read current values without a race.
@@ -4503,6 +4510,46 @@ void vibTask(void *pvParameters) {
   float    stackBlurMinV = 0.0f, stackBlurMaxV = 0.0f, stackBlurSumV = 0.0f;
   float    stackBlurMinH = 0.0f, stackBlurMaxH = 0.0f, stackBlurSumH = 0.0f;
   uint32_t stackBlurN    = 0;
+
+  // V12.6: consume a pending stack-start seq — the full per-stack reset. A
+  // lambda because TWO sites must run it: the regular start handler below, and
+  // the pulse handler when frame 1's pulse arrives in the same iteration whose
+  // earlier start check raced past both Core-1 bumps (start-seq lands before
+  // pulse-seq in loop() program order, but this task loads them µs apart —
+  // without the re-check the pulse would be judged against the frozen previous
+  // stack's state and frame 1 silently dropped).
+  auto consumeStackStart = [&]() {
+    uint32_t ss = vibStackStartSeq.load(std::memory_order_acquire);
+    if (ss == lastStartSeen) return;
+    lastStartSeen = ss;
+    vibSettleLogCount = 0;
+    inStack       = true;
+    stackBlurMinV = stackBlurMaxV = stackBlurSumV = 0.0f;
+    stackBlurMinH = stackBlurMaxH = stackBlurSumH = 0.0f;
+    stackBlurN    = 0;
+    // Zero the published atomics so a wifiNotifyStackComplete() that
+    // somehow fires before the first FFT hop can't surface the previous
+    // stack's values. The `vva > 0` gate on the wifi side then naturally
+    // omits the vva/vvn/... keys until we have real data this stack.
+    vibStackBlurVAvg.store(0); vibStackBlurVMin.store(0); vibStackBlurVMax.store(0);
+    vibStackBlurHAvg.store(0); vibStackBlurHMin.store(0); vibStackBlurHMax.store(0);
+    // V12.6: reset the deep history for the new stack. The frames memset means
+    // an index the pulse handler never reaches (coalesced pulses) can only
+    // read as zeros, never as the previous stack's data.
+    if (vibHistReady) {
+      memset(vibHistFrames, 0, (size_t)VIB_HIST_FRAMES_MAX * sizeof(VibFrameRec));
+      vibHistFrameCount.store(0);
+      vibHistTotalFrames.store(0);
+      vibHistEnvCount.store(0);
+      vibHistEnvFirstMs = vibHistEnvLastMs = 0;
+      vibHistEnvShift   = 0;
+      envHopCnt         = 0;
+      vibHistFovCentimm.store(0);
+      vibHistStackId.store(ss);
+      pendingBlurIdx = -1;
+      vibHistState.store(1, std::memory_order_release);
+    }
+  };
   // Per-hop EMA coefficient for vibBaseV/H. Matches the web analyzer's
   // τ = 8 s: α = 1 - exp(-T_hop / τ), T_hop = VIB_HOP / VIB_SAMPLE_RATE.
   const float VIB_BASE_ALPHA =
@@ -4845,12 +4892,17 @@ void vibTask(void *pvParameters) {
 
       // ── V12.6: deep-history envelope — one {V,H} RMS pair per hop while a
       // stack is recording. At capacity, decimate in place (average adjacent
-      // pairs, halve the count) so any stack length fits; the report only
-      // needs first/last-entry times to place entries on its time axis.
+      // pairs, halve the count) AND drop the append rate to match — entry
+      // spacing must stay uniform because the report's timeline linearly
+      // interpolates entry times between envFirstMs and envLastMs. envHopCnt
+      // phase-gates appends to every 2^shift-th hop after each decimation.
       if (inStack && vibHistReady &&
-          vibHistState.load(std::memory_order_relaxed) == 1) {
+          vibHistState.load(std::memory_order_relaxed) == 1 &&
+          (envHopCnt++ & ((1u << vibHistEnvShift) - 1)) == 0) {
         uint32_t n = vibHistEnvCount.load(std::memory_order_relaxed);
         if (n >= VIB_HIST_ENV_MAX) {
+          // 2925 is odd — the unpaired last entry is dropped (one 0.3 s hop
+          // per 15 min); entries 0..2923 average pairwise.
           for (uint32_t i = 0; i < VIB_HIST_ENV_MAX / 2; i++) {
             vibHistEnv[2*i]   = (uint16_t)(((uint32_t)vibHistEnv[4*i]   + vibHistEnv[4*i+2]) / 2);
             vibHistEnv[2*i+1] = (uint16_t)(((uint32_t)vibHistEnv[4*i+1] + vibHistEnv[4*i+3]) / 2);
@@ -4893,36 +4945,10 @@ void vibTask(void *pvParameters) {
       vibState.store(st);
     }
 
-    // ── Stack-start handler. V12.6: this MUST run before the pulse handler —
-    //    loop() bumps the start seq before frame 1's pulse seq (both release),
-    //    so consuming start first here guarantees frame 1 is recorded into the
-    //    freshly reset history, never the old one.
-    uint32_t ss = vibStackStartSeq.load(std::memory_order_acquire);
-    if (ss != lastStartSeen) {
-      lastStartSeen = ss;
-      vibSettleLogCount = 0;
-      inStack       = true;
-      stackBlurMinV = stackBlurMaxV = stackBlurSumV = 0.0f;
-      stackBlurMinH = stackBlurMaxH = stackBlurSumH = 0.0f;
-      stackBlurN    = 0;
-      // Zero the published atomics so a wifiNotifyStackComplete() that
-      // somehow fires before the first FFT hop can't surface the previous
-      // stack's values. The `vva > 0` gate on the wifi side then naturally
-      // omits the vva/vvn/... keys until we have real data this stack.
-      vibStackBlurVAvg.store(0); vibStackBlurVMin.store(0); vibStackBlurVMax.store(0);
-      vibStackBlurHAvg.store(0); vibStackBlurHMin.store(0); vibStackBlurHMax.store(0);
-      // V12.6: reset the deep history for the new stack.
-      if (vibHistReady) {
-        vibHistFrameCount.store(0);
-        vibHistTotalFrames.store(0);
-        vibHistEnvCount.store(0);
-        vibHistEnvFirstMs = vibHistEnvLastMs = 0;
-        vibHistEnvShift   = 0;
-        vibHistStackId.store(ss);
-        pendingBlurIdx = -1;
-        vibHistState.store(1, std::memory_order_release);
-      }
-    }
+    // ── Stack-start handler. V12.6: runs before the pulse handler — loop()
+    //    bumps the start seq before frame 1's pulse seq, and the pulse handler
+    //    re-checks via the same lambda to close the same-iteration race.
+    consumeStackStart();
 
     // ── Settle-time analysis: on each shutter pulse, analyse the window of
     //    ring buffer ending at the pulse — it already holds the motor move +
@@ -4933,16 +4959,33 @@ void vibTask(void *pvParameters) {
     if (ps != lastPulseSeen) {
       lastPulseSeen = ps;
       lastPulseMs   = millis();
+      uint32_t fn = vibPulseFrameNum.load(std::memory_order_relaxed);
+      // Frame 1's start bump precedes its pulse bump on Core 1, so if a stack
+      // pulse arrives while the history is not recording, the start seq is
+      // already visible — consume it now instead of next iteration.
+      if (fn > 0 && vibHistState.load(std::memory_order_relaxed) != 1)
+        consumeStackStart();
       uint32_t startPos = (vibPulseRingPos + VIB_RAW_LEN - VIB_SETTLE_SAMPLES) % VIB_RAW_LEN;
-      vibAnalyzeSettle(startPos);
+      // Frame 1's window is pre-stack bench activity — publish its scalars but
+      // keep it out of the per-stack suggested-wait pool.
+      vibAnalyzeSettle(startPos, fn != 1);
       // V12.6: append the per-frame history record. frameNum 0 = RUN TEST /
       // non-stack pulse — never recorded. Records past the cap only advance
       // totalFrames so the report can say "N frames not recorded".
-      uint32_t fn = vibPulseFrameNum.load(std::memory_order_relaxed);
       if (fn > 0 && vibHistReady &&
           vibHistState.load(std::memory_order_relaxed) == 1) {
         vibHistTotalFrames.store(fn, std::memory_order_relaxed);
         if (fn <= VIB_HIST_FRAMES_MAX) {
+          uint32_t fc = vibHistFrameCount.load(std::memory_order_relaxed);
+          // Coalesced pulses (two edges inside one task pass — chatter, or a
+          // RUN TEST tap overwriting the payload) skip frame numbers; mark the
+          // never-seen records explicitly unmeasured (flags 0) so the report
+          // skips them instead of showing zeroed rows.
+          for (uint32_t g = fc; g + 1 < fn; g++) {
+            vibHistFrames[g].tMs = 0;
+            vibHistFrames[g].blurVc = 0xFFFF; vibHistFrames[g].blurHc = 0xFFFF;
+            vibHistFrames[g].settleMs = 0;    vibHistFrames[g].flags  = 0;
+          }
           VibFrameRec &r = vibHistFrames[fn - 1];
           r.tMs      = vibPulseMs.load(std::memory_order_relaxed) -
                        vibStackStartMs.load(std::memory_order_relaxed);
@@ -4951,7 +4994,6 @@ void vibTask(void *pvParameters) {
           uint32_t sm = vibSettleMs.load(std::memory_order_relaxed);
           r.settleMs = (sm > 65535) ? 65535 : (uint16_t)sm;
           r.flags    = 0x0002;                    // settle valid, blur pending
-          uint32_t fc = vibHistFrameCount.load(std::memory_order_relaxed);
           if (fn > fc) vibHistFrameCount.store(fn, std::memory_order_release);
           pendingBlurIdx = (int)(fn - 1);
         }

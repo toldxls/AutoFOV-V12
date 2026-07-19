@@ -1804,72 +1804,76 @@ static void startFullServer() {
     //   byte 26-27 : envCount
     //   byte 28-31 : envFirstMs / 32-35 : envLastMs (millis of env[0]/env[last])
     //   byte 36-37 : envPeriodMsX10 (informational: 3077 × 2^decimation)
-    //   byte 38-47 : reserved (= 0)
+    //   byte 38-39 : fovCentimm — FOV mm × 100 at stack end, 0 = unknown
+    //                (stamped by wifiNotifyStackComplete; keeps the report's
+    //                µm/px scale correct after a dashboard reload)
+    //   byte 40-47 : reserved (= 0)
     //   byte 48 …  : frameCount × VibFrameRec (12 B, see main tab)
     //   then       : envCount × { u16 vRms, u16 hRms }  (mg × 100)
     //
-    // Race notes: state 2/3 = frozen, fully race-free. A live fetch (state 1)
-    // snapshots the counts here with acquire (pairs with vibTask's release
-    // stores, so entries [0, count) are complete); the only soft spot is the
-    // in-place envelope decimation at the 15-min boundary racing a concurrent
-    // read — a one-fetch cosmetic garble of the strip, self-correcting on the
-    // next fetch. Accepted for a live preview.
+    // Race notes: the whole payload is memcpy'd into a PSRAM snapshot buffer
+    // HERE, at request time — the chunked send then reads only the snapshot,
+    // so vibTask overwriting the live arrays mid-transfer (next stack starting
+    // while a slow client drains the response) cannot garble the bytes on the
+    // wire. The only remaining window is a stack start during the µs-scale
+    // memcpy itself; the stackId re-check below catches it and returns 503
+    // (the dashboard just retries). Counts are acquire-loaded (pairs with
+    // vibTask's release stores) so entries [0, count) are always complete.
     httpServer.on("/vibhist", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!apiAuthed(req)) { req->send(403, "text/plain", "forbidden"); return; }
         static_assert(sizeof(VibFrameRec) == 12, "wire format assumes 12-byte VibFrameRec");
-        struct Hdr { uint8_t b[48]; };
-        Hdr h; memset(h.b, 0, sizeof(h.b));
+        uint8_t hb[48]; memset(hb, 0, sizeof(hb));
         uint32_t fc = 0, ec = 0;
+        const uint32_t sid = vibHistStackId.load();
         if (vibHistReady) {
             fc = vibHistFrameCount.load(std::memory_order_acquire);
             ec = vibHistEnvCount.load(std::memory_order_acquire);
         }
         uint32_t u32; uint16_t u16;
-        h.b[0] = 'V'; h.b[1] = 'H'; h.b[2] = 1;
-        h.b[3] = vibHistReady ? (uint8_t)vibHistState.load() : 0;
-        u32 = vibHistStackId.load();          memcpy(h.b + 4,  &u32, 4);
-        u32 = millis();                       memcpy(h.b + 8,  &u32, 4);
-        u32 = vibStackStartMs.load();         memcpy(h.b + 12, &u32, 4);
-        u32 = vibStackStartEpoch.load();      memcpy(h.b + 16, &u32, 4);
-        u16 = (uint16_t)fc;                   memcpy(h.b + 20, &u16, 2);
+        hb[0] = 'V'; hb[1] = 'H'; hb[2] = 1;
+        hb[3] = vibHistReady ? (uint8_t)vibHistState.load() : 0;
+        memcpy(hb + 4, &sid, 4);
+        u32 = millis();                       memcpy(hb + 8,  &u32, 4);
+        u32 = vibStackStartMs.load();         memcpy(hb + 12, &u32, 4);
+        u32 = vibStackStartEpoch.load();      memcpy(hb + 16, &u32, 4);
+        u16 = (uint16_t)fc;                   memcpy(hb + 20, &u16, 2);
         uint32_t tf = vibHistTotalFrames.load();
-        u16 = (tf > 65535) ? 65535 : (uint16_t)tf; memcpy(h.b + 22, &u16, 2);
-        u16 = vibShutterDenom;                memcpy(h.b + 24, &u16, 2);
-        u16 = (uint16_t)ec;                   memcpy(h.b + 26, &u16, 2);
-        u32 = vibHistEnvFirstMs;              memcpy(h.b + 28, &u32, 4);
-        u32 = vibHistEnvLastMs;               memcpy(h.b + 32, &u32, 4);
+        u16 = (tf > 65535) ? 65535 : (uint16_t)tf; memcpy(hb + 22, &u16, 2);
+        u16 = vibShutterDenom;                memcpy(hb + 24, &u16, 2);
+        u16 = (uint16_t)ec;                   memcpy(hb + 26, &u16, 2);
+        u32 = vibHistEnvFirstMs;              memcpy(hb + 28, &u32, 4);
+        u32 = vibHistEnvLastMs;               memcpy(hb + 32, &u32, 4);
         uint32_t per = 3077u << vibHistEnvShift;
-        u16 = (per > 65535) ? 65535 : (uint16_t)per; memcpy(h.b + 36, &u16, 2);
+        u16 = (per > 65535) ? 65535 : (uint16_t)per; memcpy(hb + 36, &u16, 2);
+        uint32_t fovC = vibHistFovCentimm.load();
+        u16 = (fovC > 65535) ? 65535 : (uint16_t)fovC; memcpy(hb + 38, &u16, 2);
 
         const size_t fBytes = (size_t)fc * sizeof(VibFrameRec);
         const size_t eBytes = (size_t)ec * 4;
-        const size_t total  = sizeof(h.b) + fBytes + eBytes;
+        const size_t total  = sizeof(hb) + fBytes + eBytes;
+        uint8_t* snap = (uint8_t*)ps_malloc(total);
+        if (!snap) snap = (uint8_t*)malloc(total);
+        if (!snap) { req->send(503, "text/plain", "busy"); return; }
+        memcpy(snap, hb, sizeof(hb));
+        if (fBytes) memcpy(snap + sizeof(hb), vibHistFrames, fBytes);
+        if (eBytes) memcpy(snap + sizeof(hb) + fBytes, vibHistEnv, eBytes);
+        // A new stack started mid-snapshot → mixed bytes; refuse, client retries.
+        if (vibHistReady && vibHistStackId.load() != sid) {
+            free(snap);
+            req->send(503, "text/plain", "restarted");
+            return;
+        }
+        // The shared_ptr rides in the filler's capture — freed when AsyncWebServer
+        // destroys the response (complete OR client disconnect mid-transfer).
+        std::shared_ptr<uint8_t> sp(snap, [](uint8_t* p) { free(p); });
         AsyncWebServerResponse* r = req->beginResponse(
             "application/octet-stream", total,
-            [h, fBytes, eBytes](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
-                const size_t eOff  = sizeof(Hdr::b) + fBytes;
-                const size_t total = eOff + eBytes;
-                size_t pos = index, written = 0;
-                while (written < maxLen && pos < total) {
-                    size_t n;
-                    if (pos < sizeof(Hdr::b)) {
-                        n = sizeof(Hdr::b) - pos;
-                        if (n > maxLen - written) n = maxLen - written;
-                        memcpy(buf + written, h.b + pos, n);
-                    } else if (pos < eOff) {
-                        n = eOff - pos;
-                        if (n > maxLen - written) n = maxLen - written;
-                        memcpy(buf + written,
-                               (const uint8_t*)vibHistFrames + (pos - sizeof(Hdr::b)), n);
-                    } else {
-                        n = total - pos;
-                        if (n > maxLen - written) n = maxLen - written;
-                        memcpy(buf + written,
-                               (const uint8_t*)vibHistEnv + (pos - eOff), n);
-                    }
-                    written += n; pos += n;
-                }
-                return written;
+            [sp, total](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+                if (index >= total) return 0;
+                size_t n = total - index;
+                if (n > maxLen) n = maxLen;
+                memcpy(buf, sp.get() + index, n);
+                return n;
             });
         r->addHeader("Cache-Control", "no-store");
         req->send(r);
@@ -3400,6 +3404,10 @@ void wifiNotifyStackComplete() {
     float mult    = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
     float fov     = mult * fovAt(avgDist);
     unsigned long durMs = lastPulseTime - firstPulseTime;
+    // V12.6: stamp the stack's FOV into the vib history so the report's µm/px
+    // scale survives a dashboard reload (the live FOV may point elsewhere by
+    // the time the report is re-fetched).
+    if (fov > 0) vibHistFovCentimm.store((uint32_t)lroundf(fov * 100.0f));
 
     if (wsServer.count() > 0) {
         StaticJsonDocument<512> doc;
