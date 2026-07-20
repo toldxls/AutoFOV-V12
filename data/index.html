@@ -2206,6 +2206,8 @@
         color:#cfe7df; font-family:monospace; font-size:11px; font-weight:bold;
         padding:6px 12px; border-radius:4px; cursor:pointer; }
       #campick-close { background:#2a1414; border-color:#7a3a3a; margin-top:10px; }
+      #campick-err { color:#e78a8a; font-size:10px; line-height:1.4; margin-top:8px;
+                     min-height:13px; }
     </style>
     <div id="campick-overlay" onclick="if(event.target===this)campickClose()">
       <div id="campick-box">
@@ -2226,6 +2228,7 @@
           <span>&rarr;</span><span id="campick-out">--</span>
           <button onclick="campickApplyCalc()">APPLY</button>
         </div>
+        <div id="campick-err"></div>
         <button id="campick-close" onclick="campickClose()">CANCEL</button>
       </div>
     </div>
@@ -2712,6 +2715,8 @@
                oninput="vibRepSetThresh(this.value)">
         <input id="vibrep-thresh-num" type="number" min="0.05" max="50" step="0.1" value="2"
                onchange="vibRepSetThresh(this.value)">
+        <span class="vr-btn" onclick="vibRepThreshAuto()"
+              title="Back to the automatic threshold — the optical spot for the current eff NA and Photo Width (2 px until the MTF panel has measured an NA). Moving the slider pins your own value instead, on every stack, until you press this.">AUTO</span>
         <span class="vr-k">px &nbsp;(<span id="vibrep-umpx">--</span> &micro;m/px at the subject<span id="vibrep-spot"
               title="Rayleigh spot 0.61λ/NA (λ=550 nm, the MTF panel's eff NA) in sensor pixels — motion blur below the optical spot can't visibly soften the image, so set the flag threshold at or above it"></span>)</span>
         <span id="vibrep-flagged">--</span>
@@ -2732,6 +2737,10 @@
         <input type="file" id="vibrep-val-files" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                multiple style="display:none;" onchange="vibRepValidateChosen(this)">
         <span id="vibrep-val-status" class="vr-k"></span>
+        <!-- Sticky notes from the last VALIDATE run (photo-count / width
+             mismatch). Separate from -val-status, which every render
+             overwrites with the correlation readout. -->
+        <span id="vibrep-val-warn" class="vr-k" style="color:#e7c35a;"></span>
       </div>
       <div id="vibrep-strip-wrap"><canvas id="vibrep-strip"></canvas></div>
       <div id="vibrep-body">
@@ -3439,6 +3448,9 @@
         photoWidth: 6960,
         demarcDist: 0.40,
         effNA: 0.29,          // effective NA of the imaging train — MTF + FOCUS share it
+        effNASet: false,      // ...but 0.29 is only a placeholder until MTF measures
+                              // one (or a saved value is restored) — anything that
+                              // derives physics from NA must check this first
         tickPitch: 0.01,      // micrometer minor-tick spacing, mm — browser-only
                               // (MEASURE FROM PHOTO); persisted in localStorage,
                               // the firmware has no use for it
@@ -4406,37 +4418,73 @@
         }
     }, true);
 
+    const VIBREP_SLIDER_MAX = 8;    // slider's resting top end; grows to fit a
+                                    // bigger spot so the handle never pegs and lies
+    const VIBREP_THRESH_MAX = 50;   // hard ceiling — matches the number input's max
+    // Rayleigh spot 0.61λ/NA (λ=550 nm green) in sensor px. Returns 0 when the
+    // imaging train's NA has never been measured — state.effNA is a placeholder
+    // until then, and deriving a spot from it would be a made-up number.
+    function vibRepSpotPx(umPerPx) {
+        const na = state.effNASet ? (parseFloat(state.effNA) || 0) : 0;
+        return (na > 0 && umPerPx > 0) ? 0.61 * 0.55 / na / umPerPx : 0;
+    }
+    // A user-chosen threshold sticks (across reloads too) — the optical-spot
+    // auto-default below only applies while the user has never chosen. The flag
+    // is held in memory, not inferred from localStorage: with storage blocked
+    // (Safari private mode) the persisted copy silently vanishes, and re-reading
+    // it per render would let the auto-default overwrite the value the user just
+    // picked, making the control impossible to move.
+    let vibRepThreshUserSet = false;
+    function vibRepSyncThreshInputs() {
+        const s = document.getElementById('vibrep-thresh');
+        const n = document.getElementById('vibrep-thresh-num');
+        if (s) {
+            s.max = Math.max(VIBREP_SLIDER_MAX, Math.ceil(vibRepThreshPx));
+            s.value = vibRepThreshPx;
+        }
+        if (n) n.value = vibRepThreshPx;
+    }
     function vibRepSetThresh(v) {
         v = parseFloat(v);
         if (!Number.isFinite(v) || v <= 0) return;
-        vibRepThreshPx = v;
-        // A user-chosen threshold sticks (across reloads too) — the optical-spot
-        // auto-default below only applies while the user has never chosen.
-        try { localStorage.setItem('afovVibThreshPx', String(v)); } catch (e) {}
-        document.getElementById('vibrep-thresh').value = Math.min(v, 8);
-        document.getElementById('vibrep-thresh-num').value = v;
+        vibRepThreshPx = Math.min(v, VIBREP_THRESH_MAX);
+        vibRepThreshUserSet = true;
+        try { localStorage.setItem('afovVibThreshPx', String(vibRepThreshPx)); } catch (e) {}
+        vibRepSyncThreshInputs();
         vibRepRender();
     }
+    // Escape hatch back to the setup-derived default. Without this a single
+    // slider nudge would pin one px value across every future camera/objective,
+    // recoverable only by clearing localStorage by hand.
+    function vibRepThreshAuto() {
+        vibRepThreshUserSet = false;
+        try { localStorage.removeItem('afovVibThreshPx'); } catch (e) {}
+        vibRepRender();   // vibRepAutoThresh re-derives and syncs the inputs
+    }
+    try {
+        const sv = parseFloat(localStorage.getItem('afovVibThreshPx'));
+        if (Number.isFinite(sv) && sv > 0) {
+            vibRepThreshPx = Math.min(sv, VIBREP_THRESH_MAX);
+            vibRepThreshUserSet = true;
+        }
+    } catch (e) {}
+    vibRepSyncThreshInputs();   // the restored value must show on the controls
     // Default the flag threshold to the optical spot (0.61λ/NA in sensor px):
     // blur below the spot is invisible (see the ? help), so the spot is the
     // sensible starting flag line for ANY camera/objective combination. Runs
     // only until the user picks a value themselves.
-    try {
-        const sv = parseFloat(localStorage.getItem('afovVibThreshPx'));
-        if (Number.isFinite(sv) && sv > 0) vibRepThreshPx = sv;
-    } catch (e) {}
     function vibRepAutoThresh(umPerPx) {
-        try { if (localStorage.getItem('afovVibThreshPx')) return; } catch (e) {}
-        const na = parseFloat(state.effNA) || 0;
-        if (!(na > 0 && umPerPx > 0)) return;
-        const spot = 0.61 * 0.55 / na / umPerPx;
-        const t = Math.min(8, Math.max(1, Math.round(spot * 2) / 2));
+        if (vibRepThreshUserSet) return;
+        const spot = vibRepSpotPx(umPerPx);
+        // Round UP to the next half px and don't cap below the spot: the whole
+        // point is a threshold at or above it, so rounding down would flag blur
+        // the tool itself calls invisible.
+        const t = spot > 0
+            ? Math.min(VIBREP_THRESH_MAX, Math.max(1, Math.ceil(spot * 2) / 2))
+            : 2;   // no measured NA — neutral default, nothing to anchor to
         if (Math.abs(t - vibRepThreshPx) > 0.01) {
             vibRepThreshPx = t;
-            const s = document.getElementById('vibrep-thresh');
-            const n = document.getElementById('vibrep-thresh-num');
-            if (s) s.value = Math.min(t, 8);
-            if (n) n.value = t;
+            vibRepSyncThreshInputs();
         }
     }
     function vibRepSortBy(k) {
@@ -4513,11 +4561,9 @@
         // Physical anchor for the threshold: motion blur below the optical
         // spot size is invisible — the sensor oversamples the optics, so small
         // "pixels of blur" counts overstate their effect.
-        const na = parseFloat(state.effNA) || 0;
+        const spotPx = vibRepSpotPx(umPerPx);
         document.getElementById('vibrep-spot').innerText =
-            (na > 0 && umPerPx > 0)
-                ? ' · optical spot ≈' + (0.61 * 0.55 / na / umPerPx).toFixed(1) + ' px'
-                : '';
+            spotPx > 0 ? ' · optical spot ≈' + spotPx.toFixed(1) + ' px' : '';
         const threshUm = umPerPx > 0 ? vibRepThreshPx * umPerPx : Infinity;
 
         // Meta line. Wall-clock start comes from the millis mapping; the SNTP
@@ -4880,8 +4926,10 @@
     async function vibRepValidateChosen(input) {
         const files = [...input.files]; input.value = '';
         const st = document.getElementById('vibrep-val-status');
+        const warn = document.getElementById('vibrep-val-warn');
         if (!files.length) return;
         if (!vibRepData) { st.innerText = 'open a report first'; return; }
+        if (warn) warn.innerText = '';
         files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
         const scores = [];
         let imgW = 0;
@@ -4889,7 +4937,10 @@
             st.innerText = 'scoring ' + (i + 1) + '/' + files.length + '…';
             try {
                 const bmp = await createImageBitmap(files[i]);
-                if (!imgW) imgW = bmp.width;
+                // Long edge, not .width: createImageBitmap applies EXIF
+                // orientation, so a portrait-shot frame reports the sensor's
+                // SHORT edge as width and would fake a mismatch below.
+                if (!imgW) imgW = Math.max(bmp.width, bmp.height);
                 const s = vibRepSobelScore(bmp);
                 bmp.close();
                 scores.push({ name: files[i].name, gx: s.gx, gy: s.gy, sharp: s.gx + s.gy });
@@ -4900,13 +4951,21 @@
         vibRepPhotoScores = scores;
         let note = (files.length === vibRepData.frames.length) ? '' :
             files.length + ' photos vs ' + vibRepData.frames.length + ' frames — aligned from #1 by name order';
-        // The photos know the true sensor width — flag a stale Photo Width
-        // setting, since it scales every px-equiv number.
+        // Surface a width disagreement, but do NOT tell the user which side is
+        // wrong: resized exports (the common case for a validation set) look
+        // exactly like a stale Photo Width from here, and "just set Photo Width
+        // to match" would push the export's width to the device and corrupt
+        // µm/px for the calibrator too. State the fact, name both causes.
         const pw = state.photoWidth || 0;
         if (imgW && pw && Math.abs(imgW - pw) / pw > 0.02)
-            note = '⚠ photos are ' + imgW + ' px wide but Photo Width is set to ' + pw +
-                   ' — PX EQUIV uses ' + pw + ' (fix via CALIBRATOR → PICK)' + (note ? ' · ' + note : '');
-        st.innerText = note;
+            note = '⚠ photos are ' + imgW + ' px on the long edge, Photo Width is ' + pw +
+                   ' — PX EQUIV uses ' + pw + '. Harmless if these are resized exports; ' +
+                   'if they are full-size out of the camera, Photo Width is stale ' +
+                   '(CALIBRATOR → PICK).' + (note ? ' · ' + note : '');
+        // Sticky element — the render below overwrites -val-status with the
+        // correlation line, which used to erase this note before it was seen.
+        if (warn) warn.innerText = note;
+        st.innerText = '';
         vibRepRender();
     }
 
@@ -4966,23 +5025,32 @@
             mp.addEventListener('input', upd);
             document.getElementById('campick-ar').addEventListener('change', upd);
         }
+        campickErr('');
         document.getElementById('campick-overlay').classList.add('open');
     }
     function campickClose() { document.getElementById('campick-overlay').classList.remove('open'); }
+    function campickErr(msg) {
+        const el = document.getElementById('campick-err');
+        if (el) el.innerText = msg;
+    }
     function campickApply(w) {
         w = Math.round(w);
-        if (!(w >= 500 && w <= 20000)) return;
-        state.photoWidth = w;
-        sendCommand('calWidth', w);
-        const el = document.getElementById('val-calw');
-        if (el) el.innerText = w + ' px';
+        // The MP box accepts typed values past its own max, so an out-of-range
+        // width is reachable from the UI — say so instead of a dead button.
+        if (!(w >= 500 && w <= 20000)) {
+            campickErr(w + ' px is outside the supported 500–20000 px range — check the MP value.');
+            return;
+        }
+        campickErr('');
+        setCalField('width', w);   // shared write path: state + calWidth + UI refresh
         campickClose();
         if (vibRepOpenFlag) vibRepRender();   // px-equiv scale just changed
     }
     function campickApplyCalc() {
         const v = parseFloat(document.getElementById('campick-mp').value);
         const ar = parseFloat(document.getElementById('campick-ar').value);
-        if (v > 0) campickApply(Math.sqrt(v * 1e6 * ar));
+        if (!(v > 0)) { campickErr('Enter a megapixel value first.'); return; }
+        campickApply(Math.sqrt(v * 1e6 * ar));
     }
 
     function vibRepCopyFallback(text) {
@@ -6705,6 +6773,7 @@
     function saveEffNA(v){
         if (!(v>0)) return;
         state.effNA = v;
+        state.effNASet = true;
         try { localStorage.setItem('afEffNA', String(v)); } catch(e){}
         const el = document.getElementById('mtf-na'); if (el) el.value = v;
         const el2 = document.getElementById('foc-na'); if (el2) el2.value = v;
@@ -6712,7 +6781,7 @@
     function loadEffNA(){
         try {
             const s = parseFloat(localStorage.getItem('afEffNA'));
-            if (isFinite(s) && s > 0.02 && s < 1.5) state.effNA = s;
+            if (isFinite(s) && s > 0.02 && s < 1.5) { state.effNA = s; state.effNASet = true; }
         } catch(e){}
     }
     loadEffNA();
