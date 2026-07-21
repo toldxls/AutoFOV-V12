@@ -214,6 +214,16 @@
         .gfx-btn.flat:active { filter: brightness(1.3); }
         .gfx-btn:active { filter: brightness(1.5); }
 
+        /* Normalized menu-button palette — a saturated jewel-tone fill + a vivid
+           same-hue border over the shared .gfx-btn bevel. Reused across menus so
+           per-button inline colors drop away. Semantic, not per-screen:
+           .btn-go = primary/confirm, .btn-danger = destructive, .btn-nav =
+           navigation / neutral. (background shorthand drops the gloss gradient
+           but keeps the bevel — matches the look these replaced.) */
+        .gfx-btn.btn-go     { background: #0a7350; border: 1px solid #40f5a8; }
+        .gfx-btn.btn-danger { background: #9c2636; border: 1px solid #ff6272; }
+        .gfx-btn.btn-nav    { background: #0c6577; border: 1px solid #33cce6; }
+
         /* Help badge — ONE look for every "?" in the dashboard. They had drifted
            into five styles (green/cyan/teal rings, two "i" rectangles), so this
            reuses the .gfx-btn gloss+bevel recipe over a green fill, in a circle.
@@ -261,7 +271,9 @@
 
         .title-stripe {
             position: absolute; height: 28px;
-            background-color: #0000CD; border-radius: 3px; color: #00FFFF;
+            /* Normalized header plate — teal-blue in the same family as the menu
+               buttons (was the cheap primary #0000CD). One place, every screen. */
+            background-color: #0d6285; border-radius: 3px; color: #00FFFF;
             padding: 0 12px; font-size: 11px; font-weight: bold; box-sizing: border-box;
             display: flex; align-items: center; justify-content: center;
             /* patched3 UI polish: gradient sheen + engraved, faintly-haloed
@@ -363,11 +375,6 @@
         .cal-edit-row:active::before, .cal-edit-row.btn-press::before {
             border-color: var(--edit-hint); background: var(--edit-fill); filter: brightness(1.75);
         }
-        /* Sleeker calibrator-screen palette: swap the cheap primary-blue header
-           plate for a grayish blue-green in the same family as the CAL I/O /
-           CENTER-MTF-FOCUS buttons. Scoped to this screen — other headers keep
-           the default until they're reviewed too. */
-        #screen-calsettings .title-stripe { background-color: #0d6285; }
 
         #plot-area { position: absolute; left: 25px; top: 40px; width: 200px; height: 242px;
                      box-sizing: border-box; }
@@ -685,7 +692,7 @@
                 </div>
 
                 <!-- STACK CALC with calculator icon (patched3: redrawn cleaner) -->
-                <div class="gfx-btn btn-menu" style="top: 127px; background-color: #008894;"
+                <div class="gfx-btn btn-menu btn-nav" style="top: 127px;"
                      onclick="switchScreen('screen-stackcalc')">
                     <svg style="position:absolute;left:9px;" width="22" height="26" viewBox="0 0 22 26">
                         <rect x="0.6" y="0.6" width="20.8" height="24.8" rx="3"
@@ -707,7 +714,7 @@
                 <!-- BRIGHTNESS with sun icon (patched3: was a lightbulb whose
                      X-filament read like a cancel mark — a sun is the
                      universal brightness glyph) -->
-                <div class="gfx-btn btn-menu" style="top: 172px; background-color: #0000CD;"
+                <div class="gfx-btn btn-menu btn-nav" style="top: 172px;"
                      onclick="switchScreen('screen-brightness')">
                     <svg style="position:absolute;left:8px;" width="24" height="24" viewBox="0 0 24 24">
                         <circle cx="12" cy="12" r="5" fill="#FFE08A"
@@ -728,7 +735,7 @@
 
                 <!-- MEMORY with DIMM icon (patched3: redrawn cleaner — rounded
                      PCB, two chips, gold contact fingers, key notch) -->
-                <div class="gfx-btn btn-menu" style="top: 217px; height: 38px; background-color: #008894; color: #000;"
+                <div class="gfx-btn btn-menu btn-nav" style="top: 217px; height: 38px;"
                      onclick="switchScreen('screen-memory')">
                     <svg style="position:absolute;left:6px;" width="26" height="20" viewBox="0 0 26 20">
                         <rect x="0.6" y="3.6" width="24.8" height="12.8" rx="1.6"
@@ -748,7 +755,7 @@
                 </div>
 
                 <!-- VIBRATION monitor (V12) -->
-                <div class="gfx-btn btn-menu" style="top: 262px; height: 34px; background-color: #00968C;"
+                <div class="gfx-btn btn-menu btn-nav" style="top: 262px; height: 34px;"
                      onclick="switchScreen('screen-vibration')">
                     <svg style="position:absolute;left:9px;" width="26" height="22" viewBox="0 0 26 22">
                         <polyline id="vib-tile-wave" points="1,11 4,3 7,19 10,6 13,16 16,9 19,13 25,11"
@@ -1038,9 +1045,9 @@
                     <div id="val-caln" class="gfx-text" style="left: 100px; top: 6px; font-size: 16px; color: var(--accent-green);">10</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 10px; top: 196px; width: 105px; height: 46px; background: #0a7350; border: 1px solid #40f5a8;"
+                <div class="gfx-btn btn-go" style="left: 10px; top: 196px; width: 105px; height: 46px;"
                      onclick="startCal()">START CAL</div>
-                <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #9c2636; border: 1px solid #ff6272;"
+                <div id="btn-reset-all" class="gfx-btn btn-danger" style="left: 125px; top: 196px; width: 105px; height: 46px;"
                      onclick="resetAll()">RESET ALL</div>
                 <!-- Three secondary analysis tools, 68 px each — the only way to fit a
                      third without disturbing START CAL / CAL I/O (no free vertical band
