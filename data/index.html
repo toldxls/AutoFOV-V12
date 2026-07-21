@@ -63,6 +63,11 @@
             --accent-yellow:     #FFFF00;
             --accent-magenta:    #CA00FC;
             --accent-red-dark:   #C81800;
+            /* Tap-to-edit field affordance (calibrator rows) — translucent so it
+               reads on the black / midnight / forest display backgrounds. */
+            --edit-border:       rgba(120,200,180,0.32);
+            --edit-fill:         rgba(120,200,180,0.07);
+            --edit-hint:         rgba(150,220,200,0.60);
         }
         body.theme-midnight  { --display-bg: #000048; }   /* firmware 0x0009 */
         body.theme-forest    { --display-bg: #002400; }   /* firmware 0x0120 */
@@ -76,6 +81,10 @@
             --accent-yellow:     #805400;
             --accent-magenta:    #780078;
             --accent-red-dark:   #780000;
+            /* Darker ink on the light-grey daylight background. */
+            --edit-border:       rgba(0,70,45,0.38);
+            --edit-fill:         rgba(0,70,45,0.06);
+            --edit-hint:         rgba(0,70,45,0.62);
         }
 
         #hardware-bezel {
@@ -326,6 +335,31 @@
            press box) instead of pinning them near the top. Overrides the inline
            top:6/8px the rows ship with. */
         .stack-row .gfx-text { top: 50% !important; transform: translateY(-50%); }
+
+        /* Tap-to-edit calibrator rows: draw an inset, rounded "input field" box
+           behind the label+value so the row reads as editable at rest, not just
+           on press. Done with ::before/::after (pointer-events:none) so no child
+           moves and clicks still land on the row. ::after is a pencil hint,
+           suppressed on the Photo Width row where the PICK button already sits. */
+        .cal-edit-row::before {
+            content: ''; position: absolute; left: 7px; right: 6px; top: 2px; bottom: 3px;
+            border: 1px solid var(--edit-border); border-radius: 5px;
+            background: var(--edit-fill); pointer-events: none;
+            transition: border-color 90ms ease-out, background 90ms ease-out, filter 90ms ease-out;
+        }
+        .cal-edit-row::after {
+            content: '\270E'; position: absolute; right: 13px; top: 50%;
+            transform: translateY(-50%); color: var(--edit-hint); font-size: 11px;
+            pointer-events: none;
+        }
+        .cal-edit-row.has-pick::after { content: none; }
+        .cal-edit-row:hover::before { border-color: var(--edit-hint); filter: brightness(1.35); }
+        .cal-edit-row:hover::after  { filter: brightness(1.4); }
+        /* Press feedback lives on the field box, not the full-width row bg. */
+        .cal-edit-row:active, .cal-edit-row.btn-press { background-color: transparent !important; }
+        .cal-edit-row:active::before, .cal-edit-row.btn-press::before {
+            border-color: var(--edit-hint); background: var(--edit-fill); filter: brightness(1.75);
+        }
 
         #plot-area { position: absolute; left: 25px; top: 40px; width: 200px; height: 242px;
                      box-sizing: border-box; }
@@ -966,7 +1000,7 @@
                      with the other pre-cal settings: it feeds MEASURE FROM PHOTO and
                      is pointless to change once the capture loop is running. -->
                 <!-- Row 0: Photo Width -->
-                <div class="stack-row" style="top: 45px; height: 35px;" onclick="editCalField('width')" title="Tap to type">
+                <div class="stack-row cal-edit-row has-pick" style="top: 45px; height: 35px;" onclick="editCalField('width')" title="Tap to type">
                     <div id="lbl-calw" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Photo Width:</div>
                     <div id="val-calw" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">6960 px</div>
                     <!-- V12.5: set width by camera model / MP instead of typing -->
@@ -981,17 +1015,17 @@
                          text-overflow:ellipsis; white-space:nowrap; display:none;"></div>
                 </div>
                 <!-- Row 1: Demarc Dist -->
-                <div class="stack-row" style="top: 80px; height: 35px;" onclick="editCalField('demarc')" title="Tap to type">
+                <div class="stack-row cal-edit-row" style="top: 80px; height: 35px;" onclick="editCalField('demarc')" title="Tap to type">
                     <div id="lbl-cald" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Demarc Dist:</div>
                     <div id="val-cald" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">0.40 mm</div>
                 </div>
                 <!-- Row 2: Tick Pitch (browser-side — drives MEASURE FROM PHOTO only) -->
-                <div class="stack-row" style="top: 115px; height: 35px;" onclick="editCalField('pitch')" title="Micrometer minor-tick spacing — tap to type">
+                <div class="stack-row cal-edit-row" style="top: 115px; height: 35px;" onclick="editCalField('pitch')" title="Micrometer minor-tick spacing — tap to type">
                     <div id="lbl-calp" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Tick Pitch:</div>
                     <div id="val-calp" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">0.010 mm</div>
                 </div>
                 <!-- Row 3: Cal Points -->
-                <div class="stack-row" style="top: 150px; height: 35px;" onclick="editCalField('points')" title="Tap to type">
+                <div class="stack-row cal-edit-row" style="top: 150px; height: 35px;" onclick="editCalField('points')" title="Tap to type">
                     <div id="lbl-caln" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Cal Points:</div>
                     <div id="val-caln" class="gfx-text" style="left: 122px; top: 6px; font-size: 16px; color: var(--accent-green);">10</div>
                 </div>
