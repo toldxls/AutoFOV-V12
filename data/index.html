@@ -973,6 +973,12 @@
                     <div class="gfx-btn" style="left: 198px; top: 6px; width: 36px; height: 22px; font-size: 9px;
                          background:#0a3344; border:1px solid #2a7a9a;"
                          onclick="event.stopPropagation(); campickOpen()" title="Pick your camera or compute from megapixels">PICK</div>
+                    <!-- The picked camera model (drill-down only), pinned to the row's
+                         lower-left. NOT .gfx-text — that class is force-centered. Blank
+                         for a manually typed or MP-calculated width. -->
+                    <div id="cal-cam-model" style="position:absolute; left:12px; top:24px; font-size:8px;
+                         line-height:1; color:#5e8478; max-width:182px; overflow:hidden;
+                         text-overflow:ellipsis; white-space:nowrap; display:none;"></div>
                 </div>
                 <!-- Row 1: Demarc Dist -->
                 <div class="stack-row" style="top: 80px; height: 35px;" onclick="editCalField('demarc')" title="Tap to type">
@@ -5082,8 +5088,8 @@
             html = '<button class="cp-back" data-back="1">&lsaquo; ' +
                    campickEsc(campickMfr) + ' &middot; ' + campickEsc(campickFmt) + '</button>' +
                    CAMPICK_DB[campickMfr][campickFmt].map(c =>
-                       '<button data-w="' + c[1] + '">' + campickEsc(c[0]) +
-                       '<b>' + c[1] + ' px</b></button>').join('');
+                       '<button data-w="' + c[1] + '" data-label="' + campickEsc(c[0]) + '">' +
+                       campickEsc(c[0]) + '<b>' + c[1] + ' px</b></button>').join('');
         }
         list.innerHTML = html;
     }
@@ -5101,7 +5107,11 @@
             list.addEventListener('click', e => {
                 const b = e.target.closest('button');
                 if (!b) return;
-                if (b.dataset.w !== undefined) { campickApply(parseInt(b.dataset.w, 10)); return; }
+                if (b.dataset.w !== undefined) {
+                    campickApply(parseInt(b.dataset.w, 10),
+                        { label: b.dataset.label, crumb: campickMfr + ' · ' + campickFmt });
+                    return;
+                }
                 if (b.dataset.back !== undefined) { campickBack(); return; }
                 if (b.dataset.fmt !== undefined) { campickFmt = b.dataset.fmt; campickRenderList(); return; }
                 if (b.dataset.mfr !== undefined) { campickMfr = b.dataset.mfr; campickRenderList(); }
@@ -5125,7 +5135,7 @@
         const el = document.getElementById('campick-err');
         if (el) el.innerText = msg;
     }
-    function campickApply(w) {
+    function campickApply(w, model) {
         w = Math.round(w);
         // The MP box accepts typed values past its own max, so an out-of-range
         // width is reachable from the UI — say so instead of a dead button.
@@ -5135,6 +5145,9 @@
         }
         campickErr('');
         setCalField('width', w);   // shared write path: state + calWidth + UI refresh
+        // setCalField cleared any prior camera tag; a model pick re-stamps it,
+        // an MP-calc / list-less call (no model) leaves the field blank.
+        if (model && model.label) calStoreCamModel(w, model.label, model.crumb);
         campickClose();
         if (vibRepOpenFlag) vibRepRender();   // px-equiv scale just changed
     }
@@ -6841,7 +6854,7 @@
     }
 
     function setCalField(key, v) {
-        if (key === 'width')       { state.photoWidth = Math.round(v); sendCommand('calWidth',   state.photoWidth); }
+        if (key === 'width')       { state.photoWidth = Math.round(v); sendCommand('calWidth',   state.photoWidth); calClearCamModel(); }
         else if (key === 'demarc') { state.demarcDist = v;             sendCommand('demarcDist', state.demarcDist); }
         else if (key === 'points') { state.calPoints  = Math.round(v); sendCommand('calPoints',  state.calPoints);  }
         else if (key === 'pitch')  { state.tickPitch  = v;             saveTickPitch(); }
@@ -6878,11 +6891,43 @@
     }
     loadEffNA();
 
+    // Camera-model tag shown under Photo Width. Set only when a model is picked
+    // from the drill-down; a manually typed or MP-calculated width leaves it
+    // blank (the width is all the math needs — the model is just a label). The
+    // pick is persisted so it survives a reload, but shown only while the stored
+    // width still matches state.photoWidth, so a later manual or device-driven
+    // width change silently drops a now-wrong camera name.
+    function calStoreCamModel(w, label, crumb) {
+        try { localStorage.setItem('afCamModel',
+            JSON.stringify({ w: w, label: label, crumb: crumb || '' })); } catch (e) {}
+        updateCalSettingsUI();
+    }
+    function calClearCamModel() {
+        try { localStorage.removeItem('afCamModel'); } catch (e) {}
+    }
+    function calReadCamModel() {
+        try {
+            const o = JSON.parse(localStorage.getItem('afCamModel'));
+            if (o && o.w > 0 && o.label) return o;
+        } catch (e) {}
+        return null;
+    }
     function updateCalSettingsUI() {
         document.getElementById('val-calw').innerText = state.photoWidth + ' px';
         document.getElementById('val-cald').innerText = state.demarcDist.toFixed(2) + ' mm';
         document.getElementById('val-calp').innerText = state.tickPitch.toFixed(3) + ' mm';
         document.getElementById('val-caln').innerText = state.calPoints;
+        const camEl = document.getElementById('cal-cam-model');
+        if (camEl) {
+            const cam = calReadCamModel();
+            if (cam && cam.w === state.photoWidth) {
+                camEl.innerText = cam.label;
+                camEl.title = cam.crumb ? cam.crumb + ' · ' + cam.label : cam.label;
+                camEl.style.display = '';
+            } else {
+                camEl.style.display = 'none';
+            }
+        }
     }
 
     function startCal() {
