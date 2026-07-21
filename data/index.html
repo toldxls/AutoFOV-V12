@@ -348,8 +348,11 @@
             transition: border-color 90ms ease-out, background 90ms ease-out, filter 90ms ease-out;
         }
         .cal-edit-row::after {
-            content: '\270E'; position: absolute; right: 13px; top: 50%;
-            transform: translateY(-50%); color: var(--edit-hint); font-size: 11px;
+            /* Centered under the PICK button on the Photo Width row (PICK is
+               left:190 + width:36 → centre x=208) so the pencils line up with
+               it down the column. */
+            content: '\270E'; position: absolute; left: 208px; top: 50%;
+            transform: translate(-50%, -50%); color: var(--edit-hint); font-size: 11px;
             pointer-events: none;
         }
         .cal-edit-row.has-pick::after { content: none; }
@@ -360,6 +363,11 @@
         .cal-edit-row:active::before, .cal-edit-row.btn-press::before {
             border-color: var(--edit-hint); background: var(--edit-fill); filter: brightness(1.75);
         }
+        /* Sleeker calibrator-screen palette: swap the cheap primary-blue header
+           plate for a grayish blue-green in the same family as the CAL I/O /
+           CENTER-MTF-FOCUS buttons. Scoped to this screen — other headers keep
+           the default until they're reviewed too. */
+        #screen-calsettings .title-stripe { background-color: #153a48; }
 
         #plot-area { position: absolute; left: 25px; top: 40px; width: 200px; height: 242px;
                      box-sizing: border-box; }
@@ -1030,9 +1038,9 @@
                     <div id="val-caln" class="gfx-text" style="left: 100px; top: 6px; font-size: 16px; color: var(--accent-green);">10</div>
                 </div>
 
-                <div class="gfx-btn" style="left: 10px; top: 196px; width: 105px; height: 46px; background: #0000CD;"
+                <div class="gfx-btn" style="left: 10px; top: 196px; width: 105px; height: 46px; background: #0e544a; border: 1px solid #2ea089;"
                      onclick="startCal()">START CAL</div>
-                <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #780000;"
+                <div id="btn-reset-all" class="gfx-btn" style="left: 125px; top: 196px; width: 105px; height: 46px; background: #5a2b31; border: 1px solid #9a5a62;"
                      onclick="resetAll()">RESET ALL</div>
                 <!-- Three secondary analysis tools, 68 px each — the only way to fit a
                      third without disturbing START CAL / CAL I/O (no free vertical band
