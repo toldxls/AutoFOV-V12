@@ -2196,6 +2196,13 @@
         cursor:pointer; text-align:left; }
       #campick-list button b { color:#9fe6cf; display:block; font-size:10px; }
       #campick-list button:active { filter:brightness(1.3); }
+      /* Drill-down levels: maker → format tiles carry a chevron; the crumb/back
+         row spans both columns above the current level's tiles. */
+      #campick-list button.cp-nav { display:flex; justify-content:space-between;
+        align-items:center; font-size:12px; padding:9px 8px; }
+      #campick-list button.cp-nav span { color:#5e8478; font-size:13px; }
+      #campick-list button.cp-back { grid-column:1 / -1; background:#0c2620;
+        border-color:#1d5548; color:#7ab4a2; font-size:11px; padding:6px 8px; }
       #campick-calc { margin-top:12px; border-top:1px solid #14302a; padding-top:10px;
         display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11px; color:#7a958c; }
       #campick-calc input, #campick-calc select { background:#08140f; border:1px solid #2a7a6a;
@@ -2214,7 +2221,8 @@
         <h3>CAMERA / PHOTO WIDTH</h3>
         <div class="cp-sub">Sets <b>Photo Width</b> — the image width in pixels your camera
           produces. It scales every px-of-blur number (µm/px at the subject = FOV ÷ width).
-          Pick a camera, or compute from megapixels below. Cropped shooting modes change it!</div>
+          Pick maker &rarr; sensor format &rarr; model, or compute from megapixels below.
+          Cropped shooting modes change it!</div>
         <div id="campick-list"></div>
         <div id="campick-calc">
           <span>or</span>
@@ -5000,22 +5008,104 @@
 
     // ── Camera / Photo-Width picker (calibrator screen PICK button) ─────────
     // Width in px is all the blur math needs from the camera (µm/px at the
-    // subject = FOV / width) — pixel PITCH never enters. Entries are full-res
-    // stills width; cropped modes differ (the sub-note warns).
-    const CAMPICK_LIST = [
-        ['Canon R7 / 90D / M6 II', 6960], ['Canon R5 / R5 II', 8192],
-        ['Canon R6 II / R8', 6000], ['Canon R10', 6000],
-        ['Sony a7R IV / V', 9504], ['Sony a7 IV', 7008],
-        ['Sony a6700', 6192], ['Nikon Z8 / Z9', 8256],
-        ['Nikon Z6 III', 6048], ['Fuji X-T5 / X-H2', 7728],
-        ['OM System OM-1', 5184], ['Panasonic S5 II', 6000]
-    ];
+    // subject = FOV / width) — pixel PITCH never enters. Values are the full-res
+    // still's LONG-EDGE pixel count (derived from each sensor's MP + aspect);
+    // cropped shooting modes differ, so the sub-note warns. Drill down
+    // maker → sensor format → model; the format level is built from whatever
+    // formats a maker actually has, so no dead ends (Canon has no medium format,
+    // Fuji shows GFX + X only, etc).
+    const CAMPICK_DB = {
+        'Canon': {
+            'Full Frame': [
+                ['R5 / R5 II', 8192], ['R3 / R6 II / R8', 6000], ['R6', 5472],
+                ['R', 6720], ['RP / 6D Mark II', 6240], ['5D Mark IV', 6720],
+                ['5DS / 5DS R', 8688], ['1D X Mark III', 5472]],
+            'APS-C': [
+                ['R7 / 90D / M6 II', 6960], ['R10 / R50 / R100', 6000],
+                ['80D / 77D / 800D', 6000], ['7D Mark II', 5472]]
+        },
+        'Sony': {
+            'Full Frame': [
+                ['a7R V / IV / a7CR', 9504], ['a7R III', 7952], ['a1 / a1 II', 8640],
+                ['a7 IV / a7C II', 7008], ['a7 III / a9 III / a7C', 6000],
+                ['a7S III', 4240]],
+            'APS-C': [
+                ['a6700 / FX30', 6192], ['a6600 / a6400 / ZV-E10', 6000]]
+        },
+        'Nikon': {
+            'Full Frame': [
+                ['Z9 / Z8 / Z7 II', 8256], ['D850', 8256], ['Z6 III / Zf', 6048],
+                ['Z6 II / Z6 / D780', 6048], ['Z5', 6016]],
+            'APS-C': [
+                ['Z50 II / Z50 / Z fc / Z30', 5568], ['D500 / D7500', 5568],
+                ['D5600', 6000]]
+        },
+        'Olympus / OM System': {
+            'Micro 4/3': [
+                ['OM-1 / OM-1 II / OM-3', 5184], ['OM-5', 5184],
+                ['E-M1 III / E-M1X', 5184], ['E-M10 IV / PEN E-P7', 5184]]
+        },
+        'Fujifilm': {
+            'Medium Format': [
+                ['GFX 100 II / 100 / 100S', 11648], ['GFX 50S II / 50R', 8256]],
+            'APS-C': [
+                ['X-T5 / X-H2 / X-T50 / X100VI', 7728],
+                ['X-H2S / X-T4 / X-S20 / X100V', 6240],
+                ['X-T30 II / X-E4', 6240]]
+        },
+        'Panasonic': {
+            'Full Frame': [
+                ['S1R', 8368], ['S5 II / S5 IIX / S5', 6000], ['S1 / S1H / S9', 6000]],
+            'Micro 4/3': [
+                ['GH7 / GH6 / G9 II', 5776], ['GH5 II / GH5 / G9', 5184],
+                ['G95 / G90', 5184]]
+        }
+    };
+    let campickMfr = null, campickFmt = null;   // current drill-down position
+    function campickEsc(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function campickRenderList() {
+        const list = document.getElementById('campick-list');
+        let html;
+        if (!campickMfr) {                       // level 0: makers
+            html = Object.keys(CAMPICK_DB).map(m =>
+                '<button class="cp-nav" data-mfr="' + campickEsc(m) + '">' +
+                campickEsc(m) + '<span>&rsaquo;</span></button>').join('');
+        } else if (!campickFmt) {                // level 1: formats this maker has
+            html = '<button class="cp-back" data-back="1">&lsaquo; ' +
+                   campickEsc(campickMfr) + '</button>' +
+                   Object.keys(CAMPICK_DB[campickMfr]).map(f =>
+                       '<button class="cp-nav" data-fmt="' + campickEsc(f) + '">' +
+                       campickEsc(f) + '<span>&rsaquo;</span></button>').join('');
+        } else {                                 // level 2: models → width
+            html = '<button class="cp-back" data-back="1">&lsaquo; ' +
+                   campickEsc(campickMfr) + ' &middot; ' + campickEsc(campickFmt) + '</button>' +
+                   CAMPICK_DB[campickMfr][campickFmt].map(c =>
+                       '<button data-w="' + c[1] + '">' + campickEsc(c[0]) +
+                       '<b>' + c[1] + ' px</b></button>').join('');
+        }
+        list.innerHTML = html;
+    }
+    function campickBack() {
+        if (campickFmt) campickFmt = null;
+        else campickMfr = null;
+        campickRenderList();
+    }
     function campickOpen() {
         const list = document.getElementById('campick-list');
-        if (!list.childElementCount) {
-            list.innerHTML = CAMPICK_LIST.map(c =>
-                '<button onclick="campickApply(' + c[1] + ')">' + c[0] +
-                '<b>' + c[1] + ' px</b></button>').join('');
+        if (!list.dataset.wired) {
+            list.dataset.wired = '1';
+            // One delegated handler for every drill-down level — avoids inline
+            // onclick quoting for maker/format names (spaces, slashes).
+            list.addEventListener('click', e => {
+                const b = e.target.closest('button');
+                if (!b) return;
+                if (b.dataset.w !== undefined) { campickApply(parseInt(b.dataset.w, 10)); return; }
+                if (b.dataset.back !== undefined) { campickBack(); return; }
+                if (b.dataset.fmt !== undefined) { campickFmt = b.dataset.fmt; campickRenderList(); return; }
+                if (b.dataset.mfr !== undefined) { campickMfr = b.dataset.mfr; campickRenderList(); }
+            });
             const mp = document.getElementById('campick-mp');
             const upd = () => {
                 const v = parseFloat(mp.value), ar = parseFloat(document.getElementById('campick-ar').value);
@@ -5025,6 +5115,8 @@
             mp.addEventListener('input', upd);
             document.getElementById('campick-ar').addEventListener('change', upd);
         }
+        campickMfr = null; campickFmt = null;    // always reopen at the maker level
+        campickRenderList();
         campickErr('');
         document.getElementById('campick-overlay').classList.add('open');
     }
