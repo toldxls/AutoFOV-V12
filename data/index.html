@@ -7859,10 +7859,19 @@
                                               (stk && stk < 1024) ? '#ffaa00' : 'var(--text-primary)';
         }
         // Session fault counters, spelled out (no hover tooltip needed on touch).
+        // Each counter gets its own hue so the three read apart at a glance; a
+        // non-zero count flips that one segment to bold warning-red so a real
+        // fault still stands out. Hues are theme accent vars (daylight-safe).
         if (g('diag-faults')) {
             const a = s.allocFails || 0, ii = s.i2cErrs || 0, w = s.wifiDrops || 0;
-            g('diag-faults').innerText = 'alloc ' + a + '·i2c ' + ii + '·wifi ' + w;
-            g('diag-faults').style.color = (a || ii || w) ? '#ffaa00' : 'var(--text-disabled)';
+            const seg = (label, n, col) =>
+                '<span style="color:' + (n ? 'var(--accent-red-dark)' : col) +
+                (n ? '; font-weight:bold' : '') + '">' + label + ' ' + n + '</span>';
+            g('diag-faults').innerHTML =
+                seg('alloc', a, 'var(--accent-cyan)') + '·' +
+                seg('i2c', ii, 'var(--accent-magenta)') + '·' +
+                seg('wifi', w, 'var(--accent-yellow)');
+            g('diag-faults').style.color = '';   // per-segment spans own the color now
         }
         // Last crash location (from the flash coredump) — the smoking gun for a PANIC.
         // crashStale = the dump is from a DIFFERENT build, so the PC won't decode
