@@ -223,6 +223,12 @@
         .gfx-btn.btn-go     { background: #0a7350; border: 1px solid #40f5a8; }
         .gfx-btn.btn-danger { background: #9c2636; border: 1px solid #ff6272; }
         .gfx-btn.btn-nav    { background: #0c6577; border: 1px solid #33cce6; }
+        /* Hue variants — same jewel-tone recipe, for menus that want their
+           entries colour-coded rather than uniform. */
+        .gfx-btn.btn-purple    { background: #6e2a88; border: 1px solid #c46ef0; }
+        .gfx-btn.btn-green     { background: #12602f; border: 1px solid #48e878; }
+        .gfx-btn.btn-blue-lt   { background: #1a72c0; border: 1px solid #62c8ff; }
+        .gfx-btn.btn-blue-dk   { background: #1c2a6e; border: 1px solid #6076e2; }
 
         /* Help badge — ONE look for every "?" in the dashboard. They had drifted
            into five styles (green/cyan/teal rings, two "i" rectangles), so this
@@ -692,7 +698,7 @@
                 </div>
 
                 <!-- STACK CALC with calculator icon (patched3: redrawn cleaner) -->
-                <div class="gfx-btn btn-menu btn-nav" style="top: 127px;"
+                <div class="gfx-btn btn-menu btn-blue-dk" style="top: 127px;"
                      onclick="switchScreen('screen-stackcalc')">
                     <svg style="position:absolute;left:9px;" width="22" height="26" viewBox="0 0 22 26">
                         <rect x="0.6" y="0.6" width="20.8" height="24.8" rx="3"
@@ -714,7 +720,7 @@
                 <!-- BRIGHTNESS with sun icon (patched3: was a lightbulb whose
                      X-filament read like a cancel mark — a sun is the
                      universal brightness glyph) -->
-                <div class="gfx-btn btn-menu btn-nav" style="top: 172px;"
+                <div class="gfx-btn btn-menu btn-purple" style="top: 172px;"
                      onclick="switchScreen('screen-brightness')">
                     <svg style="position:absolute;left:8px;" width="24" height="24" viewBox="0 0 24 24">
                         <circle cx="12" cy="12" r="5" fill="#FFE08A"
@@ -735,7 +741,7 @@
 
                 <!-- MEMORY with DIMM icon (patched3: redrawn cleaner — rounded
                      PCB, two chips, gold contact fingers, key notch) -->
-                <div class="gfx-btn btn-menu btn-nav" style="top: 217px; height: 38px;"
+                <div class="gfx-btn btn-menu btn-blue-lt" style="top: 217px; height: 38px;"
                      onclick="switchScreen('screen-memory')">
                     <svg style="position:absolute;left:6px;" width="26" height="20" viewBox="0 0 26 20">
                         <rect x="0.6" y="3.6" width="24.8" height="12.8" rx="1.6"
@@ -755,7 +761,7 @@
                 </div>
 
                 <!-- VIBRATION monitor (V12) -->
-                <div class="gfx-btn btn-menu btn-nav" style="top: 262px; height: 34px;"
+                <div class="gfx-btn btn-menu btn-green" style="top: 262px; height: 34px;"
                      onclick="switchScreen('screen-vibration')">
                     <svg style="position:absolute;left:9px;" width="26" height="22" viewBox="0 0 26 22">
                         <polyline id="vib-tile-wave" points="1,11 4,3 7,19 10,6 13,16 16,9 19,13 25,11"
