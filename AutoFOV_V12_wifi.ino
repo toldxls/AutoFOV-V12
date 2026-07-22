@@ -1782,6 +1782,35 @@ static void startFullServer() {
         req->send(r);
     });
 
+    // GET /vibtest — V12.6: live interval-test state + per-shot settle log.
+    // Streamed row-by-row (no big JsonDocument). vibTest* scalars are Core-1
+    // 32-bit aligned so the cross-core status read can't tear; the shot array is
+    // append-only under the acquire-loaded vibTestShotCount, so entries below it
+    // are complete. The dashboard polls this ~1 Hz while a test runs.
+    httpServer.on("/vibtest", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!apiAuthed(req)) { req->send(403, "text/plain", "forbidden"); return; }
+        uint32_t n = vibTestShotCount.load(std::memory_order_acquire);
+        if (n > VIBTEST_MAX_SHOTS) n = VIBTEST_MAX_SHOTS;
+        long nextIn = (long)vibTestNextFireMs - (long)millis();
+        if (nextIn < 0 || !vibTestActive) nextIn = 0;
+        AsyncResponseStream* res = req->beginResponseStream("application/json");
+        res->addHeader("Cache-Control", "no-store");
+        res->printf("{\"active\":%d,\"fired\":%d,\"target\":%d,\"intervalMs\":%u,"
+                    "\"nextInMs\":%ld,\"seq\":%u,\"shots\":[",
+                    vibTestActive ? 1 : 0, vibTestFired, vibTestTarget,
+                    (unsigned)vibTestIntervalMs, nextIn,
+                    (unsigned)vibTestSeq.load(std::memory_order_relaxed));
+        for (uint32_t i = 0; i < n; i++) {
+            VibTestShot* s = &vibTestShots[i];
+            if (i) res->print(',');
+            res->printf("{\"t\":%u,\"s\":%u,\"tau\":%u,\"pk\":%u,\"dom\":%u,\"got\":%d}",
+                        (unsigned)s->tMs, s->settleMs, s->tauMs, s->peakMg10,
+                        s->dominantHz10, s->settleMs > 0 ? 1 : 0);
+        }
+        res->print("]}");
+        req->send(res);
+    });
+
     // GET /vibhist — V12.6: the deep per-stack vibration history, binary.
     // JSON is a non-starter here: 2048 frame records would need a ~200 KB
     // JsonDocument pool + a ~70 KB output String on the AsyncTCP task's heap.
@@ -2465,6 +2494,17 @@ static void handleWifiCommand(const char* key, const char* val) {
     } else if (strcmp(key, "imgs") == 0) {
         stackTotalImgs = constrain(iVal, 2, 50000);
         if (currentMode == STACK_CALC) refreshStackCalcValues(true);
+
+    // ── Interval / time-lapse vibration test (V12.6) ─────────────────────────
+    //   val "stop" halts; val "<intervalMs>,<count>" (count 0 = until stopped)
+    //   starts. vibTestStart/Stop live in the main tab (Core 1); this runs on
+    //   Core 1 via the wifiLoop drain, so calling them directly is safe.
+    } else if (strcmp(key, "vibtest") == 0) {
+        if (strcmp(val, "stop") == 0) { vibTestStop(); }
+        else {
+            int iv = 0, ct = 0;
+            if (sscanf(val, "%d,%d", &iv, &ct) >= 1) vibTestStart((uint32_t)iv, ct);
+        }
 
     // ── Time per step (seconds, 0.1-60) ─────────────────────────────────────
     } else if (strcmp(key, "secStep") == 0) {

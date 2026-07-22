@@ -5547,6 +5547,105 @@ void saveAllSettings() {
   preferences.end();
 }
 
+// ── Interval / time-lapse trigger (V12.6) ───────────────────────────────────
+// Auto-fire the shutter on a timer for repeatable vibration-effects testing:
+// fire IR_MJKZZ_CAPTURE (shutter only, no rail move) every N ms, and log each
+// shot's settle time. The real shutter's A4 pulse drives the EXISTING per-pulse
+// ring-down analysis (vibPulseSeq → vibSettleMs/vibSettleSeq) — we only fire and
+// record, we don't re-measure. This is an explicit user-started test; the
+// passive-monitor rule (never gate capture) is untouched — the monitor still
+// doesn't; this is a separate deliberate mode.
+#define VIBTEST_MAX_SHOTS 300
+struct VibTestShot {          // 12 B — RAM only, for the life of a run
+  uint32_t tMs;               // millis relative to test start
+  uint16_t settleMs;          // measured settle (0 = timed out — no A4 pulse seen)
+  uint16_t tauMs;             // fitted decay τ
+  uint16_t peakMg10;          // ring-down envelope peak (accel proxy) × 10
+  uint16_t dominantHz10;
+};
+static VibTestShot vibTestShots[VIBTEST_MAX_SHOTS];
+std::atomic<uint32_t> vibTestShotCount{0};   // release on append; endpoint acquire-reads
+std::atomic<uint32_t> vibTestSeq{0};         // any state/result change (cheap poll check)
+static bool     vibTestActive     = false;
+static uint32_t vibTestIntervalMs = 10000;
+static int      vibTestTarget     = 20;      // 0 = run until stopped
+static int      vibTestFired      = 0;
+static uint32_t vibTestStartMs    = 0;
+static uint32_t vibTestNextFireMs = 0;
+static bool     vibTestAwait      = false;   // a fired shot is awaiting its settle
+static uint32_t vibTestFireMs     = 0;
+static uint32_t vibTestSeqAtFire  = 0;
+
+static void vibTestStart(uint32_t intervalMs, int count) {
+  vibTestIntervalMs = intervalMs < 2000 ? 2000 : intervalMs;   // ≥ settle window
+  vibTestTarget     = count < 0 ? 0 : count;
+  vibTestFired      = 0;
+  vibTestShotCount.store(0, std::memory_order_release);
+  vibTestStartMs    = millis();
+  vibTestNextFireMs = millis();     // first shot immediately
+  vibTestAwait      = false;
+  vibTestActive     = true;
+  vibTestSeq.fetch_add(1);
+}
+static void vibTestStop() {
+  vibTestActive = false; vibTestAwait = false;
+  vibTestSeq.fetch_add(1);
+}
+
+// Runs every loop() iteration (Core 1). All vibTest* state is Core-1-only
+// (loop + the wifiLoop command drain both run here); only the two atomics cross
+// to the endpoint task.
+static void vibTestTick() {
+  if (!vibTestActive) return;
+  uint32_t now = millis();
+
+  // 1) Capture the in-flight shot's settle once vibTask publishes it.
+  if (vibTestAwait) {
+    uint32_t seq = vibSettleSeq.load(std::memory_order_acquire);
+    bool got = (seq != vibTestSeqAtFire);
+    if (got || (now - vibTestFireMs > 4000)) {          // measured, or timed out
+      uint32_t n = vibTestShotCount.load(std::memory_order_relaxed);
+      if (n < VIBTEST_MAX_SHOTS) {
+        VibTestShot s;
+        s.tMs = vibTestFireMs - vibTestStartMs;
+        if (got) {
+          uint32_t sm = vibSettleMs.load(), tk = vibSettleTauMs.load(), dm = vibDominant.load();
+          long pk = lroundf(vibEnvPeak * 10.0f);
+          s.settleMs     = sm > 65535 ? 65535 : (uint16_t)sm;
+          s.tauMs        = tk > 65535 ? 65535 : (uint16_t)tk;
+          s.peakMg10     = (pk < 0) ? 0 : (pk > 65535 ? 65535 : (uint16_t)pk);
+          s.dominantHz10 = dm > 65535 ? 65535 : (uint16_t)dm;
+        } else {
+          s.settleMs = 0; s.tauMs = 0; s.peakMg10 = 0; s.dominantHz10 = 0;
+        }
+        vibTestShots[n] = s;
+        vibTestShotCount.store(n + 1, std::memory_order_release);
+      }
+      vibTestAwait = false;
+      vibTestSeq.fetch_add(1);
+    }
+  }
+
+  // 2) Fire the next shot when due (never while awaiting the prior settle).
+  if (!vibTestAwait && (int32_t)(now - vibTestNextFireMs) >= 0 &&
+      (vibTestTarget == 0 || vibTestFired < vibTestTarget) &&
+      vibTestShotCount.load(std::memory_order_relaxed) < VIBTEST_MAX_SHOTS) {
+    irLed.sendNEC(IR_MJKZZ_CAPTURE);                     // shutter-only capture
+    vibTestFired++;
+    vibTestFireMs    = now;
+    vibTestSeqAtFire = vibSettleSeq.load(std::memory_order_acquire);
+    vibTestAwait     = true;
+    vibTestNextFireMs = now + vibTestIntervalMs;
+    vibTestSeq.fetch_add(1);
+  }
+
+  // 3) Finished?
+  if (vibTestTarget != 0 && vibTestFired >= vibTestTarget && !vibTestAwait) {
+    vibTestActive = false;
+    vibTestSeq.fetch_add(1);
+  }
+}
+
 void loop() {
   // V12.5 (F3): feed the loopTask hardware watchdog at the TOP of every
   // iteration — always reached, so an early `return` in the body (e.g. the
@@ -5573,6 +5672,10 @@ void loop() {
 
   // V12: advance any armed signature capture (screen-independent).
   vibCapturePoll();
+
+  // V12.6: advance the interval / time-lapse vibration test (fires the shutter
+  // on a timer, logs each shot's settle). No-op unless a test is running.
+  vibTestTick();
 
   // patched3: deferred "calib" namespace save — WS settings edits (brightness,
   // LED duty, secStep) mark calibPrefsDirty instead of writing flash per
