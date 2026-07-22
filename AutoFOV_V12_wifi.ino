@@ -2506,6 +2506,20 @@ static void handleWifiCommand(const char* key, const char* val) {
             if (sscanf(val, "%d,%d", &iv, &ct) >= 1) vibTestStart((uint32_t)iv, ct);
         }
 
+    // ── TOF temp-compensation coefficients (V12.6) ───────────────────────────
+    //   val "off" disables; val "<coeff_mm_per_C>,<refC>" sets + persists.
+    } else if (strcmp(key, "tofcomp") == 0) {
+        if (strcmp(val, "off") == 0) { tofTempCoeff = 0.0f; saveTofComp(); }
+        else {
+            float cf = 0.0f, rf = 21.0f;
+            int got = sscanf(val, "%f,%f", &cf, &rf);
+            if (got >= 1 && cf > -50.0f && cf < 50.0f) {
+                tofTempCoeff = cf;
+                if (got >= 2 && rf > -20.0f && rf < 60.0f) tofTempRef = rf;
+                saveTofComp();
+            }
+        }
+
     // ── Time per step (seconds, 0.1-60) ─────────────────────────────────────
     } else if (strcmp(key, "secStep") == 0) {
         stackTimePerStep = constrain(fVal, 0.1f, 60.0f);
@@ -3191,6 +3205,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // for deciding whether the chip needs a heatsink in your enclosure.
     // Cached — this builder also runs on Core 0 (see gDieTempC10).
     doc["dieC"]        = (int32_t)gDieTempC10.load(std::memory_order_relaxed) / 10.0f;
+    // V12.6: LSM6DSOX ambient temp (0 = not read yet) + active TOF temp-comp.
+    doc["ambC"]        = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
+    doc["tcCoeff"]     = tofTempCoeff;
+    doc["tcRef"]       = tofTempRef;
     doc["chipInfo"]    = ESP.getChipModel();
     // BUILD_SLOC / BUILD_SKB are computed by tools/embed_html.py across the
     // hand-written .ino + .html + tools sources at build time, so the count

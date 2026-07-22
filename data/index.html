@@ -952,8 +952,11 @@
                      onclick="toggleHighRefl()">HIGH REFLECTIVITY: OFF</div>
 
                 <div id="btn-sensor-relock" class="gfx-btn"
-                     style="left: 10px; top: 254px; width: 220px; height: 38px; background-color: #8a5a00;"
+                     style="left: 10px; top: 254px; width: 220px; height: 34px; background-color: #8a5a00;"
                      onclick="relockTof()">RE-LOCK TOF (COLD)</div>
+
+                <div class="gfx-btn btn-nav" style="left: 10px; top: 292px; width: 220px; height: 22px; font-size: 10px;"
+                     onclick="tofcalOpen()" title="Temperature-compensate the TOF range over the room's 65–75°F swing">TEMP CAL</div>
 
             </div>
 
@@ -2301,6 +2304,68 @@
         <button id="campick-close" onclick="campickClose()">CANCEL</button>
       </div>
     </div>
+
+    <!-- ===== V12.6: TOF TEMPERATURE CAL (#tofcal) — fit + apply the range's
+         temperature-offset correction from captured (temp, dist) points. ===== -->
+    <style>
+      #tofcal-overlay { display:none; position:fixed; inset:0; z-index:662;
+        background:rgba(4,13,11,0.92); align-items:center; justify-content:center;
+        flex-direction:column; font-family:monospace; padding:16px; }
+      #tofcal-overlay.open { display:flex; }
+      #tofcal-box { background:#0a1f1a; border:1px solid #2a7a6a; border-radius:8px;
+        padding:14px 16px; max-width:460px; width:100%; max-height:92vh; overflow-y:auto;
+        color:#cfe7df; font-size:12px; }
+      #tofcal-box h3 { color:#00c8b4; font-size:15px; letter-spacing:1px; margin:0 0 6px; }
+      #tofcal-box .tc-sub { font-size:10px; color:#7ab4a2; line-height:1.55; margin-bottom:10px; }
+      #tofcal-live { display:flex; gap:20px; margin-bottom:8px; font-size:13px; }
+      #tofcal-live b { color:#9fe6cf; }
+      #tofcal-pts { max-height:150px; overflow-y:auto; margin:4px 0; }
+      #tofcal-pts table { width:100%; border-collapse:collapse; font-size:11px; }
+      #tofcal-pts td, #tofcal-pts th { padding:3px 8px; text-align:right; border-bottom:1px solid #14302a; }
+      #tofcal-pts th { color:#7ab4a2; }
+      #tofcal-fit { font-size:11px; color:#9fe6cf; margin:8px 0; min-height:15px; }
+      #tofcal-fit .warn, #tofcal-box .warn { color:#e7c35a; }
+      #tofcal-active { font-size:11px; margin:6px 0; }
+      #tofcal-box input { width:74px; background:#08140f; border:1px solid #2a7a6a; color:#cfe7df;
+        font-family:monospace; font-size:12px; padding:4px; border-radius:3px; }
+      #tofcal-box button { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df;
+        font-family:monospace; font-size:11px; font-weight:bold; padding:6px 12px; border-radius:4px; cursor:pointer; }
+      #tofcal-box button.apply { background:#0a7350; border-color:#40f5a8; color:#eafff4; }
+      #tofcal-box button.apply:disabled { opacity:0.4; cursor:default; }
+      #tofcal-box button.off { background:#2a1414; border-color:#7a3a3a; }
+      .tofcal-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+    </style>
+    <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
+      <div id="tofcal-box">
+        <h3>TOF TEMPERATURE CAL</h3>
+        <div class="tc-sub">The TOF range drifts slightly with room temperature, which shifts the
+          live FOV (FOV = k / (a&middot;distance + b)). Aim at a <b>fixed</b> target and CAPTURE a point
+          now and then as the room warms/cools across the day; once the points span a degree or two,
+          APPLY fits the correction. Temperature is the LSM6DSOX sensor (close to ambient).</div>
+        <div id="tofcal-live">
+          <span>Ambient: <b id="tofcal-temp">--</b></span>
+          <span>Distance: <b id="tofcal-dist">--</b></span>
+        </div>
+        <div class="tofcal-row">
+          <button onclick="tofcalCapture()">CAPTURE POINT</button>
+          <button onclick="tofcalClearPts()">clear points</button>
+        </div>
+        <div id="tofcal-pts"></div>
+        <div id="tofcal-fit">&mdash;</div>
+        <div class="tofcal-row">
+          <button class="apply" id="tofcal-apply" onclick="tofcalApply()">APPLY FIT</button>
+          <span>or manual: <input id="tofcal-coeff" type="number" step="0.001" placeholder="mm/°C"> @
+            <input id="tofcal-ref" type="number" step="0.1" placeholder="ref °C"></span>
+          <button onclick="tofcalManual()">SET</button>
+        </div>
+        <div id="tofcal-active">&mdash;</div>
+        <div class="tofcal-row" style="margin-top:10px;">
+          <button class="off" onclick="tofcalOff()">TURN OFF</button>
+          <button onclick="tofcalClose()">CLOSE</button>
+        </div>
+      </div>
+    </div>
+
     <div id="calio-name-overlay">
       <div class="lgTitle">EXPORT</div>
       <div class="lgSub">Name this calibration profile (e.g. objective-20x).<br>
@@ -4613,7 +4678,69 @@
         setTimeout(vibtestRender, 1200);
     }
 
+    // ===== V12.6: TOF TEMPERATURE CAL (fit dist-vs-temp, push the coefficient) =====
+    let tofcalOpenFlag = false, tofcalPts = [];
+    function tofcalOpen()  { tofcalOpenFlag = true;  document.getElementById('tofcal-overlay').classList.add('open'); tofcalRender(); }
+    function tofcalClose() { tofcalOpenFlag = false; document.getElementById('tofcal-overlay').classList.remove('open'); }
+    function tofcalTemp() { return (typeof state.ambC === 'number' && state.ambC > 0) ? state.ambC : null; }
+    function tofcalDist() { const d = (typeof state._pendingDist === 'number') ? state._pendingDist : state.dist; return (typeof d === 'number' && d > 0) ? d : null; }
+    function tofcalCapture() {
+        const t = tofcalTemp(), d = tofcalDist();
+        if (t == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no ambient temperature yet — is the IMU awake?</span>'; return; }
+        if (d == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no live distance — aim at a target first</span>'; return; }
+        tofcalPts.push({ t: t, d: d }); tofcalRender();
+    }
+    function tofcalClearPts() { tofcalPts = []; tofcalRender(); }
+    function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalRender(); }
+    // Least-squares dist = slope·(T) + b; slope is the mm/°C coefficient, ref = mean T.
+    function tofcalFit() {
+        const n = tofcalPts.length; if (n < 2) return null;
+        let st = 0, sd = 0; tofcalPts.forEach(p => { st += p.t; sd += p.d; });
+        const mt = st / n, md = sd / n;
+        let num = 0, den = 0, sdd = 0;
+        tofcalPts.forEach(p => { num += (p.t - mt) * (p.d - md); den += (p.t - mt) * (p.t - mt); sdd += (p.d - md) * (p.d - md); });
+        const ts = tofcalPts.map(p => p.t), span = Math.max(...ts) - Math.min(...ts);
+        if (den < 1e-9) return { slope: 0, ref: mt, r2: 0, span: span, n: n };
+        return { slope: num / den, ref: mt, r2: sdd > 1e-9 ? (num * num) / (den * sdd) : 0, span: span, n: n };
+    }
+    function tofcalRender() {
+        const t = tofcalTemp(), d = tofcalDist();
+        document.getElementById('tofcal-temp').innerText = t != null ? t.toFixed(1) + ' °C' : '--';
+        document.getElementById('tofcal-dist').innerText = d != null ? d.toFixed(1) + ' mm' : '--';
+        document.getElementById('tofcal-pts').innerHTML = tofcalPts.length
+            ? '<table><thead><tr><th>#</th><th>T °C</th><th>dist mm</th><th></th></tr></thead><tbody>' +
+              tofcalPts.map((p, i) => '<tr><td>' + (i + 1) + '</td><td>' + p.t.toFixed(1) + '</td><td>' +
+                  p.d.toFixed(2) + '</td><td><span style="cursor:pointer;color:#e78a8a" onclick="tofcalDelPt(' + i + ')">✕</span></td></tr>').join('') +
+              '</tbody></table>'
+            : '<span style="color:#7a958c">no points yet — capture at a couple of different room temps</span>';
+        const fit = tofcalFit(), fEl = document.getElementById('tofcal-fit'), apply = document.getElementById('tofcal-apply');
+        if (!fit) { fEl.innerHTML = '<span class="warn">capture ≥ 2 points at different temperatures</span>'; apply.disabled = true; }
+        else {
+            let msg = 'slope <b>' + fit.slope.toFixed(3) + '</b> mm/°C · R² ' + fit.r2.toFixed(2) +
+                      ' · span ' + fit.span.toFixed(1) + ' °C · ref ' + fit.ref.toFixed(1) + ' °C';
+            if (fit.span < 1.0) msg += ' <span class="warn">(span &lt; 1 °C — collect more range before trusting it)</span>';
+            else if (fit.r2 < 0.5) msg += ' <span class="warn">(weak fit)</span>';
+            fEl.innerHTML = msg; apply.disabled = false;
+        }
+        const cf = state.tcCoeff, rf = state.tcRef, act = document.getElementById('tofcal-active');
+        act.innerHTML = (typeof cf === 'number' && cf !== 0)
+            ? 'Active: <b style="color:#3ddb7a">' + cf.toFixed(3) + ' mm/°C @ ' + (typeof rf === 'number' ? rf.toFixed(1) : '?') + ' °C</b>'
+            : 'Active: <span style="color:#7a958c">off (no compensation)</span>';
+    }
+    function tofcalApply() {
+        const fit = tofcalFit(); if (!fit) return;
+        sendCommand('tofcomp', fit.slope.toFixed(4) + ',' + fit.ref.toFixed(2));
+    }
+    function tofcalManual() {
+        const cf = parseFloat(document.getElementById('tofcal-coeff').value);
+        const rf = parseFloat(document.getElementById('tofcal-ref').value);
+        if (isNaN(cf)) return;
+        sendCommand('tofcomp', cf.toFixed(4) + ',' + (isNaN(rf) ? 21 : rf).toFixed(2));
+    }
+    function tofcalOff() { sendCommand('tofcomp', 'off'); }
+
     document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && tofcalOpenFlag) { tofcalClose(); return; }
         if (e.key === 'Escape' && vibtestOpenFlag) { vibtestClose(); return; }
         if (e.key === 'Escape' && vibRepOpenFlag) vibRepClose();
     });
@@ -13054,6 +13181,9 @@
         if (data.rollbackAvailable !== undefined) { state.rollbackAvailable = !!data.rollbackAvailable; otaDirty = true; }
         if (data.rollbackBuilt     !== undefined) { state.rollbackBuilt     = data.rollbackBuilt;     otaDirty = true; }
         if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; aboutDirty = true; }
+        if (data.ambC        !== undefined) { state.ambC        = data.ambC; if (tofcalOpenFlag) tofcalRender(); }
+        if (data.tcCoeff     !== undefined) { state.tcCoeff     = data.tcCoeff; if (tofcalOpenFlag) tofcalRender(); }
+        if (data.tcRef       !== undefined) { state.tcRef       = data.tcRef; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();
         if (otaDirty   && state.screen === 'screen-ota')   updateOtaRollbackUI();

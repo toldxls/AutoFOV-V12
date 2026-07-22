@@ -1229,6 +1229,15 @@ std::atomic<uint32_t> vibSettleTauMs{0};   // last fitted decay constant τ, ms
 // after a stack ends.
 std::atomic<uint32_t> vibPulseFrameNum{0};   // stack frame # of this pulse; 0 = RUN TEST / not a stack
 std::atomic<uint32_t> vibPulseMs{0};         // millis() at the pulse edge
+
+// V12.6: TOF temperature compensation. Live FOV = kPx/(ctrlX·dist+ctrlY), so a
+// temp-driven distance offset biases FOV — this models it out. gAmbientTempC10
+// is the LSM6DSOX die temp (×10 °C, an ambient proxy that self-heats far less
+// than the SoC die), sampled ~1 Hz by vibTask. The linear correction subtracts
+// tofTempCoeff·(T − tofTempRef) mm from the averaged distance. coeff 0 = off.
+std::atomic<uint32_t> gAmbientTempC10{0};    // LSM6DSOX temp ×10 °C; 0 = not read yet
+float tofTempCoeff = 0.0f;                   // TOF offset temp coefficient, mm/°C
+float tofTempRef   = 21.0f;                  // reference temperature, °C (mid of 65–75 °F)
 std::atomic<uint32_t> vibStackStartMs{0};    // millis() at stack start
 std::atomic<uint32_t> vibStackStartEpoch{0}; // UTC epoch s at stack start; 0 = SNTP never synced
 std::atomic<uint32_t> vibHistFrameCount{0};  // records written this stack
@@ -2282,6 +2291,31 @@ void saveDisplayPrefs() {
 // V12: "vib" NVS namespace — separate from CalibData so adding the vibration
 // monitor never forces a calibration reset. Holds the Goertzel lock frequency
 // and the last aggregate suggested-wait. Mirrors loadDisplayPrefs/saveDisplayPrefs.
+// V12.6: TOF temp-comp coefficients — own NVS namespace ("tofcomp") so they
+// survive a CALIB_MAGIC bump (they're independent of the FOV calibration, like
+// the "vib" namespace). Correction in mm, subtracted from the averaged range.
+void loadTofComp() {
+  preferences.begin("tofcomp", true);
+  tofTempCoeff = preferences.getFloat("coeff", 0.0f);
+  tofTempRef   = preferences.getFloat("ref",  21.0f);
+  preferences.end();
+  if (!(tofTempCoeff > -50.0f && tofTempCoeff < 50.0f)) tofTempCoeff = 0.0f;   // sanity
+  if (!(tofTempRef   > -20.0f && tofTempRef   < 60.0f)) tofTempRef   = 21.0f;
+}
+void saveTofComp() {
+  preferences.begin("tofcomp", false);
+  preferences.putFloat("coeff", tofTempCoeff);
+  preferences.putFloat("ref",   tofTempRef);
+  preferences.end();
+}
+// mm to SUBTRACT from the raw averaged distance (0 when disabled / no temp yet).
+static inline float tofTempCorrMm() {
+  if (tofTempCoeff == 0.0f) return 0.0f;
+  uint32_t t10 = gAmbientTempC10.load(std::memory_order_relaxed);
+  if (t10 == 0) return 0.0f;                       // no valid reading yet
+  return tofTempCoeff * ((float)t10 / 10.0f - tofTempRef);
+}
+
 void loadVibPrefs() {
   preferences.begin("vib", true);
   vibResonanceHz   = preferences.getFloat("resHz", VIB_RES_DEFAULT);
@@ -4287,6 +4321,7 @@ void sensorTask(void *pvParameters) {
 // LSM6DSOX register map (FIFO subset only):
 #define LSM6DS_REG_FIFO_CTRL3       0x09  // BDR_GY[7:4] | BDR_XL[3:0]
 #define LSM6DS_REG_FIFO_CTRL4       0x0A  // ... | FIFO_MODE[2:0]
+#define LSM6DS_REG_OUT_TEMP_L       0x20  // temperature LSB (256 LSB/°C, 0 = 25 °C)
 #define LSM6DS_REG_FIFO_STATUS1     0x3A  // DIFF_FIFO[7:0]
 #define LSM6DS_REG_FIFO_DATA_OUT_TAG 0x78 // tag byte, then X/Y/Z (6 bytes)
 #define LSM6DS_FIFO_TAG_ACCEL       0x02  // TAG_SENSOR field value for accel NC
@@ -4604,6 +4639,27 @@ void vibTask(void *pvParameters) {
       newSamples = 0; dcPrimed = false; basisInited = false;   // re-prime cleanly
     }
     if (imuPoweredDown) continue;
+
+    // V12.6: sample the LSM6DSOX die temperature ~1 Hz as the TOF-comp ambient
+    // proxy. Direct OUT_TEMP register read (no FIFO interference); the IMU
+    // self-heats far less than the SoC die, so this tracks room temp closely.
+    {
+      static uint32_t lastTempMs = 0;
+      uint32_t nowMs = millis();
+      if (nowMs - lastTempMs >= 1000) {
+        lastTempMs = nowMs;
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(30))) {
+          uint8_t tb[2];
+          if (imuReadRegs(LSM6DS_REG_OUT_TEMP_L, tb, 2) == 2) {
+            int16_t raw = (int16_t)(tb[0] | (tb[1] << 8));
+            float tC = 25.0f + raw / 256.0f;
+            if (tC > -20.0f && tC < 85.0f)
+              gAmbientTempC10.store((uint32_t)lroundf(tC * 10.0f), std::memory_order_relaxed);
+          }
+          xSemaphoreGive(i2cMutex);
+        }
+      }
+    }
 
     // ── Refresh the horizontal-plane basis from the current gravity vector ──
     // Combined horizontal power is basis-invariant, so any in-plane (e1,e2)
@@ -5341,6 +5397,7 @@ void setup() {
   // disturb the calib namespace handle.
   loadDisplayPrefs();
   loadVibPrefs();           // V12: Goertzel lock freq + last suggested wait
+  loadTofComp();            // V12.6: TOF temp-compensation coefficients
   refreshCachedThemeBg();   // prime THEME_BG cache before any draw runs
 
   // V12.5 (F4): the calib struct was just reset (CALIB_MAGIC bump or corrupt
@@ -7794,6 +7851,7 @@ void updateSensorAverages() {
   totalDist += readings[readIndex];
   readIndex = (readIndex + 1) % numReadings;
   averageDist = (float)totalDist / numReadings;
+  averageDist -= tofTempCorrMm();   // V12.6: model out the temp-dependent offset
   sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
 
   float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
