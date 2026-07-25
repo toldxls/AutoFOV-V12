@@ -973,10 +973,12 @@
                     during long stacks/exposures where you don&rsquo;t need a live reading, or near an
                     IR-sensitive subject. Tap <b>WAKE SENSOR</b> to resume.<br>
                     <span style="color:#e7c35a;">Costs accuracy:</span> a woken sensor is cold and reads
-                    <b>~4&ndash;5&nbsp;mm long</b>, settling over several minutes as it warms. The re-lock
-                    cure runs automatically but only removes part of that. Prefer leaving it ranging
-                    &mdash; it no longer auto-sleeps, and a thermally-settled sensor is the only one
-                    the temperature compensation can correct.<br><br>
+                    <b>~4&ndash;5&nbsp;mm long</b>, settling over several minutes as it warms. It stays
+                    tagged <b>COLD</b> through the warm-up and auto-cures at <b>45&nbsp;s</b>, since the
+                    re-lock only sticks once the sensor is genuinely warm &mdash; RE-LOCK forces it
+                    sooner. Prefer leaving it ranging &mdash; it no longer auto-sleeps, and a
+                    thermally-settled sensor is the only one the temperature compensation can
+                    correct.<br><br>
                     <div style="color:#ffab3d; font-weight:bold; font-size:11px;">HIGH REFLECTIVITY</div>
                     For <b>bright / shiny / specular</b> subjects &mdash; polished metal, mirror-coated,
                     or very close &mdash; that flood the sensor so it under-reads or drops out. It cuts the

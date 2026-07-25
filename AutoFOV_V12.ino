@@ -1168,7 +1168,14 @@ TofRelockPhase tofRelockPhase   = TOF_RELOCK_IDLE;  // IDLE, or mid-cycle in opp
 unsigned long  tofRelockPhaseMs = 0;                // millis() the dwell (opposite mode) began
 unsigned long  tofRelockDueMs   = 0;                // 0 = none pending; else millis() to start a cycle
 bool           tofHot           = false;            // false = cold (biased), true = re-lock cured it
-const unsigned long TOF_RELOCK_DELAY_MS = 5000UL;   // auto-cure this long after a cold start
+// V12.6: 45 s (was 5 s). The cure only sticks on a sensor that has finished
+// warming up — firing it 5 s after a cold wake "cured" a die that was still
+// climbing, so tofHot flipped to true while the reading kept sliding several mm
+// (measured: 19-20 mm freshly locked, drifting to 16-18 mm once genuinely warm).
+// Waiting also makes the COLD tag honest: it now stays COLD for the whole
+// warm-up instead of claiming HOT after 7.5 s. Both RE-LOCK buttons set
+// tofRelockDueMs directly, so a manual cure still fires immediately.
+const unsigned long TOF_RELOCK_DELAY_MS = 45000UL;  // auto-cure this long after a cold start
 const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mode for this long
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
