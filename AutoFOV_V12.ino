@@ -1238,6 +1238,18 @@ std::atomic<uint32_t> vibPulseMs{0};         // millis() at the pulse edge
 std::atomic<uint32_t> gAmbientTempC10{0};    // LSM6DSOX temp ×10 °C; 0 = not read yet
 float tofTempCoeff = 0.0f;                   // TOF offset temp coefficient, mm/°C
 float tofTempRef   = 21.0f;                  // reference temperature, °C (mid of 65–75 °F)
+// Web-triggered temp-cal point capture: a 2 s rolling average of the sub-mm
+// distance, the SAME window and source (sensorDistTenths) the CAL_SAMPLING
+// screen uses — the web's 30 Hz telemetry only carries whole mm, far too
+// coarse to fit a ~0.05 mm/°C slope. Non-blocking: the "tofsample" command
+// arms it, loop() accumulates, loop() pushes the result over the WebSocket.
+// Deliberately RAW (no tofTempCorrMm) — the fit must see the drift it models.
+static const uint32_t TOF_SAMPLE_MS = 2000;
+bool     tofSampleActive  = false;
+uint32_t tofSampleStartMs = 0;
+double   tofSampleSum     = 0.0;   // tenths of a mm
+double   tofSampleSumSq   = 0.0;
+uint32_t tofSampleCount   = 0;
 std::atomic<uint32_t> vibStackStartMs{0};    // millis() at stack start
 std::atomic<uint32_t> vibStackStartEpoch{0}; // UTC epoch s at stack start; 0 = SNTP never synced
 std::atomic<uint32_t> vibHistFrameCount{0};  // records written this stack
@@ -1432,6 +1444,7 @@ void wifiNotifyStackComplete();            // stack-done WebSocket event
 void wifiNotifyStackStart();               // V12.6: stack-start WebSocket event
 void wifiNotifyStackAbort();               // V12.6: short/aborted-sequence WebSocket event
 void wifiNotifyTestAlert();                // pings webview beep on TEST ALERT press
+void wifiPushTofSample(float distMm, float sdMm, uint32_t n);  // V12.6: temp-cal point result
 void redrawCurrentScreen();                // full repaint of currentMode
 void wifiPushSettings();                   // push buildSettingsJson to all WS clients
 
@@ -5995,6 +6008,28 @@ void loop() {
         currentMode = CAL_RUN;
         drawPointEntryUI();
       }
+    }
+  }
+
+  // V12.6: web TOF temp-cal point capture — same 2 s window and same sub-mm
+  // source as the CAL_SAMPLING block above, so a temperature point is as solid
+  // as a calibration point. Runs on every screen (the dialog is web-only).
+  if (tofSampleActive) {
+    uint32_t t = sensorDistTenths.load(std::memory_order_acquire);
+    if (t >> 31) {
+      double d = (double)(t & 0x7FFFFFFF);
+      tofSampleSum += d; tofSampleSumSq += d * d; tofSampleCount++;
+    }
+    if ((uint32_t)(millis() - tofSampleStartMs) >= TOF_SAMPLE_MS) {
+      tofSampleActive = false;
+      float meanMm = 0.0f, sdMm = 0.0f;
+      if (tofSampleCount > 0) {
+        double mean = tofSampleSum / tofSampleCount;
+        meanMm = (float)(mean / 10.0);
+        double var = tofSampleSumSq / tofSampleCount - mean * mean;
+        sdMm = (float)(sqrt(var > 0.0 ? var : 0.0) / 10.0);
+      }
+      wifiPushTofSample(meanMm, sdMm, tofSampleCount);
     }
   }
 

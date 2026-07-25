@@ -2524,6 +2524,17 @@ static void handleWifiCommand(const char* key, const char* val) {
             }
         }
 
+    // ── TOF temp-cal point capture (V12.6) ───────────────────────────────────
+    //   Arms the 2 s rolling average in loop(); the result comes back as a
+    //   one-shot {"tofSample":{…}} WS event. Ignored while one is running.
+    } else if (strcmp(key, "tofsample") == 0) {
+        if (!tofSampleActive) {
+            tofSampleSum = tofSampleSumSq = 0.0;
+            tofSampleCount   = 0;
+            tofSampleStartMs = millis();
+            tofSampleActive  = true;
+        }
+
     // ── Time per step (seconds, 0.1-60) ─────────────────────────────────────
     } else if (strcmp(key, "secStep") == 0) {
         stackTimePerStep = constrain(fVal, 0.1f, 60.0f);
@@ -3432,6 +3443,11 @@ static void buildSlowTelemJson(String& out) {
     // screen showed a value frozen at connect time. Riding the 5 s slow
     // frame keeps it live; the JS dieC handler already accepts any frame.
     doc["dieC"]          = (int32_t)gDieTempC10.load(std::memory_order_relaxed) / 10.0f;
+    // V12.6: ambient (LSM6DSOX) temp used by the TOF temp-comp. Was full-state
+    // only, so the TEMP CAL dialog showed the value frozen at connect time —
+    // the reading that has to move for the cal to work never appeared to move.
+    // 5 s comfortably outruns the 1 Hz IMU sample and the room's thermal rate.
+    doc["ambC"]          = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
 
     serializeJson(doc, out);
 }
@@ -3535,6 +3551,24 @@ void wifiNotifyStackStart() {
     doc["stackStart"] = 1;
     doc["sid"] = vibStackStartSeq.load();
     doc["ep"]  = vibStackStartEpoch.load();
+    String out; serializeJson(doc, out);
+    wsServer.textAll(out);
+}
+
+// V12.6: TOF temp-cal point result — the 2 s rolling average armed by the
+// "tofsample" command finished. n = samples averaged (0 = the sensor produced
+// no valid range in the window: asleep, or nothing in front of it), sd = the
+// spread over the window so the dialog can flag a point captured while the
+// target was moving. Temperature is stamped here, at the end of the window.
+// Runs on Core 1 (loop), like wifiNotifyStackComplete.
+void wifiPushTofSample(float distMm, float sdMm, uint32_t n) {
+    if (wsServer.count() == 0) return;
+    StaticJsonDocument<160> doc;
+    JsonObject o = doc.createNestedObject("tofSample");
+    o["d"]  = roundf(distMm * 100.0f) / 100.0f;
+    o["sd"] = roundf(sdMm   * 100.0f) / 100.0f;
+    o["t"]  = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
+    o["n"]  = n;
     String out; serializeJson(doc, out);
     wsServer.textAll(out);
 }

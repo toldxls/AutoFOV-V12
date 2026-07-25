@@ -2323,6 +2323,10 @@
       #tofcal-pts table { width:100%; border-collapse:collapse; font-size:11px; }
       #tofcal-pts td, #tofcal-pts th { padding:3px 8px; text-align:right; border-bottom:1px solid #14302a; }
       #tofcal-pts th { color:#7ab4a2; }
+      /* Fit scatter — hidden until 3 points exist. 2x backing store for retina. */
+      #tofcal-graph { display:none; width:100%; height:220px; margin:8px 0 2px;
+        background:#061512; border:1px solid #14302a; border-radius:4px; }
+      #tofcal-graph.show { display:block; }
       #tofcal-fit { font-size:11px; color:#9fe6cf; margin:8px 0; min-height:15px; }
       #tofcal-fit .warn, #tofcal-box .warn { color:#e7c35a; }
       #tofcal-active { font-size:11px; margin:6px 0; }
@@ -2341,16 +2345,19 @@
         <div class="tc-sub">The TOF range drifts slightly with room temperature, which shifts the
           live FOV (FOV = k / (a&middot;distance + b)). Aim at a <b>fixed</b> target and CAPTURE a point
           now and then as the room warms/cools across the day; once the points span a degree or two,
-          APPLY fits the correction. Temperature is the LSM6DSOX sensor (close to ambient).</div>
+          APPLY fits the correction. Temperature is the LSM6DSOX sensor (close to ambient).
+          CAPTURE averages the distance over 2 seconds on the device &mdash; the same window the
+          calibration screen uses &mdash; so each point carries sub-mm resolution.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
         </div>
         <div class="tofcal-row">
-          <button onclick="tofcalCapture()">CAPTURE POINT</button>
+          <button id="tofcal-cap" onclick="tofcalCapture()">CAPTURE POINT</button>
           <button onclick="tofcalClearPts()">clear points</button>
         </div>
         <div id="tofcal-pts"></div>
+        <canvas id="tofcal-graph" width="880" height="440"></canvas>
         <div id="tofcal-fit">&mdash;</div>
         <div class="tofcal-row">
           <button class="apply" id="tofcal-apply" onclick="tofcalApply()">APPLY FIT</button>
@@ -4684,11 +4691,40 @@
     function tofcalClose() { tofcalOpenFlag = false; document.getElementById('tofcal-overlay').classList.remove('open'); }
     function tofcalTemp() { return (typeof state.ambC === 'number' && state.ambC > 0) ? state.ambC : null; }
     function tofcalDist() { const d = (typeof state._pendingDist === 'number') ? state._pendingDist : state.dist; return (typeof d === 'number' && d > 0) ? d : null; }
+    // CAPTURE is a round trip, not a snapshot of the live readout: the device
+    // averages sub-mm distance for 2 s (the CAL_SAMPLING window) and answers
+    // with {"tofSample":{d,sd,t,n}}. The 30 Hz telemetry only carries whole mm,
+    // which cannot resolve the ~0.05 mm/°C slope being fitted.
+    let tofcalPendTimer = null;
     function tofcalCapture() {
-        const t = tofcalTemp(), d = tofcalDist();
-        if (t == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no ambient temperature yet — is the IMU awake?</span>'; return; }
-        if (d == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no live distance — aim at a target first</span>'; return; }
-        tofcalPts.push({ t: t, d: d }); tofcalRender();
+        if (tofcalPendTimer) return;                       // one at a time
+        if (tofcalTemp() == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no ambient temperature yet — is the IMU awake?</span>'; return; }
+        sendCommand('tofsample', 1);   // needs a value — {k:undefined} stringifies to {}
+        const btn = document.getElementById('tofcal-cap');
+        btn.disabled = true; btn.innerText = 'SAMPLING…';
+        document.getElementById('tofcal-fit').innerHTML = 'averaging 2 s — hold the target still…';
+        // Device replies in ~2 s; 6 s covers a slow link before we let the user
+        // try again, so a dropped reply can't wedge the button forever.
+        tofcalPendTimer = setTimeout(() => {
+            tofcalPendTimer = null; tofcalCapReset();
+            document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no reply from the device — is it still connected?</span>';
+        }, 6000);
+    }
+    function tofcalCapReset() {
+        const btn = document.getElementById('tofcal-cap');
+        if (btn) { btn.disabled = false; btn.innerText = 'CAPTURE POINT'; }
+    }
+    // {"tofSample":…} arrives whether or not the dialog is open (the command
+    // could only have come from it, but a second tab may have sent it).
+    function tofcalOnSample(s) {
+        if (tofcalPendTimer) { clearTimeout(tofcalPendTimer); tofcalPendTimer = null; }
+        tofcalCapReset();
+        if (!s || !s.n) {
+            document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no valid range in the 2 s window — is the sensor asleep or aimed at nothing?</span>';
+            return;
+        }
+        tofcalPts.push({ t: s.t, d: s.d, sd: s.sd, n: s.n });
+        tofcalRender();
     }
     function tofcalClearPts() { tofcalPts = []; tofcalRender(); }
     function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalRender(); }
@@ -4703,17 +4739,111 @@
         if (den < 1e-9) return { slope: 0, ref: mt, r2: 0, span: span, n: n };
         return { slope: num / den, ref: mt, r2: sdd > 1e-9 ? (num * num) / (den * sdd) : 0, span: span, n: n };
     }
-    function tofcalRender() {
+
+    // Scatter of the captured points with the fitted line, shown from the 3rd
+    // point on — two points always fit perfectly, so a plot of them says
+    // nothing; the third is the first one that can disagree. Vertical bars are
+    // the ±σ of each point's own 2 s averaging window, so a point captured
+    // while the target drifted is visibly weaker than the others.
+    const TOFCAL_GRAPH_MIN_PTS = 3;
+    function tofcalDrawGraph(fit) {
+        const cv = document.getElementById('tofcal-graph');
+        if (!cv) return;
+        if (tofcalPts.length < TOFCAL_GRAPH_MIN_PTS || !fit) { cv.classList.remove('show'); return; }
+        cv.classList.add('show');                      // must be visible to measure
+        const dpr = window.devicePixelRatio || 1;
+        const W = cv.clientWidth, H = cv.clientHeight;
+        if (!W || !H) return;                          // dialog not laid out yet
+        cv.width  = Math.round(W * dpr);
+        cv.height = Math.round(H * dpr);
+        const g = cv.getContext('2d');
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, W, H);
+
+        const L = 48, R = 10, T = 12, B = 26;
+        const pw = W - L - R, ph = H - T - B;
+
+        // Axis ranges: data extent padded 10%, with a floor so a tight cluster
+        // doesn't blow the noise up into a full-height fake trend.
+        const ts = tofcalPts.map(p => p.t), ds = tofcalPts.map(p => p.d);
+        const sds = tofcalPts.map(p => (typeof p.sd === 'number' ? p.sd : 0));
+        let t0 = Math.min(...ts), t1 = Math.max(...ts);
+        let d0 = Math.min(...ds.map((d, i) => d - sds[i]));
+        let d1 = Math.max(...ds.map((d, i) => d + sds[i]));
+        const tPad = Math.max((t1 - t0) * 0.1, 0.25), dPad = Math.max((d1 - d0) * 0.1, 0.15);
+        t0 -= tPad; t1 += tPad; d0 -= dPad; d1 += dPad;
+        const X = t => L + (t - t0) / (t1 - t0) * pw;
+        const Y = d => T + ph - (d - d0) / (d1 - d0) * ph;
+
+        // Frame + 3x3 grid
+        g.strokeStyle = '#14302a'; g.lineWidth = 1;
+        g.strokeRect(L + 0.5, T + 0.5, pw - 1, ph - 1);
+        g.beginPath();
+        for (let i = 1; i < 3; i++) {
+            const gx = Math.round(L + pw * i / 3) + 0.5, gy = Math.round(T + ph * i / 3) + 0.5;
+            g.moveTo(gx, T); g.lineTo(gx, T + ph);
+            g.moveTo(L, gy);  g.lineTo(L + pw, gy);
+        }
+        g.stroke();
+
+        // Fitted line: d = slope·(T − ref) + mean(d)
+        const md = ds.reduce((a, b) => a + b, 0) / ds.length;
+        g.strokeStyle = '#00c8b4'; g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(X(t0), Y(fit.slope * (t0 - fit.ref) + md));
+        g.lineTo(X(t1), Y(fit.slope * (t1 - fit.ref) + md));
+        g.stroke();
+
+        // ±σ bars — capped, and in a warmer green than the grid so a tall bar
+        // reads as a shaky point rather than as another gridline.
+        g.strokeStyle = '#3fa98c'; g.lineWidth = 1;
+        g.beginPath();
+        tofcalPts.forEach((p, i) => {
+            if (!sds[i]) return;
+            const x = Math.round(X(p.t)) + 0.5, yLo = Y(p.d - sds[i]), yHi = Y(p.d + sds[i]);
+            g.moveTo(x, yLo); g.lineTo(x, yHi);
+            g.moveTo(x - 3, yLo); g.lineTo(x + 3, yLo);
+            g.moveTo(x - 3, yHi); g.lineTo(x + 3, yHi);
+        });
+        g.stroke();
+        g.fillStyle = '#40f5a8';
+        tofcalPts.forEach(p => { g.beginPath(); g.arc(X(p.t), Y(p.d), 3.5, 0, 6.284); g.fill(); });
+
+        // Axis end labels only — the fit line below carries the numbers.
+        g.fillStyle = '#7ab4a2'; g.font = '10px monospace';
+        g.textAlign = 'right'; g.textBaseline = 'middle';
+        g.fillText(d1.toFixed(2), L - 5, T + 6);
+        g.fillText(d0.toFixed(2), L - 5, T + ph - 6);
+        g.textBaseline = 'top';
+        g.fillText(t1.toFixed(1) + '°C', L + pw, T + ph + 6);
+        g.textAlign = 'left';
+        g.fillText(t0.toFixed(1) + '°C', L, T + ph + 6);
+        g.save();
+        g.translate(11, T + ph / 2); g.rotate(-Math.PI / 2);
+        g.textAlign = 'center'; g.textBaseline = 'top';
+        g.fillText('raw distance mm', 0, 0);
+        g.restore();
+    }
+    // Live readouts only — cheap enough to run at the dashboard's 3 Hz DOM
+    // flush. The table/fit/graph rebuild (tofcalRender) stays event-driven.
+    function tofcalRenderLive() {
+        if (!tofcalOpenFlag) return;
         const t = tofcalTemp(), d = tofcalDist();
         document.getElementById('tofcal-temp').innerText = t != null ? t.toFixed(1) + ' °C' : '--';
         document.getElementById('tofcal-dist').innerText = d != null ? d.toFixed(1) + ' mm' : '--';
+    }
+    function tofcalRender() {
+        tofcalRenderLive();
         document.getElementById('tofcal-pts').innerHTML = tofcalPts.length
-            ? '<table><thead><tr><th>#</th><th>T °C</th><th>dist mm</th><th></th></tr></thead><tbody>' +
+            ? '<table><thead><tr><th>#</th><th>T °C</th><th>dist mm</th><th>±σ</th><th></th></tr></thead><tbody>' +
               tofcalPts.map((p, i) => '<tr><td>' + (i + 1) + '</td><td>' + p.t.toFixed(1) + '</td><td>' +
-                  p.d.toFixed(2) + '</td><td><span style="cursor:pointer;color:#e78a8a" onclick="tofcalDelPt(' + i + ')">✕</span></td></tr>').join('') +
+                  p.d.toFixed(2) + '</td><td' + (p.sd > 0.5 ? ' class="warn"' : '') + '>' +
+                  (typeof p.sd === 'number' ? p.sd.toFixed(2) : '—') +
+                  '</td><td><span style="cursor:pointer;color:#e78a8a" onclick="tofcalDelPt(' + i + ')">✕</span></td></tr>').join('') +
               '</tbody></table>'
             : '<span style="color:#7a958c">no points yet — capture at a couple of different room temps</span>';
         const fit = tofcalFit(), fEl = document.getElementById('tofcal-fit'), apply = document.getElementById('tofcal-apply');
+        tofcalDrawGraph(fit);
         if (!fit) { fEl.innerHTML = '<span class="warn">capture ≥ 2 points at different temperatures</span>'; apply.disabled = true; }
         else {
             let msg = 'slope <b>' + fit.slope.toFixed(3) + '</b> mm/°C · R² ' + fit.r2.toFixed(2) +
@@ -4744,7 +4874,10 @@
         if (e.key === 'Escape' && vibtestOpenFlag) { vibtestClose(); return; }
         if (e.key === 'Escape' && vibRepOpenFlag) vibRepClose();
     });
-    window.addEventListener('resize', () => { if (vibRepOpenFlag) vibRepDrawStrip(); });
+    window.addEventListener('resize', () => {
+        if (vibRepOpenFlag) vibRepDrawStrip();
+        if (tofcalOpenFlag) tofcalDrawGraph(tofcalFit());   // canvas is width:100%
+    });
 
     // ── Universal help-overlay dismissal ────────────────────────────────────
     // Every ? help overlay closes on ANY click — inside its bounds, outside
@@ -12939,6 +13072,10 @@
                     document.getElementById('val-fov').innerHTML =
                         state._pendingFov.toFixed(2) + errSpan + '<span class="fov-unit"> mm</span>';
                 }
+                // V12.6: the TEMP CAL dialog's live distance rides the same
+                // 3 Hz flush as the main readout, so it can't sit stale while
+                // the user is deciding whether to capture.
+                tofcalRenderLive();
                 state._lastLiveRenderMs = now;
             }
         }
@@ -13146,6 +13283,9 @@
             }
         }
 
+        // ── V12.6: TOF temp-cal point result (2 s device-side average) ──
+        if (data.tofSample !== undefined) tofcalOnSample(data.tofSample);
+
         // ── Memory ──
         // aboutDirty is declared up here too because the about screen now
         // displays free heap / PSRAM / CPU / die temperature alongside the
@@ -13192,7 +13332,9 @@
         if (data.rollbackAvailable !== undefined) { state.rollbackAvailable = !!data.rollbackAvailable; otaDirty = true; }
         if (data.rollbackBuilt     !== undefined) { state.rollbackBuilt     = data.rollbackBuilt;     otaDirty = true; }
         if (data.dieC        !== undefined) { state.dieC        = data.dieC;        memDirty = true; aboutDirty = true; }
-        if (data.ambC        !== undefined) { state.ambC        = data.ambC; if (tofcalOpenFlag) tofcalRender(); }
+        // ambC now rides the 5 s slow frame — only the live readout changes,
+        // so no need to rebuild the point table and redraw the graph with it.
+        if (data.ambC        !== undefined) { state.ambC        = data.ambC; tofcalRenderLive(); }
         if (data.tcCoeff     !== undefined) { state.tcCoeff     = data.tcCoeff; if (tofcalOpenFlag) tofcalRender(); }
         if (data.tcRef       !== undefined) { state.tcRef       = data.tcRef; }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
