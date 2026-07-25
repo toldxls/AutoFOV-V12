@@ -2000,8 +2000,12 @@ static void startFullServer() {
         doc["ver"]        = 1;
         doc["device"]     = "AutoFOV V12";
         doc["isCustom"]   = isCustomCalib ? 1 : 0;
-        doc["calWidth"]   = sensorWidthPixels;
-        doc["demarcDist"] = demarcationDist;
+        // Fit-time width/demarc (same rule as fovAt()/calFitKPx()): the factory
+        // fit is 0.4 mm × 6960 px regardless of the live calibrator fields, and
+        // exporting the live values after an edit would ship a file whose
+        // width/demarc no longer match its own fit/points.
+        doc["calWidth"]   = isCustomCalib ? sensorWidthPixels : Config::DEFAULT_SENSOR_WIDTH_PX;
+        doc["demarcDist"] = isCustomCalib ? demarcationDist   : Config::DEFAULT_DEMARCATION_MM;
         doc["calPoints"]  = nPoints;
         JsonObject fit = doc.createNestedObject("fit");   // informational only
         fit["slope"]     = CTRLX;

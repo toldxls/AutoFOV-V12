@@ -6756,9 +6756,23 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
 // the demarcation's field of view is FOV = demarcation * sensorWidth / pixels.
 // Centralises the derivation so every readout uses the same math. Returns the
 // base (20x) FOV in mm; callers apply the objective multiplier.
+//
+// kPx (demarc × width) must be the product the ACTIVE fit was made with — it
+// is what converts the fit's pixel line back to mm. For the factory cal that
+// is the reference dataset's 0.4 mm × 6960 px, a fixed historical fact; the
+// live demarcationDist/sensorWidthPixels describe the user's rig for the NEXT
+// calibration (and the µm/px math), so editing them must not rescale factory
+// FOV. A custom cal keeps the live product: its fields held the fit-time
+// values at finalize, and a deliberate post-fit edit reinterprets that cal
+// (see the dashboard graph's known-limitation note).
+float calFitKPx() {
+  return isCustomCalib ? (demarcationDist * sensorWidthPixels)
+                       : (Config::DEFAULT_DEMARCATION_MM * Config::DEFAULT_SENSOR_WIDTH_PX);
+}
+
 float fovAt(float distMm) {
   float px = CTRLX * distMm + CTRLY;
-  return (px > 1.0f) ? (demarcationDist * sensorWidthPixels / px) : 0.0f;
+  return (px > 1.0f) ? (calFitKPx() / px) : 0.0f;
 }
 
 // V12.3: recompute the cached fit statistics used by the live prediction
@@ -6767,7 +6781,7 @@ void computeCalStats() {
   int nn = (pointsCaptured < 0) ? 0 : pointsCaptured;
   gCalN = nn;
   if (nn < 1) { gCalSpx = 0; gCalXbar = 0; gCalSxx = 0; return; }
-  float kPx = demarcationDist * sensorWidthPixels;
+  float kPx = calFitKPx();   // fit-time product — see calFitKPx()
   float sx = 0;
   for (int i = 0; i < nn; i++) sx += distPoints[i];
   gCalXbar = sx / nn;

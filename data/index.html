@@ -8498,7 +8498,14 @@
         const intc  = state.fovIntercept ?? 1652.202;
         const rmse  = state.calibError   ?? 0.0060;
         // Pixel-space cal: pixels = slope*dist + intc; FOV = kPx/pixels (curve).
-        const kPx   = (state.demarcDist || 0.4) * (state.photoWidth || 6960);
+        // kPx must be the product the ACTIVE fit was made with. Factory m/b were
+        // fit at 0.40 mm × 6960 px — fixed reference facts — so live Demarc /
+        // Photo Width edits (which describe the user's NEXT calibration) must
+        // not rescale the factory curve away from its hard-coded points. The
+        // device's fovAt() pins the same way, so the graph tracks its readouts.
+        const kPx   = state.isCustomCalib
+                          ? (state.demarcDist || 0.4) * (state.photoWidth || 6960)
+                          : 0.40 * 6960;
         const fovPred = d => { const px = slope * d + intc; return px > 1 ? kPx / px : 0; };
         // View mode: 'fov' = FOV vs distance (curve); 'px' = pixels vs distance
         // (the straight line actually fit, where m/b/R² read literally).
@@ -8507,11 +8514,12 @@
         // so live redraws never yank a legend the user is mid-drag.
         if (mode !== legendModeApplied) { applyLegendPos(mode); legendModeApplied = mode; }
         const yOf    = mode === 'px' ? (p => (p.fov > 0 ? kPx / p.fov : 0)) : (p => p.fov);
-        // Known limitation: after editing Photo Width / demarc without
-        // recalibrating, px-view points rescale with the new kPx while the fit
-        // line (slope/intc, in fit-time pixel units) doesn't — the offset IS
-        // the un-recalibrated settings change. Not fixable client-side: the
-        // device doesn't expose the fit-time width/demarc to rebase either one.
+        // Known limitation (CUSTOM cal only — factory pins fit-time kPx above):
+        // after editing Photo Width / demarc without recalibrating, px-view
+        // points rescale with the new kPx while the fit line (slope/intc, in
+        // fit-time pixel units) doesn't — the offset IS the un-recalibrated
+        // settings change. Not fixable client-side: the device doesn't expose
+        // a custom cal's fit-time width/demarc to rebase either one.
         const lineAt = mode === 'px' ? (d => slope * d + intc) : fovPred;
         const yFmt   = mode === 'px' ? (v => v.toFixed(0)) : (v => v.toFixed(2));
         const ylab = document.getElementById('calgraph-ylabel');
@@ -8804,7 +8812,10 @@
         calPointsView = which;
         const factory = (which === 'factory');
         const pts = factory ? FACTORY_POINTS : (state.calGraphPoints || []);
-        const kPx = factory ? (0.40 * 6960)
+        // "Current" on a factory device is still the factory fit — same fit-time
+        // kPx rule as drawCalGraph, or the PIXELS column drifts with live edits.
+        const kPx = (factory || !state.isCustomCalib)
+                            ? (0.40 * 6960)
                             : ((state.demarcDist || 0.4) * (state.photoWidth || 6960));
         document.getElementById('calpoints-title').textContent =
             'CALIBRATION POINTS (' + pts.length + ')';
