@@ -2587,9 +2587,12 @@ static void handleWifiCommand(const char* key, const char* val) {
                 sensor.VL53L4CX_StartMeasurement();
                 xSemaphoreGive(i2cMutex);
                 sensorEmaReset.store(true, std::memory_order_release);
+                // V12.6: this was MISSING — the TFT wake path (handleSensorInfoTouch)
+                // has always armed the cure, so waking from the dashboard left the
+                // sensor cold with none scheduled AND tofHot still reading true from
+                // before the sleep, i.e. the UI claimed LOCKED (HOT) on a cold sensor.
+                armTofRelock();
                 sensorSleeping = false;
-                tofAutoSlept = false;     // manually woken — idle-resume must
-                                          // not re-configure a ranging sensor
             }                             // timeout: stay asleep
         }
         if (currentMode == SENSOR_INFO) drawSensorInfoUI();

@@ -1058,11 +1058,21 @@ bool ledEnabled = false;                // V17b: whether trigger LED fires at al
 // and silently restart ranging (laser back on while the UI says "USER SLEEP").
 std::atomic<bool> sensorSleeping{false};   // V17b: TOF sensor user-sleep state
 bool highReflMode   = false;            // High-Reflectivity mode: 8ms timing budget (vs 33ms default)
-// Sensor auto-power-off (1 h idle). sensorsAutoOff = both sensors currently
-// auto-powered-down; tofAutoSlept = WE slept the TOF (vs the user having it
-// manually slept already, which we must not auto-wake). See loop().
+// Accelerometer auto-power-off after SENSOR_IDLE_OFF_MS of inactivity.
+// sensorsAutoOff = the IMU is currently auto-powered-down. See loop().
+//
+// V12.6: the TOF is deliberately EXCLUDED and now ranges continuously. Every
+// stop/start cycle restarts the sensor's warm-up: a cold VL53L4CX reads ~4-5 mm
+// LONG and takes minutes to settle, and the re-lock cure only removes part of
+// that (it fires 7.5 s in, long before the die is thermally settled). Auto-
+// sleeping therefore injected a silent multi-mm FOV error every time the rig
+// sat idle, in exchange for ~20 mA on a bench-powered instrument. Running
+// continuously also keeps the die at thermal steady state, which is the only
+// regime where the LSM6DSOX-based temp compensation is valid — the IMU tracks
+// ROOM temperature, and cannot see the TOF heating itself.
+// The manual SLEEP SENSOR button is untouched: it stops the 940 nm laser, which
+// is a deliberate choice near IR-sensitive subjects, not a power optimisation.
 bool sensorsAutoOff = false;
-bool tofAutoSlept   = false;
 Preferences preferences;
 
 float distPoints[20]; 
@@ -3544,8 +3554,6 @@ void handleSensorInfoTouch(TS_Point p) {
         sensorEmaReset.store(true, std::memory_order_release);
         armTofRelock();         // cold wake → mark cold + schedule auto cure
         sensorSleeping = false;
-        tofAutoSlept = false;   // manually woken — the idle-resume branch must
-                                // not re-configure the now-ranging sensor
       }
     } else {
       // Sleep: flag FIRST so sensorTask stops polling (see sensorSleeping
@@ -4148,11 +4156,30 @@ void IRAM_ATTR touchISR() { touchDetected = true; }
 // Apply the timing budget and SPAD ROI for a given reflectivity mode.
 // Must be called with i2cMutex held and measurement already stopped.
 //
-// Normal mode  : 33 ms budget, full 16×16 ROI  → baseline sensitivity
-// Hi-Refl mode : 8 ms budget, centre 8×8 ROI   → ~16× signal reduction
-//   8 ms  vs 33 ms = 4.1× less photon accumulation
-//   8×8   vs 16×16 = 4×   fewer active SPADs
-//   Combined ≈ 16× — brings a 300 Mcps gold-silicon target to ~19 Mcps
+// Normal mode  : 33 ms budget, full 16×16 ROI
+// Hi-Refl mode : 8 ms budget, centre 8×8 ROI
+//
+// V12.6 — this block USED to claim the pair gave "~16× signal reduction"
+// (4.1× from the shorter budget, 4× from the smaller ROI). That is wrong, and
+// measurably so: at ~20 mm the toggle roughly DOUBLES the reported Mcps
+// (observed 12-17 → 23-37). Two reasons:
+//   1. SignalRateRtnMegaCps is a RATE, not a count. The driver computes it as
+//      peak counts ÷ peak_duration_us (vl53l4cx_hist_core.cpp), so the timing
+//      budget cancels out entirely. A shorter budget collects ~4× fewer photons
+//      — which costs PRECISION, not signal rate.
+//   2. Worse, the driver DIVIDES the reported rate by histo_merge_nb
+//      (vl53l4cx_api_core.cpp: peak_signal_count_rate_mcps /= histo_merge_nb).
+//      A longer budget merges more histograms, so normal mode reports a rate
+//      divided by ~2 while hi-refl reports it undivided. The budget term pushes
+//      the number the OPPOSITE way from what the old comment assumed.
+// So this mode cannot fix SPAD saturation even in principle: neither lever
+// lowers the per-SPAD instantaneous flux. What it actually changes is which
+// part of a spatially non-uniform return the ROI samples (the real effect —
+// that is how it tamed a specular gold-silicon target), how many photons back
+// each estimate, and the reporting normalisation. NOTE it also changes the
+// crosstalk compensation applied, which is indexed by merge count
+// (algo__xtalk_cpo_HistoMerge_kcps[histo_merge_nb - 1]) — so Mcps readings are
+// NOT comparable across the two modes.
 // Split from applyHighReflConfig so the cold-start re-lock can apply the
 // OPPOSITE mode transiently without mutating the user's highReflMode setting.
 void applyReflConfig(bool hi) {
@@ -5872,55 +5899,20 @@ void loop() {
       analogWrite(LITE_PIN, DIM_BRIGHTNESS);
     }
 
-    // ── Sensor auto-power-off after prolonged inactivity (1 h) ──
-    // Same idle clock as the screen timeouts. Powers down the TOF (reusing the
-    // manual-sleep stop path) and the accelerometer (vibTask honours vibAutoOff)
-    // once idle, and restores them the moment any activity resets lastActivityTime
-    // (touch, camera-trigger pulse, or a web menu/settings change).
+    // ── Accelerometer auto-power-off after prolonged inactivity (30 min) ──
+    // Same idle clock as the screen timeouts; restored the moment any activity
+    // resets lastActivityTime (touch, camera-trigger pulse, or a web
+    // menu/settings change). The IMU is a pure power/heat saving with no
+    // measurement consequence — unlike the TOF, which is deliberately never
+    // auto-slept any more (see the sensorsAutoOff declaration).
     if (!sensorsAutoOff && idle > SENSOR_IDLE_OFF_MS) {
-      bool tofSleepOk = true;
-      if (!sensorSleeping) {                 // leave a user-slept TOF as-is
-        // Flag first so sensorTask stops polling; revert if the stop timed out
-        // (same pattern as handleSensorInfoTouch — see sensorSleeping decl).
-        sensorSleeping = true;
-        sensorState.store(0, std::memory_order_release);
-        sensorHealth.store(0xFF000000UL, std::memory_order_release);
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
-          sensor.VL53L4CX_StopMeasurement();
-          xSemaphoreGive(i2cMutex);
-          tofAutoSlept = true;
-        } else {
-          sensorSleeping = false;
-          tofSleepOk = false;   // keep sensorsAutoOff clear so this retries —
-                                // otherwise the TOF ranges all idle-night while
-                                // the log claims it was powered down
-        }
-      }
       vibAutoOff.store(true, std::memory_order_release);   // vibTask powers the IMU down
-      if (tofSleepOk) {
-        sensorsAutoOff = true;
-        Serial.println("[idle] inactivity timeout — TOF + accelerometer powered down");
-      }
+      sensorsAutoOff = true;
+      Serial.println("[idle] inactivity timeout — accelerometer powered down");
     } else if (sensorsAutoOff && idle < SENSOR_IDLE_OFF_MS) {
-      bool tofOk = true;
-      if (tofAutoSlept) {                    // only wake the TOF if WE slept it
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
-          applyHighReflConfig();
-          sensor.VL53L4CX_StartMeasurement();
-          xSemaphoreGive(i2cMutex);
-          sensorEmaReset.store(true, std::memory_order_release);
-          armTofRelock();      // cold idle-resume → mark cold + schedule auto cure
-          sensorSleeping = false;
-          tofAutoSlept = false;
-        } else {
-          tofOk = false;   // keep sensorsAutoOff set so this pass retries
-        }
-      }
       vibAutoOff.store(false, std::memory_order_release);  // vibTask re-powers the IMU
-      if (tofOk) {
-        sensorsAutoOff = false;
-        Serial.println("[idle] activity resumed — TOF + accelerometer back on");
-      }
+      sensorsAutoOff = false;
+      Serial.println("[idle] activity resumed — accelerometer back on");
     }
   }
 
