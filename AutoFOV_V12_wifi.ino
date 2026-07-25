@@ -2575,6 +2575,10 @@ static void handleWifiCommand(const char* key, const char* val) {
             sensorSleeping = true;
             sensorState.store(0, std::memory_order_release);
             sensorHealth.store(0xFF000000UL, std::memory_order_release);
+            sensorDistTenths.store(0, std::memory_order_release); // else the 2 s
+                                      // samplers average a frozen stale value —
+                                      // see handleSensorInfoTouch's sleep path
+
             if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
                 sensor.VL53L4CX_StopMeasurement();
                 xSemaphoreGive(i2cMutex);
@@ -3224,7 +3228,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // Cached — this builder also runs on Core 0 (see gDieTempC10).
     doc["dieC"]        = (int32_t)gDieTempC10.load(std::memory_order_relaxed) / 10.0f;
     // V12.6: LSM6DSOX ambient temp (0 = not read yet) + active TOF temp-comp.
-    doc["ambC"]        = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
+    doc["ambC"]        = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
     doc["tcCoeff"]     = tofTempCoeff;
     doc["tcRef"]       = tofTempRef;
     doc["chipInfo"]    = ESP.getChipModel();
@@ -3450,7 +3454,7 @@ static void buildSlowTelemJson(String& out) {
     // only, so the TEMP CAL dialog showed the value frozen at connect time —
     // the reading that has to move for the cal to work never appeared to move.
     // 5 s comfortably outruns the 1 Hz IMU sample and the room's thermal rate.
-    doc["ambC"]          = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
+    doc["ambC"]          = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
 
     serializeJson(doc, out);
 }
@@ -3570,7 +3574,7 @@ void wifiPushTofSample(float distMm, float sdMm, uint32_t n) {
     JsonObject o = doc.createNestedObject("tofSample");
     o["d"]  = roundf(distMm * 100.0f) / 100.0f;
     o["sd"] = roundf(sdMm   * 100.0f) / 100.0f;
-    o["t"]  = gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
+    o["t"]  = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
     o["n"]  = n;
     String out; serializeJson(doc, out);
     wsServer.textAll(out);

@@ -2341,7 +2341,9 @@ void saveTofComp() {
 // mm to SUBTRACT from the raw averaged distance (0 when disabled / no temp yet).
 static inline float tofTempCorrMm() {
   if (tofTempCoeff == 0.0f) return 0.0f;
-  uint32_t t10 = gAmbientTempC10.load(std::memory_order_relaxed);
+  // Signed read-back: the writer admits down to −20 °C, stored two's-complement
+  // in the uint32 — read unsigned, a sub-zero room wraps to ~4×10⁸ tenths.
+  int32_t t10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
   if (t10 == 0) return 0.0f;                       // no valid reading yet
   return tofTempCoeff * ((float)t10 / 10.0f - tofTempRef);
 }
@@ -3569,6 +3571,12 @@ void handleSensorInfoTouch(TS_Point p) {
       sensorSleeping = true;
       sensorState.store(0, std::memory_order_release);
       sensorHealth.store(0xFF000000UL, std::memory_order_release);
+      // sensorDistTenths too: sensorTask stops storing while asleep, so a last
+      // value left with its valid bit set would feed the 2 s samplers (temp-cal
+      // capture, CAL_SAMPLING) a frozen distance that averages into a
+      // confident-looking (sd 0.00) bogus point instead of the n=0 "asleep"
+      // rejection they rely on.
+      sensorDistTenths.store(0, std::memory_order_release);
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
         sensor.VL53L4CX_StopMeasurement();
         xSemaphoreGive(i2cMutex);

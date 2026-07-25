@@ -981,11 +981,13 @@
                     correct.<br><br>
                     <div style="color:#ffab3d; font-weight:bold; font-size:11px;">HIGH REFLECTIVITY</div>
                     For <b>bright / shiny / specular</b> subjects &mdash; polished metal, mirror-coated,
-                    or very close &mdash; that flood the sensor so it under-reads or drops out. It cuts the
-                    collected signal <b>~16&times;</b> (8&nbsp;ms vs 33&nbsp;ms integration + the center
-                    8&times;8 of the SPAD array) to pull a saturating return back into range. Leave it
-                    <b>OFF</b> for normal matte subjects &mdash; it lowers sensitivity, so dim/distant
-                    targets read noisier.
+                    or very close &mdash; that under-read or drop out. It reads only the <b>center
+                    8&times;8</b> of the SPAD array &mdash; sampling a cleaner slice of the specular
+                    hotspot, which is what actually tames these targets &mdash; with a shorter
+                    8&nbsp;ms integration. Leave it <b>OFF</b> for normal matte subjects: fewer
+                    collected photons means noisier readings. The Signal figure is <b>not
+                    comparable</b> across the two modes &mdash; the driver normalises Mcps
+                    differently in each, so it can even read <i>higher</i> with this on.
                     <span style="color:#7a958c;">(tap anywhere to close)</span>
                 </div>
                 <!-- Live readouts — grouped stat strip (see .tof-stats). -->
