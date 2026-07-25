@@ -3734,7 +3734,14 @@
         trigger: false,       // patched3: shutter active (mirrors firmware shutterActive)
         sensorSleeping: false,
         highReflMode: false,
-        tofHot: true,         // cold-start bias cured? (from telemetry; true avoids a COLD flash on load)
+        // Cold-start bias cured? From telemetry. V12.6: defaults FALSE (was true
+        // "to avoid a COLD flash on load"). The page does not reload across an
+        // OTA, so a stale/assumed true made the UI claim HOT for the whole
+        // reconnect window right after a reboot — i.e. it read as though the
+        // 45 s cure had fired instantly. COLD is also the safe direction to be
+        // wrong in: it says "wait", which is always right for a sensor whose
+        // state we have not heard yet.
+        tofHot: false,
         tofRelocking: false,  // cure cycle currently running?
         dimMs: 120000,        // 2 min
         sleepMs: 300000,      // 5 min

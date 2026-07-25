@@ -79,6 +79,26 @@ try:
     patch = max(0, int(count) - VERSION_PATCH_BASE)
 except ValueError:
     patch = count  # git unavailable — leave whatever git() returned
+
+# Uncommitted work → label the build with the version it is ABOUT TO BECOME.
+# The patch number is derived from the commit count, so a build.sh run on a
+# dirty tree used to stamp the PREVIOUS release's number: you flash a .bin
+# named v12.5.33 that is not the v12.5.33 that shipped, which defeats the whole
+# point of stamping a version. The next real commit makes this patch+1, so use
+# that and suffix the commit hash with '+' — a dev build can then never be
+# confused with the release of the same number.
+# release.sh still refuses to PUBLISH a dirty tree (it must stamp a version that
+# corresponds to a real commit); this only makes local test builds honest. Same
+# web_ui.h exclusion release.sh uses — it is this script's own output, and it
+# lands in a "build: regenerate" commit that is excluded from the count anyway.
+_status = git(['git', 'status', '--porcelain'])
+if _status not in ('?', ''):
+    _dirty = [ln for ln in _status.split('\n')
+              if ln.strip() and not ln.endswith(' data/web_ui.h')]
+    if _dirty and isinstance(patch, int):
+        patch += 1
+        commit = f'{commit}+'
+
 version = f'{VERSION_MAJOR}.{VERSION_MINOR}.{patch}'
 
 # Source metrics — counted across the project's hand-written files so the

@@ -5942,7 +5942,7 @@ void loop() {
         sensorEmaReset.store(true, std::memory_order_release);
         tofRelockPhase = TOF_RELOCK_IDLE;
         tofHot = true;                    // cured — main-screen tag flips to HOT
-        Serial.println("[tof] cold-start re-lock complete");
+        Serial.printf("[tof] cold-start re-lock complete (t=%lu ms)\n", millis());
       }
       // mutex busy → retry next loop iteration
     }
@@ -5960,7 +5960,9 @@ void loop() {
       tofRelockDueMs   = 0;
       tofRelockPhase   = TOF_RELOCK_DWELL;
       tofRelockPhaseMs = millis();
-      Serial.println("[tof] cold-start re-lock cycle begin");
+      // Timestamped so an early cure is distinguishable from a stale UI at a
+      // glance: an automatic cure cannot begin before TOF_RELOCK_DELAY_MS.
+      Serial.printf("[tof] cold-start re-lock cycle begin (t=%lu ms)\n", millis());
     }
     // mutex busy → retry next loop iteration
   }
