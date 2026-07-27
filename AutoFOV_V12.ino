@@ -1162,10 +1162,18 @@ std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wa
 //
 // A cold start (armTofRelock) marks the sensor COLD and schedules ONE automatic
 // cure cycle; the Sensor-Info RE-LOCK button (or a scheduled fire) drops
-// tofRelockDueMs to "now". tofHot drives the main-screen COLD/HOT tag. Once
-// HOT, loop() also refires the cycle whenever ambient has drifted from the
-// last cure (see tofRelockLockC10 below) — the cold-start bias is only the
-// largest instance of a continuous ΔT-since-last-recal bias.
+// tofRelockDueMs to "now". tofHot drives the main-screen COLD/HOT tag.
+//
+// DO NOT auto-refire this cycle on ambient drift (tried v12.5.37, removed
+// v12.5.38). Bench data 7/27/26 (23 pts, 25.1→28.3 °C, fixed target): a
+// SETTLED sensor has no measurable ambient coefficient (−0.08 mm/°C, r²=0.05
+// over 2.2 °C / 90 min) — but the session shows a spontaneous +2.6 mm step,
+// with an auto refire as the only autonomous actor, after which readings sat
+// at the historical "freshly locked" level (~19.5 vs ~16.6 settled; the
+// 19-20 → 16-18 note above). The cycle doesn't return the reading to the
+// settled state — it MOVES it. Steep dist-vs-temp fits (~0.9-1.3 mm/°C, low
+// R²) were always step artifacts from cure events, never a real temperature
+// coefficient. The cure is for genuine cold starts only.
 enum TofRelockPhase : uint8_t { TOF_RELOCK_IDLE, TOF_RELOCK_DWELL };
 TofRelockPhase tofRelockPhase   = TOF_RELOCK_IDLE;  // IDLE, or mid-cycle in opposite mode
 unsigned long  tofRelockPhaseMs = 0;                // millis() the dwell (opposite mode) began
@@ -1180,18 +1188,6 @@ bool           tofHot           = false;            // false = cold (biased), tr
 // tofRelockDueMs directly, so a manual cure still fires immediately.
 const unsigned long TOF_RELOCK_DELAY_MS = 45000UL;  // auto-cure this long after a cold start
 const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mode for this long
-// V12.6: temperature-triggered refire. The VL53L4CX only re-references itself
-// during a config change made while ranging, so the single boot-time cure left
-// a half-day of room drift uncorrected at the raw ~0.9 mm/°C rate (measured on
-// hardware 7/2026 via the web temp-cal dist-vs-ambC fits — consistently steep
-// regardless of session). Refire the same cycle when ambient has moved
-// TOF_RELOCK_TEMP_DELTA_C10 from the temp stamped at the last completed cure;
-// the gap floor keeps one glitchy IMU read from thrashing the sensor with
-// back-to-back 2.5 s wrong-mode dwells.
-int32_t       tofRelockLockC10 = 0;   // LSM6DSOX ambient ×10 °C at last cure; 0 = none yet
-unsigned long tofRelockDoneMs  = 0;   // millis() of the last completed cure
-const int32_t       TOF_RELOCK_TEMP_DELTA_C10 = 10;        // refire after 1.0 °C drift
-const unsigned long TOF_RELOCK_MIN_GAP_MS     = 300000UL;  // ≥5 min between refires
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
 // means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
@@ -3613,11 +3609,6 @@ void handleSensorInfoTouch(TS_Point p) {
         sensor.VL53L4CX_StartMeasurement();
         xSemaphoreGive(i2cMutex);
         sensorEmaReset.store(true, std::memory_order_release);
-        // A config change while ranging IS a recal — re-reference the
-        // temperature-triggered refire to this ambient so it doesn't fire
-        // (or sit quiet) off a drift the toggle already re-zeroed.
-        tofRelockLockC10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
-        tofRelockDoneMs  = millis();
       }
     } else {
       highReflMode = !highReflMode;   // asleep: config is applied on wake
@@ -5956,29 +5947,9 @@ void loop() {
   // the opposite ROI/timing and are ranging through it; when the dwell elapses
   // we flip back — the completed change-and-return is what clears the cold
   // long-bias (a plain same-config restart does not). Otherwise, if a cure is
-  // due (auto after wake, RE-LOCK button, or ambient drift), flip out and
-  // begin the dwell.
-  //
-  // Temperature-triggered refire (see tofRelockLockC10 decl): armed exactly
-  // like the RE-LOCK button so the one cycle machinery below serves both.
-  // Only when HOT and idle — the cold-start path owns the first cure — and
-  // only while the IMU is awake: after 30 min of inactivity gAmbientTempC10
-  // freezes at its last value (vibTask stops the ~1 Hz temp read when powered
-  // down), and a frozen reading must not be trusted to say "no drift". When
-  // activity re-powers the IMU, the first fresh read lands within ~1 s and
-  // this check arms on that loop pass if the room moved while it was blind.
-  if (tofHot && tofRelockPhase == TOF_RELOCK_IDLE && tofRelockDueMs == 0 &&
-      tofRelockLockC10 != 0 && !sensorsAutoOff &&
-      !sensorSleeping.load(std::memory_order_acquire) &&
-      (unsigned long)(millis() - tofRelockDoneMs) >= TOF_RELOCK_MIN_GAP_MS) {
-    int32_t nowC10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
-    if (nowC10 != 0 && abs(nowC10 - tofRelockLockC10) >= TOF_RELOCK_TEMP_DELTA_C10) {
-      tofRelockDueMs = millis();
-      if (tofRelockDueMs == 0) tofRelockDueMs = 1;
-      Serial.printf("[tof] temp re-lock armed: ambient %.1f C, locked at %.1f C\n",
-                    nowC10 / 10.0f, tofRelockLockC10 / 10.0f);
-    }
-  }
+  // due (auto after wake, or RE-LOCK button), flip out and begin the dwell.
+  // No other trigger: an auto ambient-drift refire was tried and removed —
+  // the cycle SHIFTS a settled reading (see the tofRelockPhase decl block).
   if (tofRelockPhase == TOF_RELOCK_DWELL) {
     if ((long)(millis() - (tofRelockPhaseMs + TOF_RELOCK_DWELL_MS)) >= 0) {
       if (sensorSleeping.load(std::memory_order_acquire)) {
@@ -5992,12 +5963,11 @@ void loop() {
         sensorEmaReset.store(true, std::memory_order_release);
         tofRelockPhase = TOF_RELOCK_IDLE;
         tofHot = true;                    // cured — main-screen tag flips to HOT
-        // Reference for the temperature-triggered refire: the cure re-zeroed
-        // the bias at THIS ambient (0 stays 0 if the IMU has never been read).
-        tofRelockLockC10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
-        tofRelockDoneMs  = millis();
+        // Ambient in the log line: cure events shift the reading (~+2.6 mm on
+        // the 7/27/26 bench), so a serial trace can tie a step to its cure.
         Serial.printf("[tof] re-lock complete (t=%lu ms, ambient %.1f C)\n",
-                      millis(), tofRelockLockC10 / 10.0f);
+                      millis(),
+                      (int32_t)gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f);
       }
       // mutex busy → retry next loop iteration
     }

@@ -2446,12 +2446,11 @@
           CAPTURE averages the distance over 2 seconds on the device &mdash; the same window the
           calibration screen uses &mdash; so each point carries sub-mm resolution.
           Points are kept in this browser across reloads; SAVE/LOAD moves a session between
-          machines or into the gh-pages library. Capture only at thermal steady state
-          (device on &ge; 30 min) &mdash; a warming die drifts several mm on its own and will
-          fake a steep slope. The sensor now re-locks itself whenever ambient drifts
-          &ge; 1 &deg;C, so the slope fitted here is the small residual left after those
-          recals &mdash; a steep fit (&gt; 0.2 mm/&deg;C) means warm-up contamination, not
-          a real coefficient.</div>
+          machines or into the gh-pages library. A settled sensor has shown <b>no</b> measurable
+          ambient coefficient (7/27/26 bench: &minus;0.08 mm/&deg;C over 2.2 &deg;C) &mdash; but a
+          boot, wake, or RE-LOCK shifts the reading a couple of mm to a new flat level. If the
+          points form two shelves with a step, that is a re-lock epoch boundary, not temperature:
+          fit within one epoch (delete the other shelf), and expect the slope near zero.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
