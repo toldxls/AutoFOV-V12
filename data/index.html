@@ -2319,7 +2319,8 @@
     <!-- Calibration EXPORT name overlay — viewport-scoped, styled like the login
          overlay. Replaces window.prompt() so the name entry matches the app. -->
     <style>
-      #calio-name-overlay { display:none; position:fixed; inset:0; z-index:660;
+      /* z-index above #tofcal-overlay (662) — tofcal SAVE FILE names through this overlay too. */
+      #calio-name-overlay { display:none; position:fixed; inset:0; z-index:664;
         background:rgba(2,10,8,0.94); backdrop-filter:blur(4px);
         -webkit-backdrop-filter:blur(4px); flex-direction:column;
         align-items:center; justify-content:center; padding:0 24px;
@@ -2429,6 +2430,7 @@
         font-family:monospace; font-size:12px; padding:4px; border-radius:3px; }
       #tofcal-box button { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df;
         font-family:monospace; font-size:11px; font-weight:bold; padding:6px 12px; border-radius:4px; cursor:pointer; }
+      #tofcal-box button:active { filter:brightness(1.6); }
       #tofcal-box button.apply { background:#0a7350; border-color:#40f5a8; color:#eafff4; }
       #tofcal-box button.apply:disabled { opacity:0.4; cursor:default; }
       #tofcal-box button.off { background:#2a1414; border-color:#7a3a3a; }
@@ -2442,7 +2444,11 @@
           now and then as the room warms/cools across the day; once the points span a degree or two,
           APPLY fits the correction. Temperature is the LSM6DSOX sensor (close to ambient).
           CAPTURE averages the distance over 2 seconds on the device &mdash; the same window the
-          calibration screen uses &mdash; so each point carries sub-mm resolution.</div>
+          calibration screen uses &mdash; so each point carries sub-mm resolution.
+          Points are kept in this browser across reloads; SAVE/LOAD moves a session between
+          machines or into the gh-pages library. Capture only at thermal steady state
+          (device on &ge; 30 min, no sensor sleep/re-lock between points) &mdash; a warming
+          die drifts several mm on its own and will fake a steep slope.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
@@ -2461,6 +2467,15 @@
           <button onclick="tofcalManual()">SET</button>
         </div>
         <div id="tofcal-active">&mdash;</div>
+        <div class="tofcal-row">
+          <button onclick="tofcalExport()">SAVE FILE</button>
+          <button onclick="tofcalImportFile()">LOAD FILE</button>
+          <button onclick="tofcalLoadGithub()">FROM GITHUB</button>
+        </div>
+        <div id="tofcal-gh-list" style="display:none;"></div>
+        <div id="tofcal-io" style="font-size:11px;"></div>
+        <input type="file" id="tofcal-file-input" accept=".json,application/json"
+               style="display:none;" onchange="tofcalFileChosen(this)">
         <div class="tofcal-row" style="margin-top:10px;">
           <button class="off" onclick="tofcalOff()">TURN OFF</button>
           <button onclick="tofcalClose()">CLOSE</button>
@@ -4788,9 +4803,23 @@
     }
 
     // ===== V12.6: TOF TEMPERATURE CAL (fit dist-vs-temp, push the coefficient) =====
+    // Points persist in localStorage — the origin is the device's address, so
+    // the store is per-device — and survive tab reloads and device reboots; a
+    // half-day capture session is only lost by an explicit "clear points".
     let tofcalOpenFlag = false, tofcalPts = [];
+    try {
+        const s = JSON.parse(localStorage.getItem('afovTofcalPts') || '[]');
+        if (Array.isArray(s)) tofcalPts = s.filter(p => p && Number.isFinite(p.t) && Number.isFinite(p.d));
+    } catch (e) { /* blocked/corrupt storage → start empty */ }
+    function tofcalSave() {
+        try { localStorage.setItem('afovTofcalPts', JSON.stringify(tofcalPts)); } catch (e) {}
+    }
     function tofcalOpen()  { tofcalOpenFlag = true;  document.getElementById('tofcal-overlay').classList.add('open'); tofcalRender(); }
-    function tofcalClose() { tofcalOpenFlag = false; document.getElementById('tofcal-overlay').classList.remove('open'); }
+    function tofcalClose() {
+        tofcalOpenFlag = false;
+        document.getElementById('tofcal-overlay').classList.remove('open');
+        document.getElementById('tofcal-gh-list').style.display = 'none';
+    }
     function tofcalTemp() { return (typeof state.ambC === 'number' && state.ambC > 0) ? state.ambC : null; }
     function tofcalDist() { const d = (typeof state._pendingDist === 'number') ? state._pendingDist : state.dist; return (typeof d === 'number' && d > 0) ? d : null; }
     // CAPTURE is a round trip, not a snapshot of the live readout: the device
@@ -4825,11 +4854,107 @@
             document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no valid range in the 2 s window — is the sensor asleep or aimed at nothing?</span>';
             return;
         }
-        tofcalPts.push({ t: s.t, d: s.d, sd: s.sd, n: s.n });
-        tofcalRender();
+        tofcalPts.push({ t: s.t, d: s.d, sd: s.sd, n: s.n, ts: Date.now() });
+        tofcalSave(); tofcalRender();
     }
-    function tofcalClearPts() { tofcalPts = []; tofcalRender(); }
-    function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalRender(); }
+    function tofcalClearPts() {
+        // Persistence makes this the ONLY way to lose a session — confirm past a triviality.
+        if (tofcalPts.length >= 3 && !confirm('Delete all ' + tofcalPts.length + ' captured points?')) return;
+        tofcalPts = []; tofcalSave(); tofcalRender();
+    }
+    function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalSave(); tofcalRender(); }
+    // Capture time — HH:MM today, M/D for older points, so a stale point from a
+    // previous session (different target aim!) is visible at a glance.
+    function tofcalWhen(ts) {
+        if (!ts) return '—';
+        const d = new Date(ts), now = new Date();
+        return d.toDateString() === now.toDateString()
+            ? d.toTimeString().slice(0, 5)
+            : (d.getMonth() + 1) + '/' + d.getDate();
+    }
+    function tofcalIo(msg, warn) {
+        const el = document.getElementById('tofcal-io');
+        el.style.color = warn ? '#e7c35a' : '#9fe6cf';
+        el.innerText = msg || '';
+    }
+    // ── Save/load a capture session as .json (and pull shared ones from the
+    // gh-pages library). Import MERGES with what's captured — morning and
+    // afternoon sessions combine into one fit — deduped on exact (T, dist).
+    function tofcalExport() {
+        if (!tofcalPts.length) { tofcalIo('no points to save', true); return; }
+        calioNamePrompt('tofcal-bench', name => {
+            const fit = tofcalFit();
+            calioDownload({ fmt: 'autofov-tofcal', ver: 1, name: name,
+                            saved: new Date().toISOString(), points: tofcalPts,
+                            fit: fit || null }, name + '.json');
+            tofcalIo('saved ' + name + '.json ✓');
+        });
+    }
+    function tofcalImportFile() {
+        const inp = document.getElementById('tofcal-file-input');
+        inp.value = ''; inp.click();
+    }
+    async function tofcalFileChosen(input) {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        try { tofcalImportObj(JSON.parse(await f.text()), f.name); }
+        catch (e) { tofcalIo('import failed: ' + e.message, true); }
+    }
+    function tofcalImportObj(obj, label) {
+        if (!obj || obj.fmt !== 'autofov-tofcal' || !Array.isArray(obj.points))
+            throw new Error('not an AutoFOV temp-cal file');
+        const clean = obj.points
+            .filter(p => p && Number.isFinite(p.t) && Number.isFinite(p.d))
+            .map(p => ({ t: p.t, d: p.d, sd: Number.isFinite(p.sd) ? p.sd : 0,
+                         n: p.n | 0, ts: Number.isFinite(p.ts) ? p.ts : 0 }));
+        if (!clean.length) throw new Error('no valid points in file');
+        const seen = new Set(tofcalPts.map(p => p.t + '|' + p.d));
+        let added = 0;
+        clean.forEach(p => {
+            const k = p.t + '|' + p.d;
+            if (!seen.has(k)) { seen.add(k); tofcalPts.push(p); added++; }
+        });
+        tofcalPts.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        tofcalSave(); tofcalRender();
+        tofcalIo('loaded ' + label + ': +' + added + ' new, ' + (clean.length - added) +
+                 ' duplicate → ' + tofcalPts.length + ' points');
+    }
+    // Temp-cal sets live in the SAME gh-pages calibrations/ index as FOV
+    // calibrations, tagged "type":"tofcal" — each browser shows only its kind.
+    async function tofcalLoadGithub() {
+        const list = document.getElementById('tofcal-gh-list');
+        list.style.display = 'block';
+        list.innerHTML = '<div style="color:#7a958c;font-size:10px;padding:4px;">Loading library…</div>';
+        try {
+            const r = await fetch(GITHUB_PAGES_BASE + '/calibrations/index.json', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const items = ((await r.json()).calibrations || []).filter(it => it.type === 'tofcal');
+            if (!items.length) {
+                list.innerHTML = '<div style="color:#7a958c;font-size:10px;padding:4px;">' +
+                    'No temp-cal sets in the library yet (index entries need "type":"tofcal").</div>';
+                return;
+            }
+            list.innerHTML = '';
+            items.forEach(it => {
+                const row = document.createElement('div');
+                row.style.cssText = 'padding:6px 8px;margin:3px 0;background:#0a2a1a;' +
+                    'border:1px solid #2a6a4a;border-radius:4px;font-size:11px;cursor:pointer;';
+                row.textContent = it.name + (it.by ? ' · ' + it.by : '');
+                row.onclick = async () => {
+                    try {
+                        const rr = await fetch(GITHUB_PAGES_BASE + '/calibrations/' + it.file, { cache: 'no-store' });
+                        if (!rr.ok) throw new Error('HTTP ' + rr.status);
+                        tofcalImportObj(await rr.json(), it.name);
+                        list.style.display = 'none';
+                    } catch (e) { tofcalIo('fetch failed: ' + e.message, true); }
+                };
+                list.appendChild(row);
+            });
+        } catch (e) {
+            list.innerHTML = '<div style="color:#e78a8a;font-size:10px;padding:4px;">Library unavailable: ' +
+                String(e.message).replace(/[<>&]/g, '') + '</div>';
+        }
+    }
     // Least-squares dist = slope·(T) + b; slope is the mm/°C coefficient, ref = mean T.
     function tofcalFit() {
         const n = tofcalPts.length; if (n < 2) return null;
@@ -4937,8 +5062,9 @@
     function tofcalRender() {
         tofcalRenderLive();
         document.getElementById('tofcal-pts').innerHTML = tofcalPts.length
-            ? '<table><thead><tr><th>#</th><th>T °C</th><th>dist mm</th><th>±σ</th><th></th></tr></thead><tbody>' +
-              tofcalPts.map((p, i) => '<tr><td>' + (i + 1) + '</td><td>' + p.t.toFixed(1) + '</td><td>' +
+            ? '<table><thead><tr><th>#</th><th>at</th><th>T °C</th><th>dist mm</th><th>±σ</th><th></th></tr></thead><tbody>' +
+              tofcalPts.map((p, i) => '<tr><td>' + (i + 1) + '</td><td style="color:#7a958c">' +
+                  tofcalWhen(p.ts) + '</td><td>' + p.t.toFixed(1) + '</td><td>' +
                   p.d.toFixed(2) + '</td><td' + (p.sd > 0.5 ? ' class="warn"' : '') + '>' +
                   (typeof p.sd === 'number' ? p.sd.toFixed(2) : '—') +
                   '</td><td><span style="cursor:pointer;color:#e78a8a" onclick="tofcalDelPt(' + i + ')">✕</span></td></tr>').join('') +
@@ -4959,17 +5085,32 @@
             ? 'Active: <b style="color:#3ddb7a">' + cf.toFixed(3) + ' mm/°C @ ' + (typeof rf === 'number' ? rf.toFixed(1) : '?') + ' °C</b>'
             : 'Active: <span style="color:#7a958c">off (no compensation)</span>';
     }
+    // Apply/set/off echo the new value into state IMMEDIATELY — tcCoeff rides
+    // the 5 s slow telemetry frame, so without the local echo the Active line
+    // sits stale for seconds after the click and the button looks dead. The
+    // next slow frame overwrites with the device's authoritative value (which
+    // also reverts the echo if the command never landed).
     function tofcalApply() {
         const fit = tofcalFit(); if (!fit) return;
         sendCommand('tofcomp', fit.slope.toFixed(4) + ',' + fit.ref.toFixed(2));
+        state.tcCoeff = parseFloat(fit.slope.toFixed(4));
+        state.tcRef   = parseFloat(fit.ref.toFixed(2));
+        tofcalRender(); tofcalIo('fit applied ✓');
     }
     function tofcalManual() {
         const cf = parseFloat(document.getElementById('tofcal-coeff').value);
         const rf = parseFloat(document.getElementById('tofcal-ref').value);
         if (isNaN(cf)) return;
         sendCommand('tofcomp', cf.toFixed(4) + ',' + (isNaN(rf) ? 21 : rf).toFixed(2));
+        state.tcCoeff = cf;
+        state.tcRef   = isNaN(rf) ? 21 : rf;
+        tofcalRender(); tofcalIo('manual coefficient set ✓');
     }
-    function tofcalOff() { sendCommand('tofcomp', 'off'); }
+    function tofcalOff() {
+        sendCommand('tofcomp', 'off');
+        state.tcCoeff = 0;
+        tofcalRender(); tofcalIo('compensation off');
+    }
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape' && tofcalOpenFlag) { tofcalClose(); return; }
@@ -11538,27 +11679,37 @@
     }
     // EXPORT — opens the styled name overlay; the file downloads as <name>.json
     // (named so it can drop straight into the calibrations/ library).
-    function calioExport() {
+    // The name overlay is shared — calioNamePrompt(cb) hands the sanitized name
+    // to whichever exporter opened it (CAL I/O here, tofcal SAVE FILE too).
+    let calioNameCb = null;
+    function calioNamePrompt(placeholder, cb) {
+        calioNameCb = cb;
         const inp = document.getElementById('calio-name-input');
-        inp.value = '';
+        inp.value = ''; inp.placeholder = placeholder;
         document.getElementById('calio-name-overlay').classList.add('open');
         setTimeout(() => inp.focus(), 50);
+    }
+    function calioExport() {
+        calioNamePrompt('objective-20x', async safe => {
+            try {
+                calioStatus('Reading calibration…');
+                const cal = await calioGetCalib();
+                cal.name = safe;
+                calioDownload(cal, safe + '.json');
+                calioStatus('Exported ' + safe + '.json ✓', '#3ddb7a');
+            } catch (e) { calioStatus('Export failed: ' + e.message, '#ff6a6a'); }
+        });
     }
     function calioNameClose() {
         document.getElementById('calio-name-overlay').classList.remove('open');
     }
-    async function calioNameConfirm() {
+    function calioNameConfirm() {
         const raw  = document.getElementById('calio-name-input').value || '';
         const safe = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
         if (!safe) return;                 // empty/invalid → leave the popup open
         calioNameClose();
-        try {
-            calioStatus('Reading calibration…');
-            const cal = await calioGetCalib();
-            cal.name = safe;
-            calioDownload(cal, safe + '.json');
-            calioStatus('Exported ' + safe + '.json ✓', '#3ddb7a');
-        } catch (e) { calioStatus('Export failed: ' + e.message, '#ff6a6a'); }
+        const cb = calioNameCb; calioNameCb = null;
+        if (cb) cb(safe);
     }
     function calioLoadFile() {
         const inp = document.getElementById('calio-file-input');
@@ -11606,7 +11757,9 @@
         try {
             const r = await fetch(GITHUB_PAGES_BASE + '/calibrations/index.json', { cache: 'no-store' });
             if (!r.ok) throw new Error('HTTP ' + r.status);
-            const items = (await r.json()).calibrations || [];
+            // tofcal point-sets share this index tagged "type":"tofcal" — they
+            // are not FOV calibrations, so keep them out of this list.
+            const items = ((await r.json()).calibrations || []).filter(it => it.type !== 'tofcal');
             if (!items.length) {
                 list.innerHTML = '<div style="color:var(--text-disabled);padding:6px;font-size:10px;">Library is empty.</div>';
                 return;
@@ -13484,8 +13637,10 @@
         // ambC now rides the 5 s slow frame — only the live readout changes,
         // so no need to rebuild the point table and redraw the graph with it.
         if (data.ambC        !== undefined) { state.ambC        = data.ambC; tofcalRenderLive(); }
-        if (data.tcCoeff     !== undefined) { state.tcCoeff     = data.tcCoeff; if (tofcalOpenFlag) tofcalRender(); }
+        // tcRef must land BEFORE the render or the Active line pairs the new
+        // coefficient with the previous frame's reference temperature.
         if (data.tcRef       !== undefined) { state.tcRef       = data.tcRef; }
+        if (data.tcCoeff     !== undefined) { state.tcCoeff     = data.tcCoeff; if (tofcalOpenFlag) tofcalRender(); }
         if (data.chipInfo    !== undefined) { state.chipInfo    = data.chipInfo;    aboutDirty = true; }
         if (aboutDirty && state.screen === 'screen-about') updateAboutUI();
         if (otaDirty   && state.screen === 'screen-ota')   updateOtaRollbackUI();
