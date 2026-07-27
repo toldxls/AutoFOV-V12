@@ -2447,8 +2447,11 @@
           calibration screen uses &mdash; so each point carries sub-mm resolution.
           Points are kept in this browser across reloads; SAVE/LOAD moves a session between
           machines or into the gh-pages library. Capture only at thermal steady state
-          (device on &ge; 30 min, no sensor sleep/re-lock between points) &mdash; a warming
-          die drifts several mm on its own and will fake a steep slope.</div>
+          (device on &ge; 30 min) &mdash; a warming die drifts several mm on its own and will
+          fake a steep slope. The sensor now re-locks itself whenever ambient drifts
+          &ge; 1 &deg;C, so the slope fitted here is the small residual left after those
+          recals &mdash; a steep fit (&gt; 0.2 mm/&deg;C) means warm-up contamination, not
+          a real coefficient.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
