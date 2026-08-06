@@ -1359,6 +1359,15 @@ static void startStaMode(const String& ssid, const String& pass,
     Serial.printf("[WiFi] modem power-save disabled — getSleep()=%d (0=NONE)\n",
                   (int)WiFi.getSleep());
     WiFi.setAutoReconnect(true);
+    // Give the STA an IPv6 link-local address so the mDNS responder answers
+    // AAAA queries. Without any AAAA (or an NSEC denial, which the precompiled
+    // mdns component never sends), a browser-style A+AAAA lookup blocks the
+    // full 5 s macOS resolver timeout waiting on the IPv6 answer — Chrome
+    // gives up sooner and shows DNS_PROBE_FINISHED_NXDOMAIN for
+    // autofov.local even while ping (A-only) resolves fine. Sets a want-IPv6
+    // flag the core applies on STA connect; the mdns component picks up the
+    // address via IP_EVENT_GOT_IP6 automatically.
+    WiFi.enableIPv6(true);
 
     // RF is up now — safe to mint the default device password with the HW RNG.
     // Runs before staConnectTask/startFullServer, so effectivePassword() is
