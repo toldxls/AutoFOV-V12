@@ -1359,15 +1359,22 @@ static void startStaMode(const String& ssid, const String& pass,
     Serial.printf("[WiFi] modem power-save disabled — getSleep()=%d (0=NONE)\n",
                   (int)WiFi.getSleep());
     WiFi.setAutoReconnect(true);
-    // Give the STA an IPv6 link-local address so the mDNS responder answers
-    // AAAA queries. Without any AAAA (or an NSEC denial, which the precompiled
-    // mdns component never sends), a browser-style A+AAAA lookup blocks the
-    // full 5 s macOS resolver timeout waiting on the IPv6 answer — Chrome
-    // gives up sooner and shows DNS_PROBE_FINISHED_NXDOMAIN for
-    // autofov.local even while ping (A-only) resolves fine. Sets a want-IPv6
-    // flag the core applies on STA connect; the mdns component picks up the
-    // address via IP_EVENT_GOT_IP6 automatically.
-    WiFi.enableIPv6(true);
+    // DO NOT call WiFi.enableIPv6() here (tried v12.5.39, reverted v12.5.40).
+    // It does make the mdns component answer AAAA — which cured a 5 s macOS
+    // resolver stall on the IPv6 half of a browser A+AAAA lookup — but the
+    // published fe80:: address is a black hole: the device answers no ICMPv6
+    // echo, no ff02::1, no neighbor solicitation, so nothing ever reaches the
+    // (dual-stack, IPADDR_TYPE_ANY) TCP listener. macOS ranks that AAAA ahead
+    // of the A record (RFC 6724: fe80::/10 precedence 40 vs 35), so every
+    // connection to autofov.local paid ~213 ms of Happy-Eyeballs fallback
+    // (0.22 s vs 0.007 s by IP), and sequential-connect clients burned the
+    // whole connect timeout — 10 s measured, 75 s is the macOS default.
+    // Advertising an address we cannot serve costs more than the stall it
+    // removed. Re-enabling means first fixing L3 (the silent IPv6 stack is
+    // below the sketch — precompiled-SDK MLD or AP multicast snooping) AND
+    // the auth identity key: (uint32_t)remoteIP() is 0 for every non-IPv4
+    // client, so all IPv6 peers would collapse into one entry in
+    // authIPKnown() and the per-IP lockout table.
 
     // RF is up now — safe to mint the default device password with the HW RNG.
     // Runs before staConnectTask/startFullServer, so effectivePassword() is
