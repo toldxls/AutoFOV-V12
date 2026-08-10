@@ -1149,6 +1149,39 @@ std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 
 std::atomic<uint32_t> sensorDistTenths{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
 
+// ── TOF target-list debug (V12.6) ────────────────────────────────────────────
+// The published distance is a signal-weighted average over the histogram's
+// targets, and its MEMBERSHIP can change discretely — the 20%-of-max signal
+// cliff, a status flip in/out of {0,3,6}, or the object count itself. That is
+// the suspected source of the bistable ~16.5 / ~19.5 mm shelves (and the
+// blend-ratio levels in between). This block exposes the raw per-measurement
+// target list so a level jump can be tied to the exact histogram change that
+// caused it.
+//  - Live snapshot: SPSC ping-pong (tofTgtSnap[2] + tofTgtSeq — the vibSpec
+//    pattern). sensorTask (Core 0) writes every measurement; the fast-telemetry
+//    builder (Core 1) samples it.
+//  - Topology events: when the signature (count | incMask | statuses) changes,
+//    the snapshot is also pushed into a 48-deep ring (per-slot seqlock, ≥125 ms
+//    apart — flap beyond that only bumps tofTgtEvtDropped) served by
+//    GET /tofdbg on the AsyncTCP task, which reads plain RAM only.
+struct TofTgt     { int16_t mm; uint8_t st; uint8_t pad; uint16_t cps100; };
+struct TofTgtSnap {
+  uint32_t ms;       // millis() of the measurement
+  uint32_t sig;      // topology signature (count/incMask/status fold)
+  uint16_t pubT;     // published weighted distance, tenths of mm (pre-EMA); 0 = none
+  uint16_t amb100;   // ambient rate ×100 MCps
+  uint8_t  n;        // objects found (0..4)
+  uint8_t  incMask;  // bit i = target i entered the weighted average
+  TofTgt   t[VL53L4CX_MAX_RANGE_RESULTS];
+};
+TofTgtSnap tofTgtSnap[2];
+std::atomic<uint32_t> tofTgtSeq{0};
+constexpr int TOF_EVT_RING = 48;
+TofTgtSnap tofTgtEvt[TOF_EVT_RING];
+std::atomic<uint32_t> tofTgtEvtSlotSeq[TOF_EVT_RING];  // odd = mid-write
+std::atomic<uint32_t> tofTgtEvtCount{0};    // total since boot; head = count % ring
+std::atomic<uint32_t> tofTgtEvtDropped{0};  // rate-limited flap events
+
 // ── TOF cold-start re-lock (config-cycle) ────────────────────────────────────
 // The VL53L4CX starts every ranging session with a stale reference when it was
 // last stopped cold (boot / wake / idle-resume), biasing every distance long
@@ -4302,14 +4335,15 @@ void sensorTask(void *pvParameters) {
         }
 
         float weightedDistanceSum = 0.0;
-        float validSignalSum = 0.0; 
-        float totalSignal = 0.0;    
-        float signalThreshold = maxCps * 0.20; 
+        float validSignalSum = 0.0;
+        float totalSignal = 0.0;
+        float signalThreshold = maxCps * 0.20;
+        uint8_t tgtIncMask = 0;   // V12.6: which targets entered the average
 
         for (int i = 0; i < multiRangingData.NumberOfObjectsFound; i++) {
           float cps = multiRangingData.RangeData[i].SignalRateRtnMegaCps / 65536.0f;
           uint8_t status = multiRangingData.RangeData[i].RangeStatus;
-          
+
           if (cps >= signalThreshold) {
             totalSignal += cps;
             // Accept status 0 (RANGE_VALID), 3 (MIN_RANGE_CLIPPED — valid for
@@ -4325,6 +4359,7 @@ void sensorTask(void *pvParameters) {
               if (dist < 0) dist = 0;
               weightedDistanceSum += (dist * cps);
               validSignalSum += cps;
+              if (i < 8) tgtIncMask |= (1 << i);
             }
           }
         }
@@ -4351,6 +4386,52 @@ void sensorTask(void *pvParameters) {
         }
         sensorAmbient.store((uint32_t)(bestAmbient * 1000.0f) & 0xFFFFFF, std::memory_order_release);
         // sensorSigma fields unavailable in this driver version — store 0
+
+        // ── V12.6: publish the raw target list (see the tofTgtSnap block) ──
+        {
+          TofTgtSnap snap;
+          snap.ms  = millis();
+          snap.n   = (uint8_t)min((int)multiRangingData.NumberOfObjectsFound,
+                                  (int)VL53L4CX_MAX_RANGE_RESULTS);
+          snap.incMask = tgtIncMask;
+          snap.amb100  = (uint16_t)min(bestAmbient * 100.0f, 65535.0f);
+          snap.pubT = (validSignalSum > 0.0)
+              ? (uint16_t)min((double)lround(weightedDistanceSum / validSignalSum * 10.0), 65535.0)
+              : 0;
+          uint32_t sig = ((uint32_t)snap.n << 8) | snap.incMask;
+          for (int i = 0; i < snap.n; i++) {
+            float cps = multiRangingData.RangeData[i].SignalRateRtnMegaCps / 65536.0f;
+            snap.t[i].mm     = multiRangingData.RangeData[i].RangeMilliMeter;
+            snap.t[i].st     = multiRangingData.RangeData[i].RangeStatus;
+            snap.t[i].pad    = 0;
+            snap.t[i].cps100 = (uint16_t)min(cps * 100.0f, 65535.0f);
+            sig = sig * 131u + snap.t[i].st;
+          }
+          snap.sig = sig;
+          uint32_t s = tofTgtSeq.load(std::memory_order_relaxed);
+          tofTgtSnap[(s + 1) & 1] = snap;
+          tofTgtSeq.store(s + 1, std::memory_order_release);
+
+          // Topology changed → event ring (rate-capped so a threshold-hover
+          // flap can't flush the history that shows the flap beginning).
+          static uint32_t prevSig = 0xFFFFFFFF;
+          static uint32_t lastEvtMs = 0;
+          if (sig != prevSig) {
+            prevSig = sig;
+            if (snap.ms - lastEvtMs >= 125 || lastEvtMs == 0) {
+              lastEvtMs = snap.ms;
+              uint32_t c = tofTgtEvtCount.load(std::memory_order_relaxed);
+              int slot = c % TOF_EVT_RING;
+              uint32_t ss = tofTgtEvtSlotSeq[slot].load(std::memory_order_relaxed);
+              tofTgtEvtSlotSeq[slot].store(ss + 1, std::memory_order_release);
+              tofTgtEvt[slot] = snap;
+              tofTgtEvtSlotSeq[slot].store(ss + 2, std::memory_order_release);
+              tofTgtEvtCount.store(c + 1, std::memory_order_release);
+            } else {
+              tofTgtEvtDropped.fetch_add(1, std::memory_order_relaxed);
+            }
+          }
+        }
 
         if (validSignalSum > 0.0) {
           int currentRange = round(weightedDistanceSum / validSignalSum);

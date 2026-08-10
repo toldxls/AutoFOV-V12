@@ -1053,6 +1053,17 @@
                     <span>TEMP CAL</span>
                 </div>
 
+                <div class="gfx-btn btn-tof btn-slate" style="top: 310px;"
+                     onclick="tofdbgOpen()" title="Live raw multi-target view — see exactly which histogram objects the distance blends, and catch the level jumps">
+                    <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
+                        <line x1="4"  y1="16" x2="4"  y2="9"  stroke="#3ddb7a" stroke-width="2.4"/>
+                        <line x1="10" y1="16" x2="10" y2="4"  stroke="#3ddb7a" stroke-width="2.4"/>
+                        <line x1="16" y1="16" x2="16" y2="11" stroke="#eda100" stroke-width="2.4" stroke-dasharray="2 1.6"/>
+                        <line x1="2" y1="16.8" x2="18" y2="16.8" stroke="#7ab4a2" stroke-width="1"/>
+                    </svg>
+                    <span>TOF TARGETS</span>
+                </div>
+
             </div>
 
 
@@ -2435,6 +2446,31 @@
       #tofcal-box button.apply:disabled { opacity:0.4; cursor:default; }
       #tofcal-box button.off { background:#2a1414; border-color:#7a3a3a; }
       .tofcal-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+      /* ── TOF TARGETS debug view (V12.6). Sits above tofcal (662) so the two
+         TOF dialogs stack deterministically; calio-name (664) tops both. ── */
+      #tofdbg-overlay { display:none; position:fixed; inset:0; z-index:663;
+        background:rgba(4,13,11,0.92); align-items:center; justify-content:center;
+        flex-direction:column; font-family:monospace; padding:16px; }
+      #tofdbg-overlay.open { display:flex; }
+      #tofdbg-box { background:#0a1f1a; border:1px solid #2a7a6a; border-radius:8px;
+        padding:14px 16px; max-width:520px; width:100%; max-height:92vh; overflow-y:auto;
+        color:#cfe7df; font-size:12px; }
+      #tofdbg-box h3 { color:#00c8b4; font-size:15px; letter-spacing:1px; margin:0 0 6px; }
+      #tofdbg-box .tc-sub { font-size:10px; color:#7ab4a2; line-height:1.55; margin-bottom:8px; }
+      #tofdbg-canvas { width:100%; height:230px; background:#061512;
+        border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-live { font-size:11px; color:#9fe6cf; margin:6px 0; min-height:14px; }
+      #tofdbg-legend { font-size:10px; color:#7ab4a2; margin:2px 0 6px; }
+      #tofdbg-legend b { font-weight:normal; }
+      #tofdbg-log { max-height:180px; overflow-y:auto; margin:4px 0;
+        font-size:10px; line-height:1.7; color:#9fc9bc; }
+      #tofdbg-log .ev-pub { color:#e87ba4; }
+      #tofdbg-log .ev-in  { color:#9fe6cf; }
+      #tofdbg-log .ev-out { color:#5a7a70; }
+      #tofdbg-box button { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df;
+        font-family:monospace; font-size:11px; font-weight:bold; padding:6px 12px;
+        border-radius:4px; cursor:pointer; }
+      #tofdbg-box button:active { filter:brightness(1.6); }
     </style>
     <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
       <div id="tofcal-box">
@@ -2481,6 +2517,35 @@
         <div class="tofcal-row" style="margin-top:10px;">
           <button class="off" onclick="tofcalOff()">TURN OFF</button>
           <button onclick="tofcalClose()">CLOSE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TOF TARGETS debug view (V12.6) ── -->
+    <div id="tofdbg-overlay" onclick="if(event.target===this)tofdbgClose()">
+      <div id="tofdbg-box">
+        <h3>TOF TARGETS</h3>
+        <div class="tc-sub">Raw histogram output, live. The published distance is the
+          signal-weighted average of the <b>solid</b> stems — status 0/3/6 <i>and</i>
+          &ge;20% of the strongest signal (dashed line). Hollow stems are seen but
+          excluded. A level jump is a stem crossing that line, changing status, or
+          appearing/vanishing &mdash; the log below records every such change.</div>
+        <canvas id="tofdbg-canvas"></canvas>
+        <div id="tofdbg-legend">status:
+          <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
+          <b style="color:#eda100;">&#9632;</b> 3 min-clip&ensp;
+          <b style="color:#3987e5;">&#9632;</b> 6 no-wrap&ensp;
+          <b style="color:#e66767;">&#9632;</b> other&ensp;
+          <b style="color:#e87ba4;">&#9650;</b> published blend</div>
+        <div id="tofdbg-live">waiting for telemetry&hellip;</div>
+        <div class="tofcal-row">
+          <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
+          <button onclick="tofdbgSaveLog()">SAVE LOG</button>
+          <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
+        </div>
+        <div id="tofdbg-log">no events fetched yet</div>
+        <div class="tofcal-row" style="margin-top:8px;">
+          <button onclick="tofdbgClose()">CLOSE</button>
         </div>
       </div>
     </div>
@@ -5112,6 +5177,134 @@
         sendCommand('tofcomp', 'off');
         state.tcCoeff = 0;
         tofcalRender(); tofcalIo('compensation off');
+    }
+
+    // ── TOF TARGETS debug view (V12.6) ──────────────────────────────────────
+    // Live: the fast frame carries "tg" (~6 Hz + immediately on any topology
+    // change) — {p: pub dist tenths, i: inclusion bitmask, n, t:[[mm,status,
+    // cps×100],…]}. History: GET /tofdbg returns the firmware's 48-deep ring of
+    // topology-change events with device-millis timestamps.
+    let tofdbgOpenFlag = false, tofdbgLastTg = null, tofdbgLogRaw = null;
+    function tofdbgOpen() {
+        tofdbgOpenFlag = true;
+        document.getElementById('tofdbg-overlay').classList.add('open');
+        if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
+        tofdbgFetchLog();
+    }
+    function tofdbgClose() {
+        tofdbgOpenFlag = false;
+        document.getElementById('tofdbg-overlay').classList.remove('open');
+    }
+    function tofdbgOnLive(tg) {
+        tofdbgLastTg = tg;
+        if (tofdbgOpenFlag) tofdbgDraw(tg);
+    }
+    const TOFDBG_STATUS_COL = { 0:'#3ddb7a', 3:'#eda100', 6:'#3987e5' };
+    function tofdbgDraw(tg) {
+        const cv = document.getElementById('tofdbg-canvas');
+        const W = cv.clientWidth, H = cv.clientHeight;
+        if (!W) return;
+        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        const t = tg.t || [];
+        const padL = 34, padR = 10, padT = 8, padB = 22;
+        const maxMm  = Math.max(30, ...t.map(r => r[0])) * 1.15;
+        const maxCps = Math.max(0.5, ...t.map(r => r[2] / 100));
+        // log y: floor two decades below max so weak phantoms stay visible
+        const yTop = maxCps * 2, yBot = Math.max(0.01, maxCps / 100);
+        const X = mm => padL + (W - padL - padR) * Math.max(0, mm) / maxMm;
+        const Y = c  => { const cl = Math.min(Math.max(c, yBot), yTop);
+            return padT + (H - padT - padB) *
+                   (1 - Math.log(cl / yBot) / Math.log(yTop / yBot)); };
+        // axes + x ticks
+        ctx.strokeStyle = '#14302a'; ctx.fillStyle = '#7ab4a2';
+        ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.lineWidth = 1;
+        const step = maxMm > 60 ? 10 : 5;
+        for (let m = 0; m <= maxMm; m += step) {
+            ctx.beginPath(); ctx.moveTo(X(m), padT); ctx.lineTo(X(m), H - padB); ctx.stroke();
+            ctx.fillText(m + '', X(m), H - padB + 12);
+        }
+        ctx.fillText('mm', W - padR - 8, H - padB + 12);
+        // y ticks (MCps, log decades)
+        ctx.textAlign = 'right';
+        for (let d = Math.ceil(Math.log10(yBot)); d <= Math.log10(yTop); d++) {
+            const v = Math.pow(10, d);
+            ctx.fillText(v >= 1 ? v + '' : v.toFixed(2), padL - 4, Y(v) + 3);
+            ctx.beginPath(); ctx.strokeStyle = '#0e241e';
+            ctx.moveTo(padL, Y(v)); ctx.lineTo(W - padR, Y(v)); ctx.stroke();
+        }
+        ctx.strokeStyle = '#14302a';
+        ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
+        // 20% threshold
+        const thr = maxCps * 0.2;
+        ctx.strokeStyle = '#7ab4a2'; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(padL, Y(thr)); ctx.lineTo(W - padR, Y(thr)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.textAlign = 'left'; ctx.fillText('20%', padL + 2, Y(thr) - 3);
+        // stems
+        t.forEach((r, i) => {
+            const [mm, st, c100] = r, cps = c100 / 100;
+            const inc = (tg.i >> i) & 1;
+            const col = TOFDBG_STATUS_COL[st] || '#e66767';
+            ctx.strokeStyle = col; ctx.fillStyle = col;
+            ctx.lineWidth = 2;
+            if (!inc) ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(X(mm), H - padB); ctx.lineTo(X(mm), Y(cps)); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath(); ctx.arc(X(mm), Y(cps), 4.5, 0, Math.PI * 2);
+            if (inc) ctx.fill(); else { ctx.lineWidth = 1.5; ctx.stroke(); }
+            ctx.textAlign = 'center'; ctx.font = '9px monospace';
+            ctx.fillText(mm + '', X(mm), Y(cps) - 8);
+        });
+        // published blend marker
+        if (tg.p) {
+            const px = X(tg.p / 10);
+            ctx.fillStyle = '#e87ba4';
+            ctx.beginPath();
+            ctx.moveTo(px, H - padB - 8); ctx.lineTo(px - 5, H - padB);
+            ctx.lineTo(px + 5, H - padB); ctx.closePath(); ctx.fill();
+        }
+        document.getElementById('tofdbg-live').innerHTML =
+            (tg.p ? 'published <b>' + (tg.p / 10).toFixed(1) + ' mm</b>' : 'no valid blend') +
+            ' &middot; ' + tg.n + ' object' + (tg.n === 1 ? '' : 's') +
+            ' &middot; ' + t.map((r, i) => ((tg.i >> i) & 1 ? 'IN' : 'out') +
+                ' ' + r[0] + 'mm@' + (r[2] / 100).toFixed(2)).join(' | ');
+    }
+    function tofdbgWhen(devMs, nowMs) {
+        const ago = Math.max(0, nowMs - devMs) / 1000;
+        return ago < 90 ? '-' + ago.toFixed(1) + 's'
+             : ago < 5400 ? '-' + (ago / 60).toFixed(1) + 'm'
+             : '-' + (ago / 3600).toFixed(1) + 'h';
+    }
+    async function tofdbgFetchLog() {
+        const el = document.getElementById('tofdbg-log');
+        try {
+            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const j = await r.json();
+            tofdbgLogRaw = j;
+            document.getElementById('tofdbg-io').innerText =
+                j.count + ' topology changes since boot' +
+                (j.dropped ? ' (+' + j.dropped + ' flaps rate-capped)' : '');
+            if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
+            el.innerHTML = j.events.slice().reverse().map(e =>
+                tofdbgWhen(e.ms, j.now) + ' <span class="ev-pub">' +
+                (e.p ? (e.p / 10).toFixed(1) + 'mm' : '—') + '</span> ' +
+                (e.t || []).map((r, i) =>
+                    '<span class="' + (((e.i >> i) & 1) ? 'ev-in' : 'ev-out') + '">' +
+                    r[0] + 'mm@' + (r[2] / 100).toFixed(2) + ' st' + r[1] + '</span>'
+                ).join(' | ')
+            ).join('<br>');
+        } catch (e) { el.innerText = 'log fetch failed: ' + e.message; }
+    }
+    function tofdbgSaveLog() {
+        if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }
+        calioDownload({ fmt: 'autofov-tofdbg', ver: 1, saved: new Date().toISOString(),
+                        log: tofdbgLogRaw, lastLive: tofdbgLastTg },
+                      'tofdbg-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.json');
+        document.getElementById('tofdbg-io').innerText = 'saved ✓';
     }
 
     document.addEventListener('keydown', e => {
@@ -13589,6 +13782,7 @@
 
         // ── V12.6: TOF temp-cal point result (2 s device-side average) ──
         if (data.tofSample !== undefined) tofcalOnSample(data.tofSample);
+        if (data.tg !== undefined) tofdbgOnLive(data.tg);
 
         // ── Memory ──
         // aboutDirty is declared up here too because the about screen now

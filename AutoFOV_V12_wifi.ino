@@ -1798,6 +1798,45 @@ static void startFullServer() {
         req->send(r);
     });
 
+    // V12.6: TOF topology event ring — every membership/status/count change of
+    // the multi-target weighted average (see tofTgtSnap in the main tab). Reads
+    // plain RAM behind per-slot seqlocks only, so it is safe on this (AsyncTCP)
+    // task; same gates as /diag.
+    httpServer.on("/tofdbg", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        uint32_t cnt = tofTgtEvtCount.load(std::memory_order_acquire);
+        DynamicJsonDocument doc(16384);
+        doc["now"]     = millis();            // dashboard renders event ages
+        doc["count"]   = cnt;
+        doc["dropped"] = tofTgtEvtDropped.load(std::memory_order_relaxed);
+        JsonArray evs = doc.createNestedArray("events");
+        uint32_t n = min(cnt, (uint32_t)TOF_EVT_RING);
+        for (uint32_t k = 0; k < n; k++) {    // oldest → newest
+            int idx = (int)((cnt - n + k) % TOF_EVT_RING);
+            TofTgtSnap e; uint32_t s1, s2; int tries = 0;
+            do {
+                s1 = tofTgtEvtSlotSeq[idx].load(std::memory_order_acquire);
+                e  = tofTgtEvt[idx];
+                s2 = tofTgtEvtSlotSeq[idx].load(std::memory_order_acquire);
+            } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
+            if (s1 != s2 || (s1 & 1)) continue;   // slot mid-write, skip it
+            JsonObject o = evs.createNestedObject();
+            o["ms"] = e.ms;
+            o["p"]  = e.pubT;
+            o["a"]  = e.amb100;
+            o["i"]  = e.incMask;
+            JsonArray ta = o.createNestedArray("t");
+            for (int i = 0; i < e.n; i++) {
+                JsonArray row = ta.createNestedArray();
+                row.add(e.t[i].mm); row.add(e.t[i].st); row.add(e.t[i].cps100);
+            }
+        }
+        String out; serializeJson(doc, out);
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
+        r->addHeader("Cache-Control", "no-store");
+        req->send(r);
+    });
+
     // GET /vibtest — V12.6: live interval-test state + per-shot settle log.
     // Streamed row-by-row (no big JsonDocument). vibTest* scalars are Core-1
     // 32-bit aligned so the cross-core status read can't tear; the shot array is
@@ -3306,7 +3345,9 @@ static void buildFastTelemJson(String& out) {
 
     // Short keys save ~30 bytes/frame at 30 Hz.  HTML applyFullState() unpacks
     // them back to long names at the top of the function.
-    StaticJsonDocument<448> doc;
+    // 1024: the base frame fit in 448; the V12.6 "tg" nested object (4 targets
+    // × 3-int rows) needs ~350 B of pool on top.
+    StaticJsonDocument<1024> doc;
     doc["d"]  = valid ? roundf(dist_mm * 10.0f) / 10.0f : 0;   // dist
     doc["f"]  = roundf(fov * 1000.0f) / 1000.0f;                // fov
     doc["e"]  = (int)sensorErrInt.load(std::memory_order_acquire); // fovErr (2σ × 100, centimm)
@@ -3326,6 +3367,37 @@ static void buildFastTelemJson(String& out) {
     doc["vsh"] = (int)vibShutterDenom;                           // analyzer/PNG-card shutter 1/N s
     // V12.6: live frames-shot counter — 0 when no sequence is active.
     doc["sp"]  = isSequenceActive ? (int)stackPulseCount : 0;
+
+    // V12.6: raw TOF target list for the TARGETS debug view. Every 5th frame
+    // (~6 Hz — plenty for eyes) plus immediately on a topology change, so a
+    // membership flip shows the very frame it happened; the /tofdbg event ring
+    // carries the precise history. Ping-pong read: copy the slab the seq says
+    // is stable, re-check seq, one retry (writer is 30 Hz, torn reads rare).
+    static uint32_t tgFrameCtr = 0;
+    static uint32_t tgLastSig = 0;
+    uint32_t tgSeq = tofTgtSeq.load(std::memory_order_acquire);
+    if (tgSeq != 0) {
+        TofTgtSnap snap = tofTgtSnap[tgSeq & 1];
+        if (tofTgtSeq.load(std::memory_order_acquire) != tgSeq) {
+            tgSeq = tofTgtSeq.load(std::memory_order_acquire);
+            snap  = tofTgtSnap[tgSeq & 1];
+        }
+        bool topoChanged = (snap.sig != tgLastSig);
+        if (topoChanged || (++tgFrameCtr % 5) == 0) {
+            tgLastSig = snap.sig;
+            JsonObject tg = doc.createNestedObject("tg");
+            tg["p"] = snap.pubT;         // published weighted dist, tenths mm
+            tg["i"] = snap.incMask;      // bit i = target i in the average
+            tg["n"] = snap.n;
+            JsonArray ta = tg.createNestedArray("t");
+            for (int i = 0; i < snap.n; i++) {
+                JsonArray row = ta.createNestedArray();
+                row.add(snap.t[i].mm);
+                row.add(snap.t[i].st);
+                row.add(snap.t[i].cps100);
+            }
+        }
+    }
 
     serializeJson(doc, out);
 }
