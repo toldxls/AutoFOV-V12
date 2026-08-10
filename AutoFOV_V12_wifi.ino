@@ -1823,6 +1823,8 @@ static void startFullServer() {
             JsonObject o = evs.createNestedObject();
             o["ms"] = e.ms;
             o["p"]  = e.pubT;
+            o["e"]  = e.emaT;
+            o["w"]  = e.why;      // bit0 topology change, bit1 level step
             o["a"]  = e.amb100;
             o["i"]  = e.incMask;
             JsonArray ta = o.createNestedArray("t");
@@ -3387,6 +3389,7 @@ static void buildFastTelemJson(String& out) {
             tgLastSig = snap.sig;
             JsonObject tg = doc.createNestedObject("tg");
             tg["p"] = snap.pubT;         // published weighted dist, tenths mm
+            tg["e"] = snap.emaT;         // EMA level, tenths mm
             tg["i"] = snap.incMask;      // bit i = target i in the average
             tg["n"] = snap.n;
             JsonArray ta = tg.createNestedArray("t");

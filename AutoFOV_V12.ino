@@ -1169,9 +1169,12 @@ struct TofTgtSnap {
   uint32_t ms;       // millis() of the measurement
   uint32_t sig;      // topology signature (count/incMask/status fold)
   uint16_t pubT;     // published weighted distance, tenths of mm (pre-EMA); 0 = none
+  uint16_t emaT;     // EMA distance tenths BEFORE this frame folded in (level context)
   uint16_t amb100;   // ambient rate ×100 MCps
   uint8_t  n;        // objects found (0..4)
   uint8_t  incMask;  // bit i = target i entered the weighted average
+  uint8_t  why;      // event trigger: bit0 topology changed, bit1 level step ≥1.5 mm
+  uint8_t  pad2;
   TofTgt   t[VL53L4CX_MAX_RANGE_RESULTS];
 };
 TofTgtSnap tofTgtSnap[2];
@@ -4398,6 +4401,10 @@ void sensorTask(void *pvParameters) {
           snap.pubT = (validSignalSum > 0.0)
               ? (uint16_t)min((double)lround(weightedDistanceSum / validSignalSum * 10.0), 65535.0)
               : 0;
+          // Level context: the EMA as it stood BEFORE this frame folds in.
+          snap.emaT = (emaDistance >= 0)
+              ? (uint16_t)min((double)lround(emaDistance * 10.0), 65535.0) : 0;
+          snap.pad2 = 0;
           uint32_t sig = ((uint32_t)snap.n << 8) | snap.incMask;
           for (int i = 0; i < snap.n; i++) {
             float cps = multiRangingData.RangeData[i].SignalRateRtnMegaCps / 65536.0f;
@@ -4408,16 +4415,32 @@ void sensorTask(void *pvParameters) {
             sig = sig * 131u + snap.t[i].st;
           }
           snap.sig = sig;
+
+          // Two independent event triggers:
+          //  bit0 — topology changed (count / status set / inclusion mask).
+          //  bit1 — level step: published distance moved ≥1.5 mm between
+          //         consecutive VALID frames with no topology change required.
+          //         The 8/10/26 logs proved a re-lock steps the SAME single
+          //         target's reported range (18.0→19.0, identical topology) —
+          //         a spontaneous internal step would be invisible to the
+          //         topology trigger alone. 1.5 mm clears the ±1 mm integer
+          //         dither of the driver's RangeMilliMeter.
+          static uint32_t prevSig  = 0xFFFFFFFF;
+          static uint16_t lastPubT = 0;
+          snap.why = 0;
+          if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
+          if (snap.pubT && lastPubT &&
+              abs((int)snap.pubT - (int)lastPubT) >= 15) snap.why |= 2;
+          if (snap.pubT) lastPubT = snap.pubT;
+
           uint32_t s = tofTgtSeq.load(std::memory_order_relaxed);
           tofTgtSnap[(s + 1) & 1] = snap;
           tofTgtSeq.store(s + 1, std::memory_order_release);
 
-          // Topology changed → event ring (rate-capped so a threshold-hover
-          // flap can't flush the history that shows the flap beginning).
-          static uint32_t prevSig = 0xFFFFFFFF;
+          // Event → ring (rate-capped so a threshold-hover flap can't flush
+          // the history that shows the flap beginning).
           static uint32_t lastEvtMs = 0;
-          if (sig != prevSig) {
-            prevSig = sig;
+          if (snap.why) {
             if (snap.ms - lastEvtMs >= 125 || lastEvtMs == 0) {
               lastEvtMs = snap.ms;
               uint32_t c = tofTgtEvtCount.load(std::memory_order_relaxed);

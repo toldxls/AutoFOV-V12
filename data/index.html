@@ -2521,8 +2521,11 @@
         <div class="tc-sub">Raw histogram output, live. The published distance is the
           signal-weighted average of the <b>solid</b> stems — status 0/3/6 <i>and</i>
           &ge;20% of the strongest signal (dashed line). Hollow stems are seen but
-          excluded. A level jump is a stem crossing that line, changing status, or
-          appearing/vanishing &mdash; the log below records every such change.</div>
+          excluded. The log records <b>[T]</b> topology changes (a stem appearing,
+          vanishing, changing status, or crossing the 20% line) and <b>[L]</b> level
+          steps &mdash; the published distance moving &ge;1.5&nbsp;mm between frames
+          with <i>no</i> topology change: the signature of an internal re-reference
+          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -5251,7 +5254,15 @@
             ctx.textAlign = 'center'; ctx.font = '9px monospace';
             ctx.fillText(mm + '', X(mm), Y(cps) - 8);
         });
-        // published blend marker
+        // published blend marker (pink triangle) + EMA level line (teal)
+        if (tg.e) {
+            const ex = X(tg.e / 10);
+            ctx.strokeStyle = '#9fe6cf'; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+            ctx.beginPath(); ctx.moveTo(ex, padT); ctx.lineTo(ex, H - padB); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#9fe6cf'; ctx.textAlign = 'center';
+            ctx.fillText('ema', ex, padT + 8);
+        }
         if (tg.p) {
             const px = X(tg.p / 10);
             ctx.fillStyle = '#e87ba4';
@@ -5261,6 +5272,7 @@
         }
         document.getElementById('tofdbg-live').innerHTML =
             (tg.p ? 'published <b>' + (tg.p / 10).toFixed(1) + ' mm</b>' : 'no valid blend') +
+            (tg.e ? ' &middot; ema ' + (tg.e / 10).toFixed(1) : '') +
             ' &middot; ' + tg.n + ' object' + (tg.n === 1 ? '' : 's') +
             ' &middot; ' + t.map((r, i) => ((tg.i >> i) & 1 ? 'IN' : 'out') +
                 ' ' + r[0] + 'mm@' + (r[2] / 100).toFixed(2)).join(' | ');
@@ -5283,8 +5295,13 @@
                 (j.dropped ? ' (+' + j.dropped + ' flaps rate-capped)' : '');
             if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
             el.innerHTML = j.events.slice().reverse().map(e =>
-                tofdbgWhen(e.ms, j.now) + ' <span class="ev-pub">' +
-                (e.p ? (e.p / 10).toFixed(1) + 'mm' : '—') + '</span> ' +
+                tofdbgWhen(e.ms, j.now) +
+                // [T] topology change, [L] ≥1.5 mm level step, [TL] both.
+                ' <b style="color:' + ((e.w & 2) ? '#e7c35a' : '#7ab4a2') + '">[' +
+                ((e.w & 1) ? 'T' : '') + ((e.w & 2) ? 'L' : '') + ']</b>' +
+                ' <span class="ev-pub">' +
+                (e.p ? (e.p / 10).toFixed(1) + 'mm' : '—') + '</span>' +
+                (e.e ? ' <span style="color:#7ab4a2">(ema ' + (e.e / 10).toFixed(1) + ')</span>' : '') + ' ' +
                 (e.t || []).map((r, i) =>
                     '<span class="' + (((e.i >> i) & 1) ? 'ev-in' : 'ev-out') + '">' +
                     r[0] + 'mm@' + (r[2] / 100).toFixed(2) + ' st' + r[1] + '</span>'
