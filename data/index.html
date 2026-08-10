@@ -1018,19 +1018,12 @@
                     <span>SLEEP SENSOR</span>
                 </div>
 
-                <div id="btn-sensor-hiref" class="gfx-btn btn-tof has-badge btn-slate" style="top: 160px;"
-                     onclick="toggleHighRefl()">
-                    <!-- Glint: a specular highlight bouncing off a surface. -->
-                    <svg id="ico-hiref" style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
-                        <path d="M9 1.6 L10.6 6.4 L15.4 8 L10.6 9.6 L9 14.4 L7.4 9.6 L2.6 8 L7.4 6.4 Z"
-                              fill="#8fa6bb"/>
-                        <rect x="2.4" y="16" width="15.2" height="2.4" rx="1.2" fill="#8fa6bb"/>
-                    </svg>
-                    <span style="font-size:12px;">HIGH REFLECTIVITY</span>
-                    <div id="hiref-badge" class="tof-badge">OFF</div>
-                </div>
+                <!-- HIGH REFLECTIVITY toggle removed (V12.6) — the mode was never
+                     useful in practice. The firmware machinery stays: the RE-LOCK
+                     cure cycle flips through the opposite refl config internally,
+                     and the device-side Sensor Info toggle still exists. -->
 
-                <div id="btn-sensor-relock" class="gfx-btn btn-tof btn-indigo" style="top: 210px;"
+                <div id="btn-sensor-relock" class="gfx-btn btn-tof btn-indigo" style="top: 160px;"
                      onclick="relockTof()">
                     <svg id="ico-relock" style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
                         <path id="ico-relock-shackle" d="M6 9V6.6a4 4 0 0 1 8 0V9"
@@ -1042,7 +1035,7 @@
                     <span>RE-LOCK TOF (COLD)</span>
                 </div>
 
-                <div class="gfx-btn btn-tof btn-aqua" style="top: 260px;"
+                <div class="gfx-btn btn-tof btn-aqua" style="top: 210px;"
                      onclick="tofcalOpen()" title="Temperature-compensate the TOF range over the room's 65–75°F swing">
                     <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
                         <path d="M8.6 11.4V4.2a1.9 1.9 0 0 1 3.8 0v7.2a4 4 0 1 1-3.8 0z"
@@ -1053,7 +1046,7 @@
                     <span>TEMP CAL</span>
                 </div>
 
-                <div class="gfx-btn btn-tof btn-slate" style="top: 310px;"
+                <div class="gfx-btn btn-tof btn-slate" style="top: 260px;"
                      onclick="tofdbgOpen()" title="Live raw multi-target view — see exactly which histogram objects the distance blends, and catch the level jumps">
                     <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
                         <line x1="4"  y1="16" x2="4"  y2="9"  stroke="#3ddb7a" stroke-width="2.4"/>
@@ -8480,22 +8473,6 @@
             if (moon) moon.style.display = asleep ? 'none'  : 'block';
             if (wake) wake.style.display = asleep ? 'block' : 'none';
         }
-        const hr = document.getElementById('btn-sensor-hiref');
-        if (hr) {
-            const on = state.highReflMode;
-            setHue(hr, on ? 'btn-copper' : 'btn-slate');
-            const bdg = document.getElementById('hiref-badge');
-            if (bdg) {
-                bdg.innerText = on ? 'ON' : 'OFF';
-                bdg.style.color       = on ? '#ffd9a0' : '#93a9bd';
-                bdg.style.borderColor = on ? '#ffab3d' : '#5a7590';
-            }
-            // The glint brightens when the mode is on — the icon carries the
-            // state too, so it still reads at a glance in a theme with weak
-            // colour separation.
-            const ic = document.getElementById('ico-hiref');
-            if (ic) ic.querySelectorAll('path, rect').forEach(n => n.setAttribute('fill', on ? '#ffd9a0' : '#8fa6bb'));
-        }
         const rl = document.getElementById('btn-sensor-relock');
         if (rl) {
             // LOCKED is a status, not a call to action — moss, sitting back.
@@ -8579,11 +8556,6 @@
         try { refreshSensorInfoUI(); } catch (e) { console.warn('refreshSensorInfoUI threw:', e); }
     }
 
-    function toggleHighRefl() {
-        state.highReflMode = !state.highReflMode;
-        refreshSensorInfoUI();
-        sendCommand('highRefl', state.highReflMode ? 1 : 0);
-    }
     function sensorInfoToggleHelp(){ const h=document.getElementById('sensorinfo-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
 
