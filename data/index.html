@@ -2455,6 +2455,8 @@
       #tofdbg-live { font-size:11px; color:#9fe6cf; margin:6px 0; min-height:14px; }
       #tofdbg-legend { font-size:10px; color:#7ab4a2; margin:2px 0 6px; }
       #tofdbg-legend b { font-weight:normal; }
+      #tofdbg-trend { display:none; width:100%; height:96px; background:#061512;
+        border:1px solid #14302a; border-radius:4px; margin:2px 0 4px; }
       #tofdbg-log { max-height:180px; overflow-y:auto; margin:4px 0;
         font-size:10px; line-height:1.7; color:#9fc9bc; }
       #tofdbg-log .ev-pub { color:#e87ba4; }
@@ -2539,6 +2541,7 @@
           <button onclick="tofdbgSaveLog()">SAVE LOG</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
+        <canvas id="tofdbg-trend" title="EMA level, one sample / 10 min, up to 24 h"></canvas>
         <div id="tofdbg-log">no events fetched yet</div>
         <div class="tofcal-row" style="margin-top:8px;">
           <button onclick="tofdbgClose()">CLOSE</button>
@@ -5307,7 +5310,51 @@
                     r[0] + 'mm@' + (r[2] / 100).toFixed(2) + ' st' + r[1] + '</span>'
                 ).join(' | ')
             ).join('<br>');
+            tofdbgDrawTrend(j);
         } catch (e) { el.innerText = 'log fetch failed: ' + e.message; }
+    }
+    // Level trajectory — the creep no step trigger can catch. Teal line = EMA
+    // distance; faint amber = strongest-target signal on its own 0..max scale
+    // (context only, no axis — exact values are in the saved JSON).
+    function tofdbgDrawTrend(j) {
+        const cv = document.getElementById('tofdbg-trend');
+        const rows = (j.trend || []).filter(r => r[1] > 0);
+        if (rows.length < 2) { cv.style.display = 'none'; return; }
+        cv.style.display = 'block';
+        const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
+        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        const padL = 34, padR = 8, padT = 8, padB = 14;
+        const t0 = rows[0][0], t1 = rows[rows.length - 1][0];
+        const ds = rows.map(r => r[1] / 10);
+        let dMin = Math.min(...ds), dMax = Math.max(...ds);
+        if (dMax - dMin < 1) { const m = (dMax + dMin) / 2; dMin = m - 0.5; dMax = m + 0.5; }
+        const X = ms => padL + (W - padL - padR) * (t1 === t0 ? 1 : (ms - t0) / (t1 - t0));
+        const Y = d  => padT + (H - padT - padB) * (1 - (d - dMin) / (dMax - dMin));
+        ctx.font = '9px monospace'; ctx.fillStyle = '#7ab4a2';
+        ctx.textAlign = 'right';
+        ctx.fillText(dMax.toFixed(1), padL - 3, padT + 8);
+        ctx.fillText(dMin.toFixed(1), padL - 3, H - padB);
+        ctx.textAlign = 'left';
+        ctx.fillText('-' + ((j.now - t0) / 3600000).toFixed(1) + 'h', padL + 2, H - 3);
+        ctx.textAlign = 'right'; ctx.fillText('now', W - padR, H - 3);
+        ctx.strokeStyle = '#14302a';
+        ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
+        // signal context (0..max, faint)
+        const cMax = Math.max(1, ...rows.map(r => r[2]));
+        ctx.strokeStyle = 'rgba(237,161,0,0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        rows.forEach((r, k) => { const y = padT + (H - padT - padB) * (1 - r[2] / cMax);
+            k ? ctx.lineTo(X(r[0]), y) : ctx.moveTo(X(r[0]), y); });
+        ctx.stroke();
+        // EMA level
+        ctx.strokeStyle = '#9fe6cf'; ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        rows.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Y(r[1] / 10))
+                                   : ctx.moveTo(X(r[0]), Y(r[1] / 10)); });
+        ctx.stroke();
     }
     function tofdbgSaveLog() {
         if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }

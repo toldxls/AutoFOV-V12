@@ -1805,7 +1805,9 @@ static void startFullServer() {
     httpServer.on("/tofdbg", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
         uint32_t cnt = tofTgtEvtCount.load(std::memory_order_acquire);
-        DynamicJsonDocument doc(16384);
+        // 32 KB: 48 events (~10 KB of pool) + 144 five-int trend rows (~14 KB).
+        // Transient heap; freed before the response streams.
+        DynamicJsonDocument doc(32768);
         doc["now"]     = millis();            // dashboard renders event ages
         doc["count"]   = cnt;
         doc["dropped"] = tofTgtEvtDropped.load(std::memory_order_relaxed);
@@ -1832,6 +1834,23 @@ static void startFullServer() {
                 JsonArray row = ta.createNestedArray();
                 row.add(e.t[i].mm); row.add(e.t[i].st); row.add(e.t[i].cps100);
             }
+        }
+        // 10-min level/signal trend, oldest → newest: [ms, emaT, cps100, amb100, n]
+        uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
+        JsonArray tr = doc.createNestedArray("trend");
+        uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
+        for (uint32_t k = 0; k < tn; k++) {
+            int idx = (int)((tcnt - tn + k) % TOF_TREND_RING);
+            TofTrendPt tp; uint32_t s1, s2; int tries = 0;
+            do {
+                s1 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
+                tp = tofTrend[idx];
+                s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
+            } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
+            if (s1 != s2 || (s1 & 1)) continue;
+            JsonArray row = tr.createNestedArray();
+            row.add(tp.ms); row.add(tp.emaT); row.add(tp.cps100);
+            row.add(tp.amb100); row.add(tp.n);
         }
         String out; serializeJson(doc, out);
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);

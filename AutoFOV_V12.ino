@@ -1184,6 +1184,18 @@ TofTgtSnap tofTgtEvt[TOF_EVT_RING];
 std::atomic<uint32_t> tofTgtEvtSlotSeq[TOF_EVT_RING];  // odd = mid-write
 std::atomic<uint32_t> tofTgtEvtCount{0};    // total since boot; head = count % ring
 std::atomic<uint32_t> tofTgtEvtDropped{0};  // rate-limited flap events
+// Slow trend ring: one point / 10 min, 24 h deep. Catches the overnight CREEP
+// no step trigger can see — a smooth 18.5→19.5 drift never moves ≥1.5 mm
+// frame-to-frame, so [L] stays silent while the level walks. 8/11/26 overnight
+// log: the target's signal grew 19.2→24.7 MCps in 16 h — the optical state
+// drifts on hours timescales and the trajectory is the evidence.
+struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100;
+                    uint8_t n; uint8_t pad; };
+constexpr int      TOF_TREND_RING        = 144;      // × 10 min = 24 h
+constexpr uint32_t TOF_TREND_INTERVAL_MS = 600000UL;
+TofTrendPt tofTrend[TOF_TREND_RING];
+std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];
+std::atomic<uint32_t> tofTrendCount{0};
 
 // ── TOF cold-start re-lock (config-cycle) ────────────────────────────────────
 // The VL53L4CX starts every ranging session with a stale reference when it was
@@ -4436,6 +4448,25 @@ void sensorTask(void *pvParameters) {
           uint32_t s = tofTgtSeq.load(std::memory_order_relaxed);
           tofTgtSnap[(s + 1) & 1] = snap;
           tofTgtSeq.store(s + 1, std::memory_order_release);
+
+          // Slow trend sample — the level trajectory between events.
+          static uint32_t lastTrendMs = 0;
+          if (lastTrendMs == 0 || snap.ms - lastTrendMs >= TOF_TREND_INTERVAL_MS) {
+            lastTrendMs = snap.ms;
+            TofTrendPt tp;
+            tp.ms = snap.ms; tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
+            tp.n = snap.n; tp.pad = 0;
+            uint16_t maxc = 0;
+            for (int i = 0; i < snap.n; i++) if (snap.t[i].cps100 > maxc) maxc = snap.t[i].cps100;
+            tp.cps100 = maxc;
+            uint32_t c = tofTrendCount.load(std::memory_order_relaxed);
+            int slot = c % TOF_TREND_RING;
+            uint32_t ss = tofTrendSlotSeq[slot].load(std::memory_order_relaxed);
+            tofTrendSlotSeq[slot].store(ss + 1, std::memory_order_release);
+            tofTrend[slot] = tp;
+            tofTrendSlotSeq[slot].store(ss + 2, std::memory_order_release);
+            tofTrendCount.store(c + 1, std::memory_order_release);
+          }
 
           // Event → ring (rate-capped so a threshold-hover flap can't flush
           // the history that shows the flap beginning).
