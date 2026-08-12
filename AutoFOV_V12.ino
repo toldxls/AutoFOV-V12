@@ -1184,6 +1184,11 @@ TofTgtSnap tofTgtEvt[TOF_EVT_RING];
 std::atomic<uint32_t> tofTgtEvtSlotSeq[TOF_EVT_RING];  // odd = mid-write
 std::atomic<uint32_t> tofTgtEvtCount{0};    // total since boot; head = count % ring
 std::atomic<uint32_t> tofTgtEvtDropped{0};  // rate-limited flap events
+// Web CLEAR button (A/B testing a scene change against a clean log). The
+// dispatcher only raises the flag; sensorTask — sole owner of the counters —
+// performs the reset at the top of its capture pass, so there is no cross-task
+// read-modify-write race and the clear never fabricates a [T]/[L] edge.
+std::atomic<bool> tofTgtEvtClearReq{false};
 // Slow trend ring: one point / 10 min, 24 h deep. Catches the overnight CREEP
 // no step trigger can see — a smooth 18.5→19.5 drift never moves ≥1.5 mm
 // frame-to-frame, so [L] stays silent while the level walks. 8/11/26 overnight
@@ -4439,6 +4444,12 @@ void sensorTask(void *pvParameters) {
           //         dither of the driver's RangeMilliMeter.
           static uint32_t prevSig  = 0xFFFFFFFF;
           static uint16_t lastPubT = 0;
+          if (tofTgtEvtClearReq.exchange(false, std::memory_order_acq_rel)) {
+            tofTgtEvtCount.store(0, std::memory_order_release);
+            tofTgtEvtDropped.store(0, std::memory_order_relaxed);
+            prevSig  = sig;        // the clear itself must not log an edge
+            lastPubT = snap.pubT;
+          }
           snap.why = 0;
           if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
           if (snap.pubT && lastPubT &&

@@ -2539,6 +2539,7 @@
         <div class="tofcal-row">
           <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
           <button onclick="tofdbgSaveLog()">SAVE LOG</button>
+          <button onclick="tofdbgClearLog()" title="Reset the event counters and ring — for before/after tests of a scene or config change">CLEAR</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
         <canvas id="tofdbg-trend" title="EMA level, one sample / 10 min, up to 24 h"></canvas>
@@ -5183,7 +5184,8 @@
     // change) — {p: pub dist tenths, i: inclusion bitmask, n, t:[[mm,status,
     // cps×100],…]}. History: GET /tofdbg returns the firmware's 48-deep ring of
     // topology-change events with device-millis timestamps.
-    let tofdbgOpenFlag = false, tofdbgLastTg = null, tofdbgLogRaw = null;
+    let tofdbgOpenFlag = false, tofdbgLastTg = null, tofdbgLogRaw = null,
+        tofdbgPrevFetch = null;
     function tofdbgOpen() {
         tofdbgOpenFlag = true;
         document.getElementById('tofdbg-overlay').classList.add('open');
@@ -5293,9 +5295,17 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const j = await r.json();
             tofdbgLogRaw = j;
+            // Event rate between refreshes — THE A/B number for a scene change.
+            let rate = '';
+            if (tofdbgPrevFetch && j.count >= tofdbgPrevFetch.count && j.now > tofdbgPrevFetch.now) {
+                const perMin = (j.count + j.dropped - tofdbgPrevFetch.count - tofdbgPrevFetch.dropped)
+                             / ((j.now - tofdbgPrevFetch.now) / 60000);
+                if (perMin >= 0) rate = ' · ' + perMin.toFixed(1) + ' ev/min since last refresh';
+            }
+            tofdbgPrevFetch = { count: j.count, dropped: j.dropped, now: j.now };
             document.getElementById('tofdbg-io').innerText =
-                j.count + ' topology changes since boot' +
-                (j.dropped ? ' (+' + j.dropped + ' flaps rate-capped)' : '');
+                j.count + ' events since clear' +
+                (j.dropped ? ' (+' + j.dropped + ' rate-capped)' : '') + rate;
             if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
             el.innerHTML = j.events.slice().reverse().map(e =>
                 tofdbgWhen(e.ms, j.now) +
@@ -5355,6 +5365,12 @@
         rows.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Y(r[1] / 10))
                                    : ctx.moveTo(X(r[0]), Y(r[1] / 10)); });
         ctx.stroke();
+    }
+    function tofdbgClearLog() {
+        sendCommand('tofdbgclear', 1);
+        tofdbgPrevFetch = null;               // rate baseline restarts at zero
+        document.getElementById('tofdbg-io').innerText = 'clearing…';
+        setTimeout(tofdbgFetchLog, 400);      // ring owner resets on its next pass
     }
     function tofdbgSaveLog() {
         if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }

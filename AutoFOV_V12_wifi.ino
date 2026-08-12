@@ -2600,6 +2600,13 @@ static void handleWifiCommand(const char* key, const char* val) {
             }
         }
 
+    // ── TOF target-debug log clear (V12.6) ──────────────────────────────────
+    //   Raises a flag; sensorTask (counter owner) resets the event ring on its
+    //   next capture pass. Trend ring is deliberately kept — it is timestamped
+    //   history and a scene change shows up in it as the level moving.
+    } else if (strcmp(key, "tofdbgclear") == 0) {
+        tofTgtEvtClearReq.store(true, std::memory_order_release);
+
     // ── TOF temp-cal point capture (V12.6) ───────────────────────────────────
     //   Arms the 2 s rolling average in loop(); the result comes back as a
     //   one-shot {"tofSample":{…}} WS event. Ignored while one is running.
