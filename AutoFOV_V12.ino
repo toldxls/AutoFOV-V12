@@ -300,7 +300,22 @@ IRsend irLed(IR_LED_PIN);
 #define TFT_RST  6
 
 Adafruit_FT6206 touch = Adafruit_FT6206();
-VL53L4CX sensor(&Wire, -1);
+// Subclass solely to reach the driver's protected tuning-parm API. The driver
+// ships DYNAMIC HISTOGRAM MERGING enabled (TUNINGPARM_HIST_MERGE=1, max 6):
+// each measurement merges 1-6 histograms, rescaling the reported signal by the
+// merge count (the five discrete Mcps states measured 8/11/26 — ratios
+// 1/1.2/1.5/2/3 = merge_nb 6/5/4/3/2) and swapping in a per-merge-count
+// crosstalk offset (algo__xtalk_cpo_HistoMerge_kcps[nb-1]) — which moves the
+// reported RANGE with the state (±3-4 mm at 15-20 mm). RESET_MERGE_THRESHOLD
+// defaults to 15 Mcps — our scene sits ON it, so merge_nb churns forever.
+class VL53L4CX_Tunable : public VL53L4CX {
+public:
+  using VL53L4CX::VL53L4CX;              // inherit constructors
+  VL53L4CX_Error setTuningParm(VL53L4CX_TuningParms key, int32_t value) {
+    return VL53L4CX_set_tuning_parm(Dev, key, value);
+  }
+};
+VL53L4CX_Tunable sensor(&Wire, -1);
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 // V12: LSM6DSOX IMU for the bench-vibration monitor. Shares the I²C bus with
@@ -5683,6 +5698,14 @@ void setup() {
     delay(100);
     sensor.InitSensor(0x52);
     delay(100);
+    // V12.6: pin the histogram pipeline — disable dynamic histogram merging
+    // (see the VL53L4CX_Tunable comment). Must run AFTER InitSensor (preset
+    // init rewrites the tuning struct) and needs no re-apply on the re-lock
+    // cycle's Stop/Start — only preset init touches it. Expected effect: ONE
+    // stable signal level and one stable range level instead of the
+    // merge-count state hopping. NOTE: changes the reported distance level →
+    // FOV recalibration required once confirmed stable on the bench.
+    sensor.setTuningParm(VL53L4CX_TUNINGPARM_HIST_MERGE, 0);
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
     armTofRelock();          // cold boot → mark cold + schedule auto cure
