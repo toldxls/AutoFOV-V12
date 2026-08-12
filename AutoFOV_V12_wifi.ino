@@ -1828,6 +1828,7 @@ static void startFullServer() {
             o["e"]  = e.emaT;
             o["w"]  = e.why;      // bit0 topology change, bit1 level step
             o["a"]  = e.amb100;
+            o["sc"] = e.spads;    // effective SPADs, 8.8 fixed
             o["i"]  = e.incMask;
             JsonArray ta = o.createNestedArray("t");
             for (int i = 0; i < e.n; i++) {
@@ -1835,7 +1836,8 @@ static void startFullServer() {
                 row.add(e.t[i].mm); row.add(e.t[i].st); row.add(e.t[i].cps100);
             }
         }
-        // 10-min level/signal trend, oldest → newest: [ms, emaT, cps100, amb100, n]
+        // 10-min level/signal trend, oldest → newest:
+        // [ms, emaT, cps100, amb100, n, spads(8.8)]
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         JsonArray tr = doc.createNestedArray("trend");
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
@@ -1850,7 +1852,7 @@ static void startFullServer() {
             if (s1 != s2 || (s1 & 1)) continue;
             JsonArray row = tr.createNestedArray();
             row.add(tp.ms); row.add(tp.emaT); row.add(tp.cps100);
-            row.add(tp.amb100); row.add(tp.n);
+            row.add(tp.amb100); row.add(tp.n); row.add(tp.spads);
         }
         String out; serializeJson(doc, out);
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
@@ -3416,6 +3418,7 @@ static void buildFastTelemJson(String& out) {
             JsonObject tg = doc.createNestedObject("tg");
             tg["p"] = snap.pubT;         // published weighted dist, tenths mm
             tg["e"] = snap.emaT;         // EMA level, tenths mm
+            tg["sc"] = snap.spads;       // effective SPADs, 8.8 fixed (÷256)
             tg["i"] = snap.incMask;      // bit i = target i in the average
             tg["n"] = snap.n;
             JsonArray ta = tg.createNestedArray("t");

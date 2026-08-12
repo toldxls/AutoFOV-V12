@@ -5278,6 +5278,10 @@
         document.getElementById('tofdbg-live').innerHTML =
             (tg.p ? 'published <b>' + (tg.p / 10).toFixed(1) + ' mm</b>' : 'no valid blend') +
             (tg.e ? ' &middot; ema ' + (tg.e / 10).toFixed(1) : '') +
+            // Effective SPADs = the DSS servo's control variable. Reported Mcps
+            // pins at the servo setpoint on a bright scene; THIS number shows
+            // real optical loading (near floor = saturated, mid-range = healthy).
+            (tg.sc ? ' &middot; <b>' + (tg.sc / 256).toFixed(1) + ' spads</b>' : '') +
             ' &middot; ' + tg.n + ' object' + (tg.n === 1 ? '' : 's') +
             ' &middot; ' + t.map((r, i) => ((tg.i >> i) & 1 ? 'IN' : 'out') +
                 ' ' + r[0] + 'mm@' + (r[2] / 100).toFixed(2)).join(' | ');

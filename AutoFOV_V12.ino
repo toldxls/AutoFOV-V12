@@ -1186,6 +1186,12 @@ struct TofTgtSnap {
   uint16_t pubT;     // published weighted distance, tenths of mm (pre-EMA); 0 = none
   uint16_t emaT;     // EMA distance tenths BEFORE this frame folded in (level context)
   uint16_t amb100;   // ambient rate ×100 MCps
+  uint16_t spads;    // EffectiveSpadRtnCount, 8.8 fixed (÷256 = SPADs) — the DSS
+                     // servo's control variable. Reported Mcps is PINNED at the
+                     // DSS setpoint whenever the scene is bright (proved
+                     // v12.5.50: ¼-area ROI moved reported rate not at all);
+                     // spad count near its floor = saturated optics, mid-range
+                     // = healthy servo. THE gauge for any attenuation attempt.
   uint8_t  n;        // objects found (0..4)
   uint8_t  incMask;  // bit i = target i entered the weighted average
   uint8_t  why;      // event trigger: bit0 topology changed, bit1 level step ≥1.5 mm
@@ -1210,7 +1216,7 @@ std::atomic<bool> tofTgtEvtClearReq{false};
 // log: the target's signal grew 19.2→24.7 MCps in 16 h — the optical state
 // drifts on hours timescales and the trajectory is the evidence.
 struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100;
-                    uint8_t n; uint8_t pad; };
+                    uint16_t spads; uint8_t n; uint8_t pad; };
 constexpr int      TOF_TREND_RING        = 144;      // × 10 min = 24 h
 constexpr uint32_t TOF_TREND_INTERVAL_MS = 600000UL;
 TofTrendPt tofTrend[TOF_TREND_RING];
@@ -4449,6 +4455,7 @@ void sensorTask(void *pvParameters) {
           // Level context: the EMA as it stood BEFORE this frame folds in.
           snap.emaT = (emaDistance >= 0)
               ? (uint16_t)min((double)lround(emaDistance * 10.0), 65535.0) : 0;
+          snap.spads = multiRangingData.EffectiveSpadRtnCount;
           snap.pad2 = 0;
           uint32_t sig = ((uint32_t)snap.n << 8) | snap.incMask;
           for (int i = 0; i < snap.n; i++) {
@@ -4494,7 +4501,7 @@ void sensorTask(void *pvParameters) {
             lastTrendMs = snap.ms;
             TofTrendPt tp;
             tp.ms = snap.ms; tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
-            tp.n = snap.n; tp.pad = 0;
+            tp.spads = snap.spads; tp.n = snap.n; tp.pad = 0;
             uint16_t maxc = 0;
             for (int i = 0; i < snap.n; i++) if (snap.t[i].cps100 > maxc) maxc = snap.t[i].cps100;
             tp.cps100 = maxc;
