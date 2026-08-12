@@ -4276,19 +4276,28 @@ void IRAM_ATTR touchISR() { touchDetected = true; }
 // NOT comparable across the two modes.
 // Split from applyHighReflConfig so the cold-start re-lock can apply the
 // OPPOSITE mode transiently without mutating the user's highReflMode setting.
+//
+// V12.6 role swap (v12.5.50): the PRIMARY (hi=false) config is now the centre
+// 8×8 ROI at the 200 ms max budget — ~¼ the SPADs cuts the collected signal
+// toward the linear regime (this scene parks at the part's max-signal
+// operating point) and halves the sensed patch on the bellows (~3 mm spot at
+// 20 mm — a feature: less scene averaging). The hi=true branch is no longer a
+// user mode (web toggle removed v12.5.43) — it survives as the re-lock cure's
+// flip target, deliberately maximally different (full array + 8 ms) so the
+// change-and-back that clears the cold-start state still changes both knobs.
+// A TFT hiRefl toggle, if used, now selects the full-array/8 ms config.
 void applyReflConfig(bool hi) {
   VL53L4CX_UserRoi_t roi;
   if (hi) {
-    roi.TopLeftX  = 4;  roi.TopLeftY  = 4;
-    roi.BotRightX = 11; roi.BotRightY = 11;   // centre 8×8 of 16×16 array
-    sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(8000);
-  } else {
     roi.TopLeftX  = 0;  roi.TopLeftY  = 0;
     roi.BotRightX = 15; roi.BotRightY = 15;   // full 16×16 array
-    // 200 ms (L4 driver max, was 33 ms) — with histogram merging disabled
-    // (v12.5.49) the deep single-histogram integration replaces the merge
-    // ring's 6× depth. ~5 Hz update; EMA/averaging timescales stretch
-    // accordingly.
+    sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(8000);
+  } else {
+    roi.TopLeftX  = 4;  roi.TopLeftY  = 4;
+    roi.BotRightX = 11; roi.BotRightY = 11;   // centre 8×8 of 16×16 array
+    // 200 ms (L4 driver max) — with histogram merging disabled (v12.5.49)
+    // the deep single-histogram integration replaces the merge ring's 6×
+    // depth. ~5 Hz update; EMA/averaging timescales stretch accordingly.
     sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(200000);
   }
   sensor.VL53L4CX_SetUserROI(&roi);
@@ -5714,12 +5723,16 @@ void setup() {
     //    with a 2-hour merge-depth-5 LATCH (signal parked at 21.9 Mcps,
     //    level followed). The uint16 ceiling is only 4.4× the default; rare
     //    resets still occur and then a wrong depth can latch for hours.
-    //  - v12.5.49 (this config): merge OFF — no state machinery at all, one
-    //    fixed processing path — and the lost 6× integration bought back with
-    //    a 33→200 ms timing budget (the L4 driver max) in applyReflConfig's
-    //    normal branch: single histograms as deep as the old merged ones.
-    //    ~5 Hz update, fine for hand-adjusted bellows. NOTE: reported level
-    //    shifts with any pipeline change → FOV recalibration once stable.
+    //  - v12.5.49: merge OFF — no state machinery at all, one fixed
+    //    processing path — and the lost 6× integration bought back with a
+    //    33→200 ms timing budget (the L4 driver max) in applyReflConfig's
+    //    primary branch: single histograms as deep as the old merged ones.
+    //    ~5 Hz update, fine for hand-adjusted bellows. 1.4 h bench: level
+    //    σ 0.40, remaining wobble = the intrinsic A/B phase pair (50/50 by
+    //    construction — no occupancy to drift).
+    //  - v12.5.50: primary ROI 16×16 → centre 8×8 (~¼ signal, toward the
+    //    linear regime; ~3 mm sensed spot). NOTE: reported level shifts with
+    //    any pipeline change → FOV recalibration once stable.
     sensor.setTuningParm(VL53L4CX_TUNINGPARM_HIST_MERGE, 0);
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
