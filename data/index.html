@@ -2527,7 +2527,10 @@
           vanishing, changing status, or crossing the 20% line) and <b>[L]</b> level
           steps &mdash; the published distance moving &ge;1.5&nbsp;mm between frames
           with <i>no</i> topology change: the signature of an internal re-reference
-          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).</div>
+          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).
+          <b>[R]</b> marks a trim re-reference: the level is fed only by frames from
+          one DSS trim (one &ldquo;spads&rdquo; value); when the servo abandons it,
+          the filter adopts the new dominant trim and logs the moment here.</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -5313,9 +5316,11 @@
             if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
             el.innerHTML = j.events.slice().reverse().map(e =>
                 tofdbgWhen(e.ms, j.now) +
-                // [T] topology change, [L] ≥1.5 mm level step, [TL] both.
-                ' <b style="color:' + ((e.w & 2) ? '#e7c35a' : '#7ab4a2') + '">[' +
-                ((e.w & 1) ? 'T' : '') + ((e.w & 2) ? 'L' : '') + ']</b>' +
+                // [T] topology change, [L] ≥1.5 mm level step, [R] trim
+                // re-reference (the DSS servo abandoned the reference trim
+                // and the filter adopted the new dominant one).
+                ' <b style="color:' + ((e.w & 4) ? '#e78a8a' : (e.w & 2) ? '#e7c35a' : '#7ab4a2') + '">[' +
+                ((e.w & 1) ? 'T' : '') + ((e.w & 2) ? 'L' : '') + ((e.w & 4) ? 'R' : '') + ']</b>' +
                 ' <span class="ev-pub">' +
                 (e.p ? (e.p / 10).toFixed(1) + 'mm' : '—') + '</span>' +
                 (e.e ? ' <span style="color:#7ab4a2">(ema ' + (e.e / 10).toFixed(1) + ')</span>' : '') + ' ' +

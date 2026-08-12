@@ -1223,6 +1223,30 @@ TofTrendPt tofTrend[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendCount{0};
 
+// ── TOF trim-reference filter (V12.6, v12.5.52 experiment) ──────────────────
+// Each DSS trim (quantized effective-SPAD selection — the tofdbg 'sc' tag)
+// carries its own ~1-2 mm range bias, and the published level is the occupancy
+// mix: the 8/12 overnight soak showed the mix migrating with temperature for a
+// −0.84 mm night drift. Filter: learn the modal trim over TOF_TRIM_LEARN_MS,
+// then feed the EMA only from frames matching it — a single-state level by
+// construction. If the servo abandons the reference (> TOF_TRIM_STARVE_MS with
+// no match) re-learn and tag the ring event why-bit2 [R]: under temperature
+// migration the continuous wander becomes rare, discrete, LOGGED steps. Wake
+// and cure completion re-learn via the existing sensorEmaReset funnel. All
+// state is sensorTask-only — no cross-task access.
+constexpr uint32_t TOF_TRIM_LEARN_MS  = 8000;
+constexpr uint32_t TOF_TRIM_STARVE_MS = 4000;
+constexpr int      TOF_TRIM_CANDS     = 6;
+static uint16_t tofTrimRef = 0;               // reference sc; 0 = learning
+static uint32_t tofTrimLastMatchMs = 0;
+static uint32_t tofTrimLearnEndMs  = 0;
+static uint16_t tofTrimCandSc[TOF_TRIM_CANDS];
+static uint16_t tofTrimCandN[TOF_TRIM_CANDS];
+static inline void tofTrimRelearn() {
+  tofTrimRef = 0; tofTrimLearnEndMs = 0;
+  memset(tofTrimCandN, 0, sizeof(tofTrimCandN));
+}
+
 // ── TOF cold-start re-lock (config-cycle) ────────────────────────────────────
 // The VL53L4CX starts every ranging session with a stale reference when it was
 // last stopped cold (boot / wake / idle-resume), biasing every distance long
@@ -4347,6 +4371,7 @@ void sensorTask(void *pvParameters) {
     if (sensorEmaReset.load(std::memory_order_acquire)) {
       emaDistance = -1.0;
       emaSignal   = -1.0;
+      tofTrimRelearn();   // V12.6: wake/cure re-converges DSS — re-learn the trim
       sensorEmaReset.store(false, std::memory_order_release);
     }
     // Asleep: don't touch the sensor at all. Polling here would see a
@@ -4442,6 +4467,7 @@ void sensorTask(void *pvParameters) {
         // sensorSigma fields unavailable in this driver version — store 0
 
         // ── V12.6: publish the raw target list (see the tofTgtSnap block) ──
+        bool tofTrimAcceptFrame = true;   // set by the trim filter below
         {
           TofTgtSnap snap;
           snap.ms  = millis();
@@ -4477,6 +4503,35 @@ void sensorTask(void *pvParameters) {
           //         a spontaneous internal step would be invisible to the
           //         topology trigger alone. 1.5 mm clears the ±1 mm integer
           //         dither of the driver's RangeMilliMeter.
+          // Trim-reference filter (see the tofTrimRef block). Runs only on
+          // valid frames — empty frames carry no meaningful spad count.
+          uint8_t trimWhy = 0;
+          if (snap.pubT) {
+            if (tofTrimRef == 0) {
+              // learning window: tally candidate trims, adopt the mode at end
+              if (tofTrimLearnEndMs == 0) tofTrimLearnEndMs = snap.ms + TOF_TRIM_LEARN_MS;
+              for (int k = 0; k < TOF_TRIM_CANDS; k++) {
+                if (tofTrimCandN[k] == 0) { tofTrimCandSc[k] = snap.spads; }
+                if (tofTrimCandSc[k] == snap.spads) { tofTrimCandN[k]++; break; }
+              }
+              if ((long)(snap.ms - tofTrimLearnEndMs) >= 0) {
+                int best = 0;
+                for (int k = 1; k < TOF_TRIM_CANDS; k++)
+                  if (tofTrimCandN[k] > tofTrimCandN[best]) best = k;
+                tofTrimRef = tofTrimCandSc[best];
+                tofTrimLastMatchMs = snap.ms;
+              }
+            } else if (snap.spads == tofTrimRef) {
+              tofTrimLastMatchMs = snap.ms;
+            } else {
+              tofTrimAcceptFrame = false;
+              if (snap.ms - tofTrimLastMatchMs > TOF_TRIM_STARVE_MS) {
+                tofTrimRelearn();          // servo moved on — follow it
+                trimWhy = 4;               // ring-tag the re-reference [R]
+              }
+            }
+          }
+
           static uint32_t prevSig  = 0xFFFFFFFF;
           static uint16_t lastPubT = 0;
           if (tofTgtEvtClearReq.exchange(false, std::memory_order_acq_rel)) {
@@ -4485,7 +4540,7 @@ void sensorTask(void *pvParameters) {
             prevSig  = sig;        // the clear itself must not log an edge
             lastPubT = snap.pubT;
           }
-          snap.why = 0;
+          snap.why = trimWhy;
           if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
           if (snap.pubT && lastPubT &&
               abs((int)snap.pubT - (int)lastPubT) >= 15) snap.why |= 2;
@@ -4534,10 +4589,16 @@ void sensorTask(void *pvParameters) {
         }
 
         if (validSignalSum > 0.0) {
+          // V12.6 trim filter: frames from a non-reference DSS trim carry that
+          // trim's ~1-2 mm bias — they are published to tofdbg above but do NOT
+          // feed the level. The last accepted level stays on screen (a few
+          // hundred ms stale at normal duty, ≤4 s through a starvation window
+          // before a re-learn re-opens the gate).
+          if (tofTrimAcceptFrame) {
           int currentRange = round(weightedDistanceSum / validSignalSum);
           if (emaDistance < 0) emaDistance = currentRange;
           else emaDistance = (EMA_ALPHA * currentRange) + ((1.0 - EMA_ALPHA) * emaDistance);
-          
+
           uint32_t distPayload = (uint32_t)round(emaDistance) & 0x7FFFFFFF;
           uint32_t statePayload = (1UL << 31) | distPayload;
           sensorState.store(statePayload, std::memory_order_release);
@@ -4546,6 +4607,7 @@ void sensorTask(void *pvParameters) {
           // sensor's range) so the valid bit never collides with the payload.
           uint32_t tenths = (uint32_t)roundf(emaDistance * 10.0f) & 0x7FFFFFFF;
           sensorDistTenths.store((1UL << 31) | tenths, std::memory_order_release);
+          }
         } else {
           sensorState.store(0, std::memory_order_release);
           sensorDistTenths.store(0, std::memory_order_release);
