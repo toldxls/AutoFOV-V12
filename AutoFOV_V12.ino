@@ -5698,14 +5698,23 @@ void setup() {
     delay(100);
     sensor.InitSensor(0x52);
     delay(100);
-    // V12.6: pin the histogram pipeline — disable dynamic histogram merging
-    // (see the VL53L4CX_Tunable comment). Must run AFTER InitSensor (preset
-    // init rewrites the tuning struct) and needs no re-apply on the re-lock
-    // cycle's Stop/Start — only preset init touches it. Expected effect: ONE
-    // stable signal level and one stable range level instead of the
-    // merge-count state hopping. NOTE: changes the reported distance level →
-    // FOV recalibration required once confirmed stable on the bench.
-    sensor.setTuningParm(VL53L4CX_TUNINGPARM_HIST_MERGE, 0);
+    // V12.6: pin the histogram pipeline (see the VL53L4CX_Tunable comment).
+    // Must run AFTER InitSensor (preset init rewrites the tuning struct);
+    // needs no re-apply on the re-lock cycle's Stop/Start.
+    // Iteration history:
+    //  - HIST_MERGE=0 (v12.5.47): killed the discrete states but exposed raw
+    //    single-histogram shot noise — per-frame scatter widened to 19-25 mm
+    //    (~780 [L] ev/min). Merging is ALSO the 6× histogram integrator.
+    //  - v12.5.48: keep merging, but raise the reset threshold to the uint16
+    //    ceiling. The merge ring resets whenever consecutive histograms differ
+    //    by more than this (default 15000) — this scene's shot noise straddles
+    //    that, churning the merge depth 1..6 (the states). At 65535 only a
+    //    genuine scene change (bellows actually moving) resets; the ring rides
+    //    at full depth: deep quiet histograms AND a pinned xtalk offset.
+    //    Cost: a real move smears through the 6-deep rolling sum for ~1.5 s —
+    //    fine for hand-adjusted bellows. NOTE: reported level shifts with any
+    //    pipeline change → FOV recalibration once confirmed stable.
+    sensor.setTuningParm(VL53L4CX_TUNINGPARM_RESET_MERGE_THRESHOLD, 65535);
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
     armTofRelock();          // cold boot → mark cold + schedule auto cure
