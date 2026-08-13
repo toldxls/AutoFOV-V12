@@ -2527,10 +2527,7 @@
           vanishing, changing status, or crossing the 20% line) and <b>[L]</b> level
           steps &mdash; the published distance moving &ge;1.5&nbsp;mm between frames
           with <i>no</i> topology change: the signature of an internal re-reference
-          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).
-          <b>[R]</b> marks a trim re-reference: the level is fed only by frames from
-          one DSS trim (one &ldquo;spads&rdquo; value); when the servo abandons it,
-          the filter adopts the new dominant trim and logs the moment here.</div>
+          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -2544,6 +2541,17 @@
           <button onclick="tofdbgSaveLog()">SAVE LOG</button>
           <button onclick="tofdbgClearLog()" title="Reset the event counters and ring — for before/after tests of a scene or config change">CLEAR</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
+        </div>
+        <!-- Session zero (V12.6 B+): the sensor's absolute reading random-walks
+             ~0.2-0.9 mm/h (intrinsic silicon drift). Rack the bellows to MAX
+             (the repeatable reference), SET HOME once right after FOV
+             calibration, then ZERO at the start of each session — the measured
+             drift is subtracted from every reading until the next zero. -->
+        <div class="tofcal-row" style="border-top:1px solid #14302a; padding-top:8px;">
+          <button onclick="tofzeroGo()" title="Rack the bellows to MAX first. Measures 2 s and cancels the drift since SET HOME.">ZERO @ MAX RACK</button>
+          <button onclick="tofzeroSetHome()" title="Rack the bellows to MAX first. Captures the home reference — do this ONCE, right after FOV calibration."
+                  style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
+          <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
         <canvas id="tofdbg-trend" title="EMA level, one sample / 10 min, up to 24 h"></canvas>
         <div id="tofdbg-log">no events fetched yet</div>
@@ -5380,6 +5388,27 @@
         tofdbgPrevFetch = null;               // rate baseline restarts at zero
         document.getElementById('tofdbg-io').innerText = 'clearing…';
         setTimeout(tofdbgFetchLog, 400);      // ring owner resets on its next pass
+    }
+    // ── Session zero (V12.6 B+). Both commands run the device's 2 s averager;
+    // the result lands as {"tofZero":{ok,off,d,msg}} whether or not this
+    // dialog is open. SET HOME is confirm-guarded: redoing it silently would
+    // redefine the reference frame mid-calibration.
+    function tofzeroSetHome() {
+        if (!confirm('SET HOME re-defines the drift reference and resets the offset to 0.\n' +
+                     'Do this only with the bellows racked to MAX, ideally right after FOV calibration.\n\nProceed?')) return;
+        document.getElementById('tofzero-status').innerText = 'measuring home (2 s)…';
+        sendCommand('tofhome', 1);
+    }
+    function tofzeroGo() {
+        document.getElementById('tofzero-status').innerText = 'measuring (2 s)… hold at max rack';
+        sendCommand('tofzero', 1);
+    }
+    function tofzeroOnResult(z) {
+        const el = document.getElementById('tofzero-status');
+        if (!el) return;
+        el.style.color = z.ok ? '#9fe6cf' : '#e7c35a';
+        el.innerText = z.msg + (z.ok ? ' · offset ' + (z.off >= 0 ? '+' : '') + z.off.toFixed(2) + ' mm' +
+                                       ' · read ' + z.d.toFixed(2) + ' mm' : '');
     }
     function tofdbgSaveLog() {
         if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }
@@ -13843,6 +13872,7 @@
 
         // ── V12.6: TOF temp-cal point result (2 s device-side average) ──
         if (data.tofSample !== undefined) tofcalOnSample(data.tofSample);
+        if (data.tofZero !== undefined) tofzeroOnResult(data.tofZero);
         if (data.tg !== undefined) tofdbgOnLive(data.tg);
 
         // ── Memory ──

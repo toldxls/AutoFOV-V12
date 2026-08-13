@@ -1223,28 +1223,38 @@ TofTrendPt tofTrend[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendCount{0};
 
-// ── TOF trim-reference filter (V12.6, v12.5.52 experiment) ──────────────────
-// Each DSS trim (quantized effective-SPAD selection — the tofdbg 'sc' tag)
-// carries its own ~1-2 mm range bias, and the published level is the occupancy
-// mix: the 8/12 overnight soak showed the mix migrating with temperature for a
-// −0.84 mm night drift. Filter: learn the modal trim over TOF_TRIM_LEARN_MS,
-// then feed the EMA only from frames matching it — a single-state level by
-// construction. If the servo abandons the reference (> TOF_TRIM_STARVE_MS with
-// no match) re-learn and tag the ring event why-bit2 [R]: under temperature
-// migration the continuous wander becomes rare, discrete, LOGGED steps. Wake
-// and cure completion re-learn via the existing sensorEmaReset funnel. All
-// state is sensorTask-only — no cross-task access.
-constexpr uint32_t TOF_TRIM_LEARN_MS  = 8000;
-constexpr uint32_t TOF_TRIM_STARVE_MS = 4000;
-constexpr int      TOF_TRIM_CANDS     = 6;
-static uint16_t tofTrimRef = 0;               // reference sc; 0 = learning
-static uint32_t tofTrimLastMatchMs = 0;
-static uint32_t tofTrimLearnEndMs  = 0;
-static uint16_t tofTrimCandSc[TOF_TRIM_CANDS];
-static uint16_t tofTrimCandN[TOF_TRIM_CANDS];
-static inline void tofTrimRelearn() {
-  tofTrimRef = 0; tofTrimLearnEndMs = 0;
-  memset(tofTrimCandN, 0, sizeof(tofTrimCandN));
+// ── TOF session zero (V12.6, Option B+) ─────────────────────────────────────
+// Endgame of the 8/11-13 stability campaign. After eliminating every
+// configurable state machine (merge, trim mixing), the 8/13 soak proved the
+// remaining wander is the silicon's own: a single DSS trim's range bias
+// random-walks ~0.2-0.9 mm/h (+2.7 mm over 3 h on a CONSTANT trim). That is
+// intrinsic absolute drift — a $7 part holding mm-class absolute accuracy —
+// and no config reaches ±0.3 mm absolute over 12 h. But the drift is SLOW and
+// ADDITIVE (a timing-offset error; 2.7 mm at a 20 mm range cannot be
+// proportional), so a session-start re-zero against a repeatable mechanical
+// reference cancels it: rack the bellows to MAX (the user's most repeatable
+// position, sensor reads ~150 mm there), SET HOME once at calibration time,
+// then ZERO each session — both reuse the temp-cal 2 s averaging machinery
+// via tofSampleMode. The measured offset (reading-now − home) is subtracted
+// at PUBLICATION in sensorTask, so display, FOV, cal capture, and telemetry
+// all see the corrected frame. Offset + home persist in NVS "tofzero"
+// (deliberately outside CalibData — no CALIB_MAGIC bump).
+std::atomic<int32_t> tofZeroOffsetT{0};  // tenths of mm, subtracted at publication
+uint32_t tofZeroHomeT = 0;               // home reference, tenths; 0 = unset
+uint8_t  tofSampleMode = 0;              // 0 = temp-cal point, 1 = SET HOME, 2 = ZERO
+void loadTofZeroPrefs() {
+  Preferences p;
+  p.begin("tofzero", true);
+  tofZeroHomeT = p.getUInt("homeT", 0);
+  tofZeroOffsetT.store(p.getInt("offT", 0), std::memory_order_relaxed);
+  p.end();
+}
+void saveTofZeroPrefs() {
+  Preferences p;
+  p.begin("tofzero", false);
+  p.putUInt("homeT", tofZeroHomeT);
+  p.putInt("offT", tofZeroOffsetT.load(std::memory_order_relaxed));
+  p.end();
 }
 
 // ── TOF cold-start re-lock (config-cycle) ────────────────────────────────────
@@ -1571,6 +1581,7 @@ void wifiNotifyStackStart();               // V12.6: stack-start WebSocket event
 void wifiNotifyStackAbort();               // V12.6: short/aborted-sequence WebSocket event
 void wifiNotifyTestAlert();                // pings webview beep on TEST ALERT press
 void wifiPushTofSample(float distMm, float sdMm, uint32_t n);  // V12.6: temp-cal point result
+void wifiPushTofZero(int ok, float offMm, float dMm, const char* msg);  // V12.6: SET HOME / ZERO result
 void redrawCurrentScreen();                // full repaint of currentMode
 void wifiPushSettings();                   // push buildSettingsJson to all WS clients
 
@@ -4371,7 +4382,6 @@ void sensorTask(void *pvParameters) {
     if (sensorEmaReset.load(std::memory_order_acquire)) {
       emaDistance = -1.0;
       emaSignal   = -1.0;
-      tofTrimRelearn();   // V12.6: wake/cure re-converges DSS — re-learn the trim
       sensorEmaReset.store(false, std::memory_order_release);
     }
     // Asleep: don't touch the sensor at all. Polling here would see a
@@ -4467,7 +4477,6 @@ void sensorTask(void *pvParameters) {
         // sensorSigma fields unavailable in this driver version — store 0
 
         // ── V12.6: publish the raw target list (see the tofTgtSnap block) ──
-        bool tofTrimAcceptFrame = true;   // set by the trim filter below
         {
           TofTgtSnap snap;
           snap.ms  = millis();
@@ -4503,34 +4512,9 @@ void sensorTask(void *pvParameters) {
           //         a spontaneous internal step would be invisible to the
           //         topology trigger alone. 1.5 mm clears the ±1 mm integer
           //         dither of the driver's RangeMilliMeter.
-          // Trim-reference filter (see the tofTrimRef block). Runs only on
-          // valid frames — empty frames carry no meaningful spad count.
-          uint8_t trimWhy = 0;
-          if (snap.pubT) {
-            if (tofTrimRef == 0) {
-              // learning window: tally candidate trims, adopt the mode at end
-              if (tofTrimLearnEndMs == 0) tofTrimLearnEndMs = snap.ms + TOF_TRIM_LEARN_MS;
-              for (int k = 0; k < TOF_TRIM_CANDS; k++) {
-                if (tofTrimCandN[k] == 0) { tofTrimCandSc[k] = snap.spads; }
-                if (tofTrimCandSc[k] == snap.spads) { tofTrimCandN[k]++; break; }
-              }
-              if ((long)(snap.ms - tofTrimLearnEndMs) >= 0) {
-                int best = 0;
-                for (int k = 1; k < TOF_TRIM_CANDS; k++)
-                  if (tofTrimCandN[k] > tofTrimCandN[best]) best = k;
-                tofTrimRef = tofTrimCandSc[best];
-                tofTrimLastMatchMs = snap.ms;
-              }
-            } else if (snap.spads == tofTrimRef) {
-              tofTrimLastMatchMs = snap.ms;
-            } else {
-              tofTrimAcceptFrame = false;
-              if (snap.ms - tofTrimLastMatchMs > TOF_TRIM_STARVE_MS) {
-                tofTrimRelearn();          // servo moved on — follow it
-                trimWhy = 4;               // ring-tag the re-reference [R]
-              }
-            }
-          }
+          // (The v12.5.52 trim-reference filter lived here and was REMOVED:
+          // the 8/13 soak showed +2.7 mm drift on a constant trim — the bias
+          // drifts WITHIN a state, so single-state filtering earns nothing.)
 
           static uint32_t prevSig  = 0xFFFFFFFF;
           static uint16_t lastPubT = 0;
@@ -4540,7 +4524,7 @@ void sensorTask(void *pvParameters) {
             prevSig  = sig;        // the clear itself must not log an edge
             lastPubT = snap.pubT;
           }
-          snap.why = trimWhy;
+          snap.why = 0;
           if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
           if (snap.pubT && lastPubT &&
               abs((int)snap.pubT - (int)lastPubT) >= 15) snap.why |= 2;
@@ -4589,25 +4573,25 @@ void sensorTask(void *pvParameters) {
         }
 
         if (validSignalSum > 0.0) {
-          // V12.6 trim filter: frames from a non-reference DSS trim carry that
-          // trim's ~1-2 mm bias — they are published to tofdbg above but do NOT
-          // feed the level. The last accepted level stays on screen (a few
-          // hundred ms stale at normal duty, ≤4 s through a starvation window
-          // before a re-learn re-opens the gate).
-          if (tofTrimAcceptFrame) {
           int currentRange = round(weightedDistanceSum / validSignalSum);
           if (emaDistance < 0) emaDistance = currentRange;
           else emaDistance = (EMA_ALPHA * currentRange) + ((1.0 - EMA_ALPHA) * emaDistance);
 
-          uint32_t distPayload = (uint32_t)round(emaDistance) & 0x7FFFFFFF;
+          // V12.6 session zero: subtract the ZERO offset at publication so
+          // every consumer (display, FOV, cal capture, telemetry) sees the
+          // corrected frame. The EMA itself stays raw — an offset change
+          // shifts the published value instantly without an EMA transient.
+          float zAdj = emaDistance
+                     - tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f;
+          if (zAdj < 0) zAdj = 0;
+          uint32_t distPayload = (uint32_t)round(zAdj) & 0x7FFFFFFF;
           uint32_t statePayload = (1UL << 31) | distPayload;
           sensorState.store(statePayload, std::memory_order_release);
           // Sub-mm companion for the calibration sampler: tenths of a mm, valid
           // bit set. Capped at 30 bits (~10 cm worth of tenths headroom over the
           // sensor's range) so the valid bit never collides with the payload.
-          uint32_t tenths = (uint32_t)roundf(emaDistance * 10.0f) & 0x7FFFFFFF;
+          uint32_t tenths = (uint32_t)roundf(zAdj * 10.0f) & 0x7FFFFFFF;
           sensorDistTenths.store((1UL << 31) | tenths, std::memory_order_release);
-          }
         } else {
           sensorState.store(0, std::memory_order_release);
           sensorDistTenths.store(0, std::memory_order_release);
@@ -5706,6 +5690,7 @@ void setup() {
   // disturb the calib namespace handle.
   loadDisplayPrefs();
   loadVibPrefs();           // V12: Goertzel lock freq + last suggested wait
+  loadTofZeroPrefs();       // V12.6: session-zero home reference + offset
   loadTofComp();            // V12.6: TOF temp-compensation coefficients
   refreshCachedThemeBg();   // prime THEME_BG cache before any draw runs
 
@@ -6328,7 +6313,40 @@ void loop() {
         double var = tofSampleSumSq / tofSampleCount - mean * mean;
         sdMm = (float)(sqrt(var > 0.0 ? var : 0.0) / 10.0);
       }
-      wifiPushTofSample(meanMm, sdMm, tofSampleCount);
+      if (tofSampleMode == 0) {
+        wifiPushTofSample(meanMm, sdMm, tofSampleCount);
+      } else {
+        // V12.6 session zero: mode 1 = SET HOME, mode 2 = ZERO. The sampled
+        // mean is in the CORRECTED frame (offset already applied at
+        // publication), so ZERO's increment form is exact: the drift since
+        // the last zero is (corrected reading at home) − (home reference).
+        uint8_t mode = tofSampleMode;
+        tofSampleMode = 0;
+        uint32_t meanT = (uint32_t)lround(meanMm * 10.0f);
+        if (tofSampleCount == 0) {
+          wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
+                          0.0f, "no valid range in the 2 s window");
+        } else if (mode == 1) {
+          tofZeroHomeT = meanT;
+          tofZeroOffsetT.store(0, std::memory_order_relaxed);
+          saveTofZeroPrefs();
+          wifiPushTofZero(1, 0.0f, meanMm, "home set");
+        } else if (tofZeroHomeT == 0) {
+          wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
+                          meanMm, "no home reference — SET HOME first");
+        } else if (labs((long)meanT - (long)tofZeroHomeT) > 100) {
+          // >10 mm from home: almost certainly not racked to max — refuse
+          // rather than silently absorb a huge phantom offset.
+          wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
+                          meanMm, "reading is >10 mm from home — bellows racked to max?");
+        } else {
+          int32_t newOff = tofZeroOffsetT.load(std::memory_order_relaxed)
+                         + ((int32_t)meanT - (int32_t)tofZeroHomeT);
+          tofZeroOffsetT.store(newOff, std::memory_order_relaxed);
+          saveTofZeroPrefs();
+          wifiPushTofZero(1, newOff / 10.0f, meanMm, "zeroed");
+        }
+      }
     }
   }
 

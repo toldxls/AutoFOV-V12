@@ -2614,6 +2614,20 @@ static void handleWifiCommand(const char* key, const char* val) {
     //   one-shot {"tofSample":{…}} WS event. Ignored while one is running.
     } else if (strcmp(key, "tofsample") == 0) {
         if (!tofSampleActive) {
+            tofSampleMode = 0;
+            tofSampleSum = tofSampleSumSq = 0.0;
+            tofSampleCount   = 0;
+            tofSampleStartMs = millis();
+            tofSampleActive  = true;
+        }
+
+    // ── TOF session zero (V12.6 B+) — same 2 s sampler, different completion.
+    //   "tofhome" captures the max-rack reference (once, at calibration time);
+    //   "tofzero" measures the drift since then and folds it into the
+    //   published-reading offset. Result arrives as {"tofZero":{…}}.
+    } else if (strcmp(key, "tofhome") == 0 || strcmp(key, "tofzero") == 0) {
+        if (!tofSampleActive) {
+            tofSampleMode = (key[3] == 'h') ? 1 : 2;
             tofSampleSum = tofSampleSumSq = 0.0;
             tofSampleCount   = 0;
             tofSampleStartMs = millis();
@@ -3696,6 +3710,20 @@ void wifiPushTofSample(float distMm, float sdMm, uint32_t n) {
     o["sd"] = roundf(sdMm   * 100.0f) / 100.0f;
     o["t"]  = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed) / 10.0f;
     o["n"]  = n;
+    String out; serializeJson(doc, out);
+    wsServer.textAll(out);
+}
+
+// V12.6 session zero — SET HOME / ZERO outcome. ok=1 success; off = current
+// total offset mm; d = the 2 s mean that was measured; msg = human line.
+void wifiPushTofZero(int ok, float offMm, float dMm, const char* msg) {
+    if (wsServer.count() == 0) return;
+    StaticJsonDocument<192> doc;
+    JsonObject o = doc.createNestedObject("tofZero");
+    o["ok"]  = ok;
+    o["off"] = roundf(offMm * 100.0f) / 100.0f;
+    o["d"]   = roundf(dMm   * 100.0f) / 100.0f;
+    o["msg"] = msg;
     String out; serializeJson(doc, out);
     wsServer.textAll(out);
 }
