@@ -3503,20 +3503,20 @@
           <div id="calphoto-result" style="font-size:13px; line-height:1.5;
                color:var(--text-disabled); min-height:34px;"></div>
           <div id="calphoto-warn" style="font-size:10px; line-height:1.4; color:#fa6;"></div>
+          <!-- primary action first — the chips below are the detail -->
+          <div id="calphoto-use" onclick="calPhotoUse()">USE MEASUREMENT</div>
           <!-- FOCUS / TILT verdict + span picker — populated by calPhotoRenderFocus() -->
           <div id="calphoto-focus" style="display:none; padding-top:7px;
                border-top:1px solid #16323f; font-size:11px; line-height:1.5;
                color:var(--text-disabled);"></div>
           <div id="calphoto-spans" style="display:none;"></div>
-          <!-- why the starred option won, when the ± column seems to say otherwise -->
-          <div id="calphoto-spanwhy" style="display:none; font-size:9px; line-height:1.45;
-               color:#8fb0a4; background:#0a1f1a; border-left:2px solid #2a7a6a;
-               padding:5px 7px; margin-bottom:4px;"></div>
+          <!-- kept for _calPhotoHideFocus; the why-the-star text now lives in the ⓘ
+               tooltip on the starred chip -->
+          <div id="calphoto-spanwhy" style="display:none;"></div>
           <div id="calphoto-spanhint" style="display:none; font-size:9px; line-height:1.45;
                color:#667;"><b>*</b> Rescaled to the Demarc Dist. Every option reports the same
                quantity — pixels per <b>Demarc&nbsp;Dist</b> — measured over a different number of
                ticks. Tap <b>?</b> for how to choose and what <b>&plusmn;</b> means.</div>
-          <div id="calphoto-use" onclick="calPhotoUse()">USE MEASUREMENT</div>
         </div>
         <div id="cph-right">
           <div id="calphoto-profwrap" style="display:none;">
@@ -10044,6 +10044,7 @@
                 const s1=sub.map(t=>t.shp[1]), third=Math.max(1,Math.floor(s1.length/3));
                 place.push({ px: f.a*table.scale*K, sig: f.se*table.scale*K,
                              rms: f.rms, n: f.n, mod: _micMedian(m1),
+                             shpMed: _micMedian(s1),
                              shpA: _micMedian(s1.slice(0,third)), shpB: _micMedian(s1.slice(-third)),
                              xa: sub[0].x, xb: sub[sub.length-1].x });
             }
@@ -10071,7 +10072,7 @@
             out.push({ spanMm, fr, px: med, nTicks: sharp.n, nPlace: use.length,
                        sigmaStat: sigStat, sigmaSys: sigSys, spread, bias,
                        sigmaPx: Math.hypot(sigStat, sigSys),
-                       mod: sharp.mod, shpA: sharp.shpA, shpB: sharp.shpB,
+                       mod: sharp.mod, shpMed: sharp.shpMed, shpA: sharp.shpA, shpB: sharp.shpB,
                        xa: sharp.xa, xb: sharp.xb });
         }
         if (!out.length) return out;
@@ -10190,8 +10191,13 @@
             ? ((w.x0Frac<0.15) ? 'right' : (w.x0Frac>0.85) ? 'left' : 'both ends')
             : null;
 
+        // The frame-comparison metric: focus over the MEASURED window, not the whole
+        // frame — a frame whose soft regions all sit outside its window measures just
+        // as well as a uniformly sharp one, and ranking on the frame-wide median let
+        // out-of-window regions out-vote the part that is actually fitted.
+        const focusWin = (best && isFinite(best.shpMed)) ? best.shpMed/sharpIdeal : focusMed;
         return { ok:true, verdict, spans, best, noSpan: !best, autoPick, wedge:w, table:t,
-                 modMed, modBest, sharpIdeal, focusMed, focusBest, softSide, dzSpan, dzMax, bandUm,
+                 modMed, modBest, sharpIdeal, focusMed, focusBest, focusWin, softSide, dzSpan, dzMax, bandUm,
                  dof: w.dof || (0.55/(NA*NA)), NA,
                  umpxWork: um, pitchPx: t.pitch,
                  scaleGradPctPerMm: t.scaleGradPctPerMm, errFrac: t.errFrac };
@@ -10202,7 +10208,10 @@
     // ≥0.85 fully green (sharp), ≤0.45 fully red (defocused), hue-lerped between.
     // Same red/green idea as the MTF panel's focus map, so the two tools read alike.
     function _micFocusColor(ratio, alpha, light){
-        const t=Math.max(0, Math.min(1, (ratio-0.45)/0.4));
+        // No green plateau: full green only AT the reference (ratio 1.0), so a mild
+        // 10–30% sharpness gradient across a tilted frame still shows as a visible
+        // green→yellow drift instead of saturating to uniform green.
+        const t=Math.max(0, Math.min(1, (ratio-0.45)/0.55));
         return 'hsla('+Math.round(120*t)+',85%,'+(light||45)+'%,'+alpha+')';
     }
 
@@ -10493,12 +10502,20 @@
     function _focScore(fa){
         if (!fa || fa.error) return [9, 0, Infinity];
         return [ _FOC_RANK[fa.verdict] ?? 3,
-                 -(isFinite(fa.focusMed) ? fa.focusMed : 0),
+                 -(isFinite(fa.focusWin) ? fa.focusWin : 0),
                  fa.best ? fa.best.sigmaPx : Infinity ];
     }
-    function _focScoreLess(a, b){
-        for (let k=0;k<a.length;k++){ if (a[k]<b[k]) return true; if (a[k]>b[k]) return false; }
-        return false;
+    // Is score `a` a better frame than score `b`? Verdict first; then focus — but
+    // focus only decides when the gap is REAL (>5%): a 3% focus edge is inside the
+    // metric's noise, and preferring it over a measurably lower span uncertainty
+    // would star the wrong frame. Inside the tolerance it is a tie and the better
+    // MEASUREMENT (lower ±) wins.
+    function _focScoreBetter(a, b){
+        if (a[0] !== b[0]) return a[0] < b[0];
+        const fa=-a[1], fb=-b[1];
+        if (fa > fb*1.05) return true;
+        if (fb > fa*1.05) return false;
+        return a[2] < b[2];
     }
     // Set-wide best normalized focus — the color reference shared by every frame in
     // the set, so a soft frame reads red next to a sharp one instead of self-
@@ -10547,7 +10564,7 @@
         // rank
         let bi=0;
         for (let i=1;i<_focFiles.length;i++){
-            if (_focScoreLess(_focScore(_focFiles[i].fa), _focScore(_focFiles[bi].fa))) bi=i;
+            if (_focScoreBetter(_focScore(_focFiles[i].fa), _focScore(_focFiles[bi].fa))) bi=i;
         }
         _focBest=bi;
         dz.innerHTML='&#10003; '+_focFiles.length+' frame'+(_focFiles.length>1?'s':'')+
@@ -10628,14 +10645,15 @@
             div.className='foc-thumb'+(i===_focSel?' sel':'')+(i===_focBest?' best':'');
             div.appendChild(en.thumb);
             const lab=document.createElement('div');
-            const mm=(fa && !fa.error && isFinite(fa.focusMed)) ? fa.focusMed : NaN;
+            const mm=(fa && !fa.error && isFinite(fa.focusWin)) ? fa.focusWin : NaN;
             const ref=_micFocusRef(_focFocusBest());
             lab.innerHTML=(i===_focBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
                 '<span style="color:'+col+';">'+v.toUpperCase()+'</span>'+
                 (isFinite(mm)? ' <span style="color:'+_micFocusColor(mm/ref,1,60)+';" '+
-                               'title="focus metric: median edge sharpness vs the optics&#39; limit '+
-                               '(1.0 = as sharp as this NA can render) — colored against the '+
-                               'sharpest frame in this set">focus '+
+                               'title="focus metric: median edge sharpness over the MEASURED window, '+
+                               'vs the optics&#39; limit (1.0 = as sharp as this NA can render) — '+
+                               'colored against the sharpest frame in this set. Frames within 5% '+
+                               'focus tie, and the lower-&plusmn; measurement wins the star.">focus '+
                                mm.toFixed(2)+'</span>' : '')+'<br>'+
                 '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
             div.appendChild(lab);
@@ -10673,7 +10691,7 @@
                  ' µm wide against a '+n1(fa.dof)+' µm depth of field. Across the '+
                  (fa.best? fa.best.spanMm.toFixed(2) : en.demarcMm.toFixed(2))+
                  ' mm window the slide rises <b>'+n1(fa.dzSpan)+' µm</b>. Focus '+
-                 fa.focusMed.toFixed(2)+' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.'+
+                 fa.focusWin.toFixed(2)+' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.'+
                  (fa.autoPick ? ' <span style="color:#7fd8c0;">Auto-picked that window because it sits '+
                                 'inside the in-focus stripe; the full span would average the soft end in.</span>' : '')+
                  (fa.noSpan ? ' <span style="color:#ff6a6a;">The band is narrower than every span option, '+
@@ -10685,10 +10703,10 @@
             body='A slight tilt is measurable (&asymp; '+w.theta.toFixed(1)+'&deg;), but the slide only climbs <b>'+
                  n1(fa.dzSpan)+' µm</b> across the '+en.demarcMm.toFixed(2)+' mm span — inside the '+n1(fa.dof)+
                  ' µm depth of field, so the whole span stays in focus. Nothing to fix. Focus '+
-                 fa.focusMed.toFixed(2)+' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.';
+                 fa.focusWin.toFixed(2)+' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.';
         } else {
             head='&#10003; FLAT — square to the optic axis';
-            body='No tilt rises above the noise. Focus '+fa.focusMed.toFixed(2)+
+            body='No tilt rises above the noise. Focus '+fa.focusWin.toFixed(2)+
                  ' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>, tick contrast '+fa.modMed.toFixed(2)+
                  (fa.verdict==='marginal' ? ' <span style="color:#fd5;">(low — usable, but a sharper frame would measure better)</span>' : '')+'.';
         }
@@ -11806,7 +11824,7 @@
             if (myGen !== _calPhotoGen) return;              // newer drop or panel closed
             if (!en) continue;
             _calFiles.push(en);
-            if (_calBest<0 || _focScoreLess(_calScore(en), _calScore(_calFiles[_calBest]))){
+            if (_calBest<0 || _focScoreBetter(_calScore(en), _calScore(_calFiles[_calBest]))){
                 _calBest = _calFiles.length-1; bestCv = en.srcCv || null;
             }
             en.srcCv = null;                                 // never retain the big canvases
@@ -11835,7 +11853,7 @@
             const v = en.err ? 'failed' : en.bad ? 'blocked' : (fa&&!fa.error) ? fa.verdict : 'failed';
             const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a',
                        blocked:'#ff6a6a', failed:'#ff6a6a'}[v]||'#fa6';
-            const mm=(fa && !fa.error && isFinite(fa.focusMed)) ? fa.focusMed : NaN;
+            const mm=(fa && !fa.error && isFinite(fa.focusWin)) ? fa.focusWin : NaN;
             const div=document.createElement('div');
             div.className='foc-thumb'+(i===_calSel?' sel':'')+(i===_calBest?' best':'');
             if (en.thumb) div.appendChild(en.thumb);
@@ -11843,9 +11861,10 @@
             lab.innerHTML=(i===_calBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
                 '<span style="color:'+col+';">'+v.toUpperCase()+'</span>'+
                 (isFinite(mm)? ' <span style="color:'+_micFocusColor(mm/ref,1,60)+';" '+
-                               'title="focus metric: median edge sharpness vs the optics&#39; limit '+
-                               '(1.0 = as sharp as this NA can render) — colored against the '+
-                               'sharpest frame in this set">focus '+
+                               'title="focus metric: median edge sharpness over the MEASURED window, '+
+                               'vs the optics&#39; limit (1.0 = as sharp as this NA can render) — '+
+                               'colored against the sharpest frame in this set. Frames within 5% '+
+                               'focus tie, and the lower-&plusmn; measurement wins the star.">focus '+
                                mm.toFixed(2)+'</span>' : '')+'<br>'+
                 '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
             div.appendChild(lab);
@@ -12105,7 +12124,7 @@
                   'focus. Adjust either way and re-shoot: if the angle grows, go the other way.';
             body = _micSoftSentence(fa.softSide) + ' The in-focus band is ' + Math.round(fa.bandUm) +
                    ' µm wide against a ' + n1(fa.dof) + ' µm depth of field. Focus ' +
-                   fa.focusMed.toFixed(2) + ' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.' +
+                   fa.focusWin.toFixed(2) + ' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.' +
                    (fa.autoPick ? ' <span style="color:#7fd8c0;">Auto-picked the ' + fa.best.spanMm.toFixed(2) +
                                   ' mm window — it sits inside the in-focus stripe (green on the focus map); '+
                                   'the full span would average the soft end in.</span>'
@@ -12116,11 +12135,11 @@
             head = '&#10003; SHARP ACROSS THE SPAN';
             body = 'A slight tilt is measurable (&asymp;' + w.theta.toFixed(1) + '&deg;), but the slide rises '+
                    'only ' + n1(fa.dzSpan) + ' µm across the span — well inside the ' + n1(fa.dof) +
-                   ' µm depth of field. Nothing to fix. Focus ' + fa.focusMed.toFixed(2) +
+                   ' µm depth of field. Nothing to fix. Focus ' + fa.focusWin.toFixed(2) +
                    ' <span style="color:#8a9;">(1.0 = optics&rsquo; limit)</span>.';
         } else {
             head = '&#10003; FOCUS FLAT ACROSS THE SPAN';
-            body = 'No tilt detectable · focus ' + fa.focusMed.toFixed(2) +
+            body = 'No tilt detectable · focus ' + fa.focusWin.toFixed(2) +
                    ' <span style="color:#8a9;">(1.0 = optics&rsquo; limit)</span> · contrast ' + fa.modMed.toFixed(2) +
                    (isFinite(fa.scaleGradPctPerMm) ? ' · scale drift ' +
                         fa.scaleGradPctPerMm.toFixed(2) + ' %/mm' : '');
@@ -12145,6 +12164,36 @@
             document.getElementById('calphoto-spanwhy').style.display='none';
             return;
         }
+        // Why the starred option won — one plain-text sentence, shown as a hover
+        // tooltip (ⓘ) on the starred chip rather than a standing box. The full
+        // reasoning still lives in the ? help.
+        const full = fa.spans.find(s=>s.fr===1.0);
+        const b    = fa.best;
+        const dmm  = (state.demarcDist>0 ? state.demarcDist : 0.4).toFixed(2);
+        let whyTip = '';
+        if (fa.autoPick && b){
+            whyTip = 'Why ' + b.spanMm.toFixed(2) + ' mm? The slide is tilted, so a ' + dmm +
+                ' mm window cannot be sharp end to end. This window sits inside the in-focus stripe '+
+                '(green on the focus map) and steps around the soft end. See ? for more.';
+        } else if (b && full && b !== full && b.fr > 1.0){
+            whyTip = 'Why ' + b.spanMm.toFixed(2) + ' mm? A longer window covers more of the frame, '+
+                'so it measures the average scale the FOV formula assumes. It is ' +
+                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '% more certain than the ' + dmm +
+                ' mm span. See ? for more.';
+        } else if (b && full && b !== full && b.fr < 1.0){
+            whyTip = 'Why ' + b.spanMm.toFixed(2) + ' mm? It is ' +
+                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '% more certain than the ' + dmm +
+                ' mm span — usually because part of the frame is soft or obstructed, and this shorter '+
+                'window steps around it. See ? for more.';
+        } else if (b && full && b === full){
+            const low = fa.spans.reduce((a,c)=> (c.sigmaPx<a.sigmaPx ? c : a), fa.spans[0]);
+            if (low !== full && low.fr < 1.0)
+                whyTip = 'Why ' + dmm + ' mm, when ' + low.spanMm.toFixed(2) + ' mm shows a lower ±? '+
+                    'A shorter span has to be 25% better to be worth extrapolating, and it is only ' +
+                    Math.round(100*(1 - low.sigmaPx/full.sigmaPx)) + '% better — a tie. Pick it by hand '+
+                    'if you disagree. See ? for more.';
+        }
+        document.getElementById('calphoto-spanwhy').style.display='none';
         // Each chip states BOTH numbers. The headline is always pixels-per-Demarc-Dist —
         // that is what CAPTURE & SAVE receives — but for a shorter span that figure is
         // scaled up from a smaller measurement, and hiding that arithmetic would make the
@@ -12159,56 +12208,14 @@
                 + ' · focus ' + _micFocusCell(s, fa);
             return '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')">'+
               '<div class="cc-row"><span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
-              (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>':'')+
+              (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>'+
+                      (whyTip?' <span title="'+whyTip+'" style="cursor:help; color:#5e8c7e;">&#9432;</span>':''):'')+
               (s.fr===1.0?'':'<span style="color:#6d8a99;">*</span>')+'</span>'+
               '<span style="color:#9cc;">'+px+' px <span style="color:#678;">&plusmn;'+
               s.sigmaPx.toFixed(1)+'</span></span></div>'+
               '<div class="cc-sub">'+sub+'</div></div>';
         }).join('');
         sp.style.display='block'; hint.style.display='block';
-
-        // The ± column can show a shorter span as the lowest number while the FULL span
-        // is starred, which reads as a contradiction unless the tie-break is stated. It
-        // is not a tie-break on ± alone: a shorter span is EXTRAPOLATED (its fitted pitch
-        // is multiplied up to the demarc), so any local scale error is multiplied with it
-        // — and the ± itself is only a spread over a handful of window placements, so a
-        // few-percent gap between options is inside the noise of the estimate. Hence the
-        // margin. Say all this where the confusion happens, not in a comment.
-        const why  = document.getElementById('calphoto-spanwhy');
-        const full = fa.spans.find(s=>s.fr===1.0);
-        const b    = fa.best;
-        const dmm  = (state.demarcDist>0 ? state.demarcDist : 0.4).toFixed(2);
-        // Keep this to one or two plain sentences. The reasoning behind it lives in the ? —
-        // a paragraph of theory beside every photo is noise, not help.
-        if (fa.autoPick && b){
-            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> The slide is tilted, so a ' + dmm +
-                ' mm window cannot be sharp end to end. This window sits inside the in-focus stripe '+
-                '(green on the focus map) and steps around the soft end. '+
-                '<span style="color:#6d8a99;">See <b>?</b></span>';
-            why.style.display='block';
-        } else if (b && full && b !== full && b.fr > 1.0){
-            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> A longer window covers more of '+
-                'the frame, so it measures the average scale the FOV formula assumes. It is <b>' +
-                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '%</b> more certain than the ' + dmm +
-                ' mm span. <span style="color:#6d8a99;">See <b>?</b></span>';
-            why.style.display='block';
-        } else if (b && full && b !== full && b.fr < 1.0){
-            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> It is <b>' +
-                Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '%</b> more certain than the ' + dmm +
-                ' mm span — usually because part of the frame is soft or obstructed, and this shorter '+
-                'window steps around it. <span style="color:#6d8a99;">See <b>?</b></span>';
-            why.style.display='block';
-        } else if (b && full && b === full){
-            const low = fa.spans.reduce((a,c)=> (c.sigmaPx<a.sigmaPx ? c : a), fa.spans[0]);
-            if (low !== full && low.fr < 1.0){
-                why.innerHTML = '<b>Why ' + dmm + ' mm, when ' + low.spanMm.toFixed(2) + ' mm shows a '+
-                    'lower &plusmn;?</b> A shorter span has to be <b>25%</b> better to be worth '+
-                    'extrapolating, and it is only <b>' +
-                    Math.round(100*(1 - low.sigmaPx/full.sigmaPx)) + '%</b> better — a tie. Pick it by hand '+
-                    'if you disagree. <span style="color:#6d8a99;">See <b>?</b></span>';
-                why.style.display='block';
-            } else { why.style.display='none'; }
-        } else { why.style.display='none'; }
 
         const bi = fa.spans.findIndex(s=>s.best);
         calPhotoPickSpan(bi<0 ? 0 : bi);
