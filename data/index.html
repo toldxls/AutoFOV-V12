@@ -3523,7 +3523,9 @@
               <span style="color:#fb0;">|</span> detected centroid ·
               <span style="color:#3ddb7a;">green</span> = the window the selected span measures ·
               <span style="color:#ffb347;">orange dashed</span> = the column in best focus
-              (only drawn when a tilt is measurable at all)
+              (only drawn when a tilt is measurable at all) ·
+              top strip: <span style="color:#3d8;">green</span>&rarr;<span style="color:#f55;">red</span>
+              = in&nbsp;focus &rarr; defocused, per tick
             </div>
           </div>
           <!-- fills whatever height is left in the column, rather than leaving the
@@ -3666,7 +3668,9 @@
               tick profile across the whole frame ·
               <span style="color:#fb0;">|</span> detected centroid ·
               <span style="color:#3ddb7a;">green</span> = the window the starred span measures ·
-              <span style="color:#ffb347;">dashed</span> = where the focus plane crosses
+              <span style="color:#ffb347;">dashed</span> = where the focus plane crosses ·
+              top strip: <span style="color:#3d8;">green</span>&rarr;<span style="color:#f55;">red</span>
+              = in&nbsp;focus &rarr; defocused, per tick
             </div>
           </div>
           <div id="foc-spans"></div>
@@ -10108,16 +10112,45 @@
         else if (w.ok && isFinite(dzSpan) && dzSpan > w.dof) verdict='tilt';
         else if (modMed < MIC_MOD_MARGINAL) verdict='marginal';
 
+        // TILT OVERRIDES THE MARGIN RULE. Each span entry's window is already its
+        // sharpest placement, so its `mod` says whether that window can sit inside
+        // the in-focus stripe. On a genuinely tilted slide the demarc-length window
+        // averages the soft end into the answer — a bigger lie than a short window's
+        // extrapolation — so re-pick the default among sharp-stripe windows by total
+        // error. The chips stay; this only moves the star.
+        let autoPick=false;
+        if (verdict==='tilt' && best){
+            const sharpSpans=spans.filter(s=>isFinite(s.mod) && s.mod>=0.6*modBest);
+            let pick=null;
+            for (const s of sharpSpans) if (!pick || s.sigmaPx<pick.sigmaPx) pick=s;
+            if (pick && pick!==best){
+                for (const s of spans) s.best=false;
+                pick.best=true; best=pick; autoPick=true;
+                const xa=best.xa*um, xb=best.xb*um;
+                dzSpan=Math.abs(w.gx)*Math.abs(xb-xa);
+                dzMax =Math.abs(w.gx)*Math.max(Math.abs(xa-w.x0um), Math.abs(xb-w.x0um));
+            }
+        }
+
         // which end of the frame is soft — from where the focus plane crosses it
         const softSide = w.ok
             ? ((w.x0Frac<0.15) ? 'right' : (w.x0Frac>0.85) ? 'left' : 'both ends')
             : null;
 
-        return { ok:true, verdict, spans, best, noSpan: !best, wedge:w, table:t,
+        return { ok:true, verdict, spans, best, noSpan: !best, autoPick, wedge:w, table:t,
                  modMed, modBest, softSide, dzSpan, dzMax, bandUm,
                  dof: w.dof || (0.55/(NA*NA)), NA,
                  umpxWork: um, pitchPx: t.pitch,
                  scaleGradPctPerMm: t.scaleGradPctPerMm, errFrac: t.errFrac };
+    }
+
+    // Focus → color, shared by the profile strip and the zoom overlay. `ratio` is a
+    // tick's modulation over the frame's best: ≥0.75 fully green (inside the sharp
+    // stripe), ≤0.35 fully red (defocused), hue-lerped between. Same red/green idea
+    // as the MTF panel's focus map, so the two tools read the same way.
+    function _micFocusColor(ratio, alpha){
+        const t=Math.max(0, Math.min(1, (ratio-0.35)/0.4));
+        return 'hsla('+Math.round(120*t)+',85%,45%,'+alpha+')';
     }
 
     // Full-width tick profile with every detected centroid marked, and the window a
@@ -10182,6 +10215,29 @@
             const xx=toX(k.x);
             ctx.beginPath(); ctx.moveTo(xx, MT); ctx.lineTo(xx, MT+plotH*0.16);
             ctx.moveTo(xx, MT+plotH*0.84); ctx.lineTo(xx, MT+plotH); ctx.stroke();
+        }
+        // focus strip along the top: per-tick modulation vs the frame's best, so the
+        // in-focus stripe reads green and the defocused end red at a glance
+        {
+            let mb=0; for(const k of t.ticks) if(isFinite(k.modAll)&&k.modAll>mb) mb=k.modAll;
+            if (mb>0){
+                const sh=Math.max(3*S, plotH*0.06), ts=t.ticks;
+                for(let i=0;i<ts.length;i++){
+                    if (isFinite(ts[i].modAll)){
+                        const xa=(i>0)? (ts[i-1].x+ts[i].x)/2 : Math.max(0, ts[i].x-t.pitch/2);
+                        const xb=(i<ts.length-1)? (ts[i].x+ts[i+1].x)/2 : Math.min(W, ts[i].x+t.pitch/2);
+                        ctx.fillStyle=_micFocusColor(ts[i].modAll/mb, 0.85);
+                        ctx.fillRect(toX(xa), MT, toX(xb)-toX(xa), sh);
+                    }
+                    // a MISSING tick inside the grid is the loudest "unreadable here":
+                    // blur (or an obstruction) erased it entirely — solid red, no grading
+                    if (i>0 && ts[i].i-ts[i-1].i>1 && ts[i].x-ts[i-1].x>t.pitch*1.5){
+                        ctx.fillStyle=_micFocusColor(0, 0.85);
+                        ctx.fillRect(toX(ts[i-1].x+t.pitch/2), MT,
+                                     toX(ts[i].x-t.pitch/2)-toX(ts[i-1].x+t.pitch/2), sh);
+                    }
+                }
+            }
         }
         // where the focus plane crosses
         if (fa.wedge && fa.wedge.ok){
@@ -10366,12 +10422,22 @@
         h.style.display=(h.style.display==='block')?'none':'block'; }
     function focusChosen(input){ if (input.files && input.files.length) focusHandleFiles(input.files); input.value=''; }
 
-    // Worse verdict = higher rank number; ties broken by the total uncertainty of the
-    // recommended span. So the winner is the shot that is both trustworthy AND precise.
-    const _FOC_RANK = { good:0, marginal:1, tilt:2, soft:3 };
+    // Worse verdict = higher rank number, then SHARPNESS, then the uncertainty of the
+    // recommended span. TILT ranks level with GOOD deliberately: the tilt is a property
+    // of the STAGE — identical in every frame of a set — so it cannot tell frames apart.
+    // Ranking it below GOOD promoted exactly the frames blurred enough that the wedge
+    // fit degenerated to "flat", i.e. the softest ones. Contrast is what varies across
+    // a focus sweep, so it is the tie-break that actually picks the in-focus shot.
+    const _FOC_RANK = { good:0, tilt:0, marginal:1, soft:2 };
     function _focScore(fa){
-        if (!fa || fa.error) return [9, Infinity];
-        return [ _FOC_RANK[fa.verdict] ?? 4, fa.best ? fa.best.sigmaPx : Infinity ];
+        if (!fa || fa.error) return [9, 0, Infinity];
+        return [ _FOC_RANK[fa.verdict] ?? 3,
+                 -(isFinite(fa.modMed) ? fa.modMed : 0),
+                 fa.best ? fa.best.sigmaPx : Infinity ];
+    }
+    function _focScoreLess(a, b){
+        for (let k=0;k<a.length;k++){ if (a[k]<b[k]) return true; if (a[k]>b[k]) return false; }
+        return false;
     }
 
     async function focusHandleFiles(files){
@@ -10400,8 +10466,7 @@
         // rank
         let bi=0;
         for (let i=1;i<_focFiles.length;i++){
-            const a=_focScore(_focFiles[i].fa), b=_focScore(_focFiles[bi].fa);
-            if (a[0]<b[0] || (a[0]===b[0] && a[1]<b[1])) bi=i;
+            if (_focScoreLess(_focScore(_focFiles[i].fa), _focScore(_focFiles[bi].fa))) bi=i;
         }
         _focBest=bi;
         dz.innerHTML='&#10003; '+_focFiles.length+' frame'+(_focFiles.length>1?'s':'')+
@@ -10482,8 +10547,11 @@
             div.className='foc-thumb'+(i===_focSel?' sel':'')+(i===_focBest?' best':'');
             div.appendChild(en.thumb);
             const lab=document.createElement('div');
+            const mm=(fa && !fa.error && isFinite(fa.modMed)) ? fa.modMed : NaN;
             lab.innerHTML=(i===_focBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
-                '<span style="color:'+col+';">'+v.toUpperCase()+'</span><br>'+
+                '<span style="color:'+col+';">'+v.toUpperCase()+'</span>'+
+                (isFinite(mm)? ' <span style="color:#9cc;" title="tick contrast — higher is sharper">'+
+                               mm.toFixed(2)+'</span>' : '')+'<br>'+
                 '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
             div.appendChild(lab);
             div.onclick=()=>_focSelect(i);
@@ -10516,11 +10584,14 @@
         } else if (fa.verdict==='tilt'){
             head='&#9888; TILTED &asymp; '+w.theta.toFixed(1)+'&deg; &nbsp;<span style="font-size:11px; color:#8a9;">('+
                  'about the vertical axis '+w.thetaX.toFixed(1)+'&deg;, horizontal '+Math.abs(w.thetaY).toFixed(1)+'&deg;)</span>';
-            body=_micSoftSentence(fa.softSide)+' Across the '+en.demarcMm.toFixed(2)+
-                 ' mm span the slide rises <b>'+n1(fa.dzSpan)+' µm</b>, against a depth of field of '+
-                 n1(fa.dof)+' µm, so the span cannot be sharp end to end. The in-focus band is '+
-                 Math.round(fa.bandUm)+' µm wide.'+
-                 (fa.noSpan ? ' <span style="color:#ff6a6a;">That is narrower than every span option, '+
+            body=_micSoftSentence(fa.softSide)+' The in-focus band is '+Math.round(fa.bandUm)+
+                 ' µm wide against a '+n1(fa.dof)+' µm depth of field. Across the '+
+                 (fa.best? fa.best.spanMm.toFixed(2) : en.demarcMm.toFixed(2))+
+                 ' mm window the slide rises <b>'+n1(fa.dzSpan)+' µm</b>. Tick contrast '+
+                 fa.modMed.toFixed(2)+'.'+
+                 (fa.autoPick ? ' <span style="color:#7fd8c0;">Auto-picked that window because it sits '+
+                                'inside the in-focus stripe; the full span would average the soft end in.</span>' : '')+
+                 (fa.noSpan ? ' <span style="color:#ff6a6a;">The band is narrower than every span option, '+
                               'so this frame cannot be measured reliably at all.</span>' : '');
         } else if (w.ok){
             // A tilt WAS measured, it just doesn't matter: the span stays inside the
@@ -11617,9 +11688,20 @@
                     u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
                 } else {
                     _calPhotoPx = px;
+                    const notes = [];
                     if (NW !== photoW)
-                        warn.textContent = 'ℹ Photo is ' + NW + ' px wide vs Photo Width ' + photoW +
-                            '. A downscaled full frame is fine; a CROPPED photo would mis-scale — use the full camera frame.';
+                        notes.push('ℹ Photo is ' + NW + ' px wide vs Photo Width ' + photoW +
+                            '. A downscaled full frame is fine; a CROPPED photo would mis-scale — use the full camera frame.');
+                    // px per demarc CAN legitimately exceed the frame: the demarc span is
+                    // simply wider than the photo. The number is the fitted grid extended
+                    // to the chosen span, not a count of pixels inside the frame.
+                    if (px > photoW)
+                        notes.push('ℹ ' + px + ' px is more than the photo’s ' + photoW +
+                            ' — that is expected here: the ' + spanMm.toFixed(2) + ' mm Demarc Dist is wider than '+
+                            'the frame (≈' + (spanMm*photoW/px).toFixed(2) + ' mm across). The value is the '+
+                            'CALCULATED span of the chosen distance from the ' + r.nTicks +
+                            ' visible ticks, and the FOV result is unaffected.');
+                    warn.innerHTML = notes.join('<br>');
                     const use = document.getElementById('calphoto-use');
                     use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
                 }
@@ -11646,7 +11728,8 @@
     }
 
     // ── FOCUS verdict + span picker inside MEASURE FROM PHOTO ──
-    let _calPhotoSpans = null, _calPhotoSpanSel = -1, _calPhotoFa = null, _calPhotoStrip = null;
+    let _calPhotoSpans = null, _calPhotoSpanSel = -1, _calPhotoFa = null, _calPhotoStrip = null,
+        _calPhotoHeatOn = true;
 
     // The rows the zoom will ever show, kept so the picture can be REDRAWN when the
     // span changes. Retaining the whole deskewed working canvas would be ~40 MB; the
@@ -11659,6 +11742,7 @@
         const c = document.createElement('canvas');
         c.width = srcCv.width; c.height = h;
         c.getContext('2d').drawImage(srcCv, 0, y0, srcCv.width, h, 0, 0, srcCv.width, h);
+        c._imgY0 = y0;               // crop origin, so the focus overlay can map image rows
         _calPhotoStrip = c;
     }
 
@@ -11702,6 +11786,38 @@
         ctx.drawImage(strip, u0, sy, sw, sh, 0, 0, PW, destH);
 
         const toX = u => (u - u0)*scale;
+        // Focus map over the photo itself — the same red/green idea as the MTF panel.
+        // Cells are one tick wide × one wedge sub-band tall (the modulation is already
+        // measured per tick per sub-band; no extra image pass), colored vs the frame's
+        // sharpest tick, so the in-focus stripe is green and the soft end red.
+        if (_calPhotoHeatOn){
+            let mb=0; for(const k of t.ticks) if(isFinite(k.modAll)&&k.modAll>mb) mb=k.modAll;
+            const toY = imgRow => ((imgRow - (strip._imgY0||0)) - sy) * (destH/sh);
+            const bhh=Math.floor((t.y1-t.y0+1)/3), ts=t.ticks;
+            const bandY0=Math.max(0, toY(t.y0)), bandY1=Math.min(destH, toY(t.y1+1));
+            if (mb>0 && bhh>0) for(let i=0;i<ts.length;i++){
+                if (ts[i].x<u0 || ts[i].x>u1 || !ts[i].mod) continue;
+                const xa=(i>0)? (ts[i-1].x+ts[i].x)/2 : Math.max(u0, ts[i].x-pitch/2);
+                const xb=(i<ts.length-1)? (ts[i].x+ts[i+1].x)/2 : Math.min(u1, ts[i].x+pitch/2);
+                for(let b=0;b<3;b++){
+                    const m=ts[i].mod[b]; if(!isFinite(m)) continue;
+                    const ya=t.y0+b*bhh, yb=(b===2)? t.y1 : ya+bhh-1;
+                    const dy0=Math.max(0, toY(ya)), dy1=Math.min(destH, toY(yb+1));
+                    if (dy1<=dy0) continue;
+                    ctx.fillStyle=_micFocusColor(m/mb, 0.20);
+                    ctx.fillRect(toX(xa), dy0, (xb-xa)*scale, dy1-dy0);
+                }
+                // missing ticks inside the grid: blur/obstruction erased them — solid red
+                if (i>0 && ts[i].i-ts[i-1].i>1 && ts[i].x-ts[i-1].x>pitch*1.5 &&
+                    ts[i-1].x<u1 && bandY1>bandY0){
+                    const ga=Math.max(u0, ts[i-1].x+pitch/2), gb=Math.min(u1, ts[i].x-pitch/2);
+                    if (gb>ga){
+                        ctx.fillStyle=_micFocusColor(0, 0.20);
+                        ctx.fillRect(toX(ga), bandY0, (gb-ga)*scale, bandY1-bandY0);
+                    }
+                }
+            }
+        }
         const profY = destH + Math.round(5*S), profH = PH - profY, gap = Math.round(4*S);
         // contrast profile over exactly the same x range
         let pmin=Infinity, pmax=-Infinity;
@@ -11737,7 +11853,17 @@
         if (cap){ cap.style.display='block';
             cap.innerHTML = '<b style="color:#3ddb7a;">'+sel.spanMm.toFixed(2)+' mm window</b> — the '+
                 sel.nTicks+' ticks this option fits · true aspect, no stretch (&times;'+
-                scale.toFixed(1)+') · <span style="color:#fb0;">|</span> = centroid'; }
+                scale.toFixed(1)+') · <span style="color:#fb0;">|</span> = centroid · '+
+                '<span onclick="calPhotoToggleHeat()" style="cursor:pointer; border:1px solid #2a5a7a; '+
+                'border-radius:3px; padding:0 4px; color:'+(_calPhotoHeatOn?'#7fd8c0':'#567')+';" '+
+                'title="Toggle the focus overlay: green = in focus, red = defocused">focus map '+
+                (_calPhotoHeatOn?'on':'off')+'</span>'; }
+    }
+    function calPhotoToggleHeat(){
+        _calPhotoHeatOn = !_calPhotoHeatOn;
+        const sel = (_calPhotoSpans && _calPhotoSpanSel>=0) ? _calPhotoSpans[_calPhotoSpanSel]
+                                                           : (_calPhotoFa && _calPhotoFa.best);
+        calPhotoDrawZoom(sel);
     }
     function calPhotoRenderFocus(fa, spanMm, bad){
         const fx = document.getElementById('calphoto-focus');
@@ -11752,11 +11878,14 @@
             body = 'Tick contrast is only ' + fa.modMed.toFixed(2) + '. Refocus and re-shoot.';
         } else if (fa.verdict==='tilt'){
             head = '&#9888; SLIDE TILTED &asymp; ' + w.theta.toFixed(1) + '&deg;';
-            body = _micSoftSentence(fa.softSide) + ' The slide rises <b>' + n1(fa.dzSpan) +
-                   ' µm</b> across the span, against a ' + n1(fa.dof) + ' µm depth of field, so the '+
-                   'span cannot be sharp end to end.' +
-                   (fa.noSpan ? ' The sharp band is only ' + Math.round(fa.bandUm) +
-                                ' µm wide — narrower than every span option.' : '') +
+            body = _micSoftSentence(fa.softSide) + ' The in-focus band is ' + Math.round(fa.bandUm) +
+                   ' µm wide against a ' + n1(fa.dof) + ' µm depth of field. Tick contrast ' +
+                   fa.modMed.toFixed(2) + '.' +
+                   (fa.autoPick ? ' <span style="color:#7fd8c0;">Auto-picked the ' + fa.best.spanMm.toFixed(2) +
+                                  ' mm window — it sits inside the in-focus stripe (green on the focus map); '+
+                                  'the full span would average the soft end in.</span>'
+                    : ' The slide rises <b>' + n1(fa.dzSpan) + ' µm</b> across the measured window.') +
+                   (fa.noSpan ? ' The sharp band is narrower than every span option.' : '') +
                    '<br><span style="color:#8a9;">One photo cannot tell you which way to tilt. '+
                    'Adjust either way and re-shoot: if the angle grows, go the other way.</span>';
         } else if (w.ok){
@@ -11823,7 +11952,13 @@
         const dmm  = (state.demarcDist>0 ? state.demarcDist : 0.4).toFixed(2);
         // Keep this to one or two plain sentences. The reasoning behind it lives in the ? —
         // a paragraph of theory beside every photo is noise, not help.
-        if (b && full && b !== full && b.fr > 1.0){
+        if (fa.autoPick && b){
+            why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> The slide is tilted, so a ' + dmm +
+                ' mm window cannot be sharp end to end. This window sits inside the in-focus stripe '+
+                '(green on the focus map) and steps around the soft end. '+
+                '<span style="color:#6d8a99;">See <b>?</b></span>';
+            why.style.display='block';
+        } else if (b && full && b !== full && b.fr > 1.0){
             why.innerHTML = '<b>Why ' + b.spanMm.toFixed(2) + ' mm?</b> A longer window covers more of '+
                 'the frame, so it measures the average scale the FOV formula assumes. It is <b>' +
                 Math.round(100*(1 - b.sigmaPx/full.sigmaPx)) + '%</b> more certain than the ' + dmm +
