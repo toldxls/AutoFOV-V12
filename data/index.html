@@ -11878,12 +11878,18 @@
         }
         const r=en.r, px=en.px, errPct=en.errPct, spanMm=en.spanMm, photoW=en.photoW;
         const tilt = Math.abs(en.angle) >= 0.02 ? ' · deskewed ' + en.angle.toFixed(2) + '°' : '';
-        const who  = _calFiles.length>1 ? ' <span style="color:#5e8c7e; font-size:10px;">· '+en.name.slice(0,22)+'</span>' : '';
-        res.style.color='var(--text-primary)';
-        res.innerHTML = '<b style="color:' + (en.bad?'#fa6':'#7fff7f') + '; font-size:14px;">' + px + ' px</b> per ' + spanMm.toFixed(2) + ' mm' + who + '<br>' +
-            '<span style="color:var(--text-disabled); font-size:10px;">' + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
+        const who  = _calFiles.length>1 ? '<span style="color:#5e8c7e;">'+en.name.slice(0,22)+' · </span>' : '';
+        const info = who + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
             '<span style="color:' + (errPct<5?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
-            ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt + '</span>';
+            ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt;
+        res.style.color='var(--text-primary)';
+        // No px-per-demarc headline — the span chips and the USE button already carry
+        // that number; only the diagnostics line earns the space. It returns when the
+        // sanity gate blocks the chips, so a bad frame still says what it measured.
+        res.innerHTML = en.bad
+            ? '<b style="color:#fa6; font-size:14px;">' + px + ' px</b> per ' + spanMm.toFixed(2) + ' mm<br>' +
+              '<span style="color:var(--text-disabled); font-size:10px;">' + info + '</span>'
+            : '<span style="color:var(--text-disabled); font-size:10px;">' + info + '</span>';
         if (en.bad){
             warn.style.color='#ff6a6a';
             warn.textContent = en.tooFew
@@ -12088,12 +12094,15 @@
         if (!fa || fa.error){ _calPhotoHideFocus(); return; }
         const w = fa.wedge, n1 = v => v.toFixed(1);
         const col = fa.verdict==='good' ? '#7fd8c0' : fa.verdict==='soft' ? '#ff6a6a' : '#fa6';
-        let head, body='';
+        let head, body='', tip='';
         if (fa.verdict==='soft'){
             head = '&#9888; PHOTO IS SOFT';
             body = 'Tick contrast is only ' + fa.modMed.toFixed(2) + '. Refocus and re-shoot.';
         } else if (fa.verdict==='tilt'){
             head = '&#9888; SLIDE TILTED &asymp; ' + w.theta.toFixed(1) + '&deg;';
+            // The which-way advice lives in the ⓘ tooltip — the panel stays compact.
+            tip = 'One photo cannot tell you which way to tilt — blur is symmetric about '+
+                  'focus. Adjust either way and re-shoot: if the angle grows, go the other way.';
             body = _micSoftSentence(fa.softSide) + ' The in-focus band is ' + Math.round(fa.bandUm) +
                    ' µm wide against a ' + n1(fa.dof) + ' µm depth of field. Focus ' +
                    fa.focusMed.toFixed(2) + ' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.' +
@@ -12101,9 +12110,7 @@
                                   ' mm window — it sits inside the in-focus stripe (green on the focus map); '+
                                   'the full span would average the soft end in.</span>'
                     : ' The slide rises <b>' + n1(fa.dzSpan) + ' µm</b> across the measured window.') +
-                   (fa.noSpan ? ' The sharp band is narrower than every span option.' : '') +
-                   '<br><span style="color:#8a9;">One photo cannot tell you which way to tilt. '+
-                   'Adjust either way and re-shoot: if the angle grows, go the other way.</span>';
+                   (fa.noSpan ? ' The sharp band is narrower than every span option.' : '');
         } else if (w.ok){
             // Tilt measured but harmless — the span stays inside the depth of field.
             head = '&#10003; SHARP ACROSS THE SPAN';
@@ -12119,7 +12126,9 @@
                         fa.scaleGradPctPerMm.toFixed(2) + ' %/mm' : '');
             if (fa.verdict==='marginal') body += '<br><span style="color:#fa6;">Contrast is low — usable, but a sharper frame would measure better.</span>';
         }
-        fx.innerHTML = '<b style="color:'+col+';">'+head+'</b><br>'+body;
+        fx.innerHTML = '<b style="color:'+col+';"'+(tip?' title="'+tip+'"':'')+'>'+head+'</b>'+
+            (tip? ' <span title="'+tip+'" style="cursor:help; color:#5e8c7e;">&#9432;</span>' : '')+
+            '<br>'+body;
         fx.style.display='block';
 
         // the full-frame profile: which ticks were found, and which ones the selected
