@@ -785,6 +785,46 @@ void wifiSetup() {
 // ─────────────────────────────────────────────────────────────────────────────
 // wifiLoop()  —  call in loop() after the atomic-read block in the main .ino
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Per-client telemetry fan-out ─────────────────────────────────────────────
+// The pushes used to be gated on wsServer.availableForWriteAll(): if ANY
+// client's TX queue was full, EVERY dashboard's telemetry stopped. One laptop
+// going to sleep without closing its socket (no FIN — the queue just stays
+// full until TCP times the corpse out, minutes later) froze the other
+// machine's dashboard, and the dead client's queued buffers bled internal
+// heap until big transient JSON allocs (/tofdbg's 32 KB) failed too — the
+// 8/15/26 two-computer incident. Send per client instead, skipping only the
+// client that can't take a frame, and CLOSE a client whose queue has been
+// full for WS_STALL_CLOSE_MS: a live browser drains its queue in
+// milliseconds; only a dead peer stays full for seconds.
+static constexpr uint32_t WS_STALL_CLOSE_MS = 5000;
+struct WsStallEntry { uint32_t id; uint32_t sinceMs; };   // id 0 = free slot
+static WsStallEntry wsStalls[8] = {};   // DEFAULT_MAX_WS_CLIENTS on ESP32
+
+static void wsStallClear(uint32_t id) {
+    for (auto& s : wsStalls) if (s.id == id) s.id = 0;
+}
+// True when this client can take another frame. Tracks how long a full-queue
+// client has been stuck and closes it once it crosses the threshold.
+static bool wsClientReady(AsyncWebSocketClient& c, uint32_t now) {
+    if (c.status() != WS_CONNECTED) return false;
+    const uint32_t id = c.id();
+    if (!c.queueIsFull()) { wsStallClear(id); return true; }
+    WsStallEntry* slot = nullptr;
+    for (auto& s : wsStalls) { if (s.id == id) { slot = &s; break; } }
+    if (!slot) {
+        for (auto& s : wsStalls) if (s.id == 0) { slot = &s; break; }
+        if (slot) { slot->id = id; slot->sinceMs = now; }
+        return false;
+    }
+    if ((uint32_t)(now - slot->sinceMs) >= WS_STALL_CLOSE_MS) {
+        Serial.printf("[WS] client #%u stalled %us — closing\n",
+                      (unsigned)id, (unsigned)(WS_STALL_CLOSE_MS / 1000));
+        slot->id = 0;
+        c.close();                       // frees its queue; cleanup runs on the event
+    }
+    return false;
+}
+
 void wifiLoop() {
 
     // ── Generic deferred restart (set by /save, /forget-wifi, etc.) ──────────
@@ -983,23 +1023,27 @@ void wifiLoop() {
     if (otaInProgress) return;           // OTA flash in progress — don't clog the WS queue
     if (wsServer.count() == 0) return;   // no connected clients — skip serialisation
 
-    // Drop the frame entirely when any client's TX queue is full. Pushing into
-    // a full AsyncWebSocket queue drops the message or closes the socket; live
-    // telemetry wants the freshest frame, not a backlog. The timestamp is
-    // advanced regardless so a slow client just thins the stream.
+    // Skip only the client whose queue is full (see wsClientReady — a stuck
+    // one gets closed). Serialization is lazy: zero ready clients costs no
+    // String build. The timestamp advances regardless so a slow client just
+    // thins its own stream.
     uint32_t now = millis();
     if (now - lastFastTelemMs >= FAST_TELEM_MS) {
         lastFastTelemMs = now;
-        if (wsServer.availableForWriteAll()) {
-            String out; buildFastTelemJson(out);
-            wsServer.textAll(out);
+        String out; bool built = false;
+        for (auto& c : wsServer.getClients()) {
+            if (!wsClientReady(c, now)) continue;
+            if (!built) { buildFastTelemJson(out); built = true; }
+            c.text(out);
         }
     }
     if (now - lastSlowTelemMs >= SLOW_TELEM_MS) {
         lastSlowTelemMs = now;
-        if (wsServer.availableForWriteAll()) {
-            String out; buildSlowTelemJson(out);
-            wsServer.textAll(out);
+        String out; bool built = false;
+        for (auto& c : wsServer.getClients()) {
+            if (!wsClientReady(c, now)) continue;
+            if (!built) { buildSlowTelemJson(out); built = true; }
+            c.text(out);
         }
     }
 
@@ -1014,9 +1058,7 @@ void wifiLoop() {
     // the per-client AWS TX queue. Binary is ~1 KB.
     if (now - lastVibPushMs >= 200) {
         lastVibPushMs = now;
-        if (wsServer.availableForWriteAll()) {
-            pushVibSpectrumBinary();
-        }
+        pushVibSpectrumBinary();         // per-client ready check happens inside
     }
 
     // ── Device-side state-change detection ──────────────────────────────────
@@ -1808,6 +1850,10 @@ static void startFullServer() {
         // 32 KB: 48 events (~10 KB of pool) + 144 five-int trend rows (~14 KB).
         // Transient heap; freed before the response streams.
         DynamicJsonDocument doc(32768);
+        if (doc.capacity() == 0) {       // alloc failed (low/fragmented heap) —
+            req->send(503, "text/plain", "low heap - retry");   // honest 503, not garbage JSON
+            return;
+        }
         doc["now"]     = millis();            // dashboard renders event ages
         doc["count"]   = cnt;
         doc["dropped"] = tofTgtEvtDropped.load(std::memory_order_relaxed);
@@ -3495,7 +3541,13 @@ static void pushVibSpectrumBinary() {
     memcpy(buf + HEADER,                     spec,  VIB_FFT_BINS * 2);
     memcpy(buf + HEADER + VIB_FFT_BINS * 2,  specH, VIB_FFT_BINS * 2);
 
-    wsServer.binaryAll(buf, FRAME);
+    // Per client, not binaryAll: a stalled client must not gate (or bloat the
+    // queue of) the others — same policy as the JSON telemetry in wifiLoop().
+    const uint32_t now = millis();
+    for (auto& c : wsServer.getClients()) {
+        if (!wsClientReady(c, now)) continue;
+        c.binary(buf, FRAME);
+    }
 }
 
 // V12: push the saved-signature filename list to all web clients.

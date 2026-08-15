@@ -10069,7 +10069,8 @@
             // this is precisely what lets a short span dodge the soft end instead of
             // averaging it in — and on a clean frame it changes nothing.
             const sharpEnough=place.filter(pp=>isFinite(pp.mod) && pp.mod>=0.6*modBest);
-            const use=sharpEnough.length>=3 ? sharpEnough : place;
+            const gated=sharpEnough.length>=3;          // px median came from sharp placements only
+            const use=gated ? sharpEnough : place;
             const pxs=use.map(pp=>pp.px), med=_micMedian(pxs);
             // Two systematic components, because the placement spread ALONE is a trap:
             //   spread — how much the answer moves as the window slides. Honest for short
@@ -10085,7 +10086,7 @@
             const sigSys=Math.hypot(spread, bias);
             const sigStat=_micMedian(use.map(pp=>pp.sig));
             const sharp=use.reduce((a,b)=> (b.mod>a.mod ? b : a), use[0]);     // the sharpest placement
-            out.push({ spanMm, fr, px: med, nTicks: sharp.n, nPlace: use.length,
+            out.push({ spanMm, fr, px: med, nTicks: sharp.n, nPlace: use.length, gated,
                        sigmaStat: sigStat, sigmaSys: sigSys, spread, bias,
                        sigmaPx: Math.hypot(sigStat, sigSys),
                        mod: sharp.mod, shpMed: sharp.shpMed, shpA: sharp.shpA, shpB: sharp.shpB,
@@ -10142,7 +10143,7 @@
         // here would withhold the tilt angle from exactly the photo that needs it most.
         // Carry on with a null `best`; the caller shows the diagnosis and blocks USE.
         if (opts.basePx>0){ const full=spans.find(s=>s.fr===1.0); if (full) full.px=opts.basePx; }
-        const best=spans.find(s=>s.best) || spans[0] || null;
+        let best=spans.find(s=>s.best) || spans[0] || null;   // let: the tilt auto-pick below reassigns it
 
         // Modulation is the soft-photo test. Contrast, unlike tick width, keeps
         // falling as focus degrades — see the header note.
@@ -10182,15 +10183,15 @@
         else if (w.ok && isFinite(dzSpan) && dzSpan > w.dof) verdict='tilt';
         else if (modMed < MIC_MOD_MARGINAL) verdict='marginal';
 
-        // TILT OVERRIDES THE MARGIN RULE. Each span entry's window is already its
-        // sharpest placement, so its `mod` says whether that window can sit inside
-        // the in-focus stripe. On a genuinely tilted slide the demarc-length window
-        // averages the soft end into the answer — a bigger lie than a short window's
-        // extrapolation — so re-pick the default among sharp-stripe windows by total
+        // TILT OVERRIDES THE MARGIN RULE — but only when the incumbent star's own
+        // window is genuinely soft-contaminated (its median contrast below 60% of
+        // the frame's best). Then re-pick among spans whose px actually came from
+        // mod-gated placements (`gated` — the median wasn't diluted by soft
+        // fallback placements) and whose window sits in the sharp stripe, by total
         // error. The chips stay; this only moves the star.
         let autoPick=false;
-        if (verdict==='tilt' && best){
-            const sharpSpans=spans.filter(s=>isFinite(s.mod) && s.mod>=0.6*modBest);
+        if (verdict==='tilt' && best && !(isFinite(best.mod) && best.mod>=0.6*modBest)){
+            const sharpSpans=spans.filter(s=>s.gated && isFinite(s.mod) && s.mod>=0.6*modBest);
             let pick=null;
             for (const s of sharpSpans) if (!pick || s.sigmaPx<pick.sigmaPx) pick=s;
             if (pick && pick!==best){
@@ -10369,7 +10370,7 @@
         const dz0 = document.getElementById('calphoto-drop');
         // The set persists across open/close. Stale params → re-analyze from the kept
         // File handles; otherwise restore the thumbs and the last selection.
-        if (_calFiles.length && _micSetStale(_calSetPitch, _calSetSpan, _calSetNA)){
+        if (_calFiles.length && _micSetStale(_calSetPitch, _calSetSpan, _calSetNA, _calSetPW)){
             calPhotoHandleFiles(_calFiles.map(en=>en.file));
             return;
         }
@@ -10390,6 +10391,7 @@
         document.getElementById('calphoto').style.display = 'none';
         document.getElementById('cph-help').style.display = 'none';
         _calPhotoStrip = null;          // drop the retained band strip (the set stays)
+        ++_calRenderGen;                // orphan any in-flight strip decode
     }
     function calPhotoToggleHelp(){ const h=document.getElementById('cph-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
@@ -10483,12 +10485,14 @@
     // Params each tool's set was analyzed with. A set persists across open/close (the
     // File handles live for the whole page session); when pitch/span/NA changed in
     // between, the tool re-analyzes from those handles instead of asking for a re-drop.
-    let _focSetPitch=0, _focSetSpan=0, _focSetNA=0;
-    let _calSetPitch=0, _calSetSpan=0, _calSetNA=0;
-    function _micSetStale(pitch0, span0, na0){
+    let _focSetPitch=0, _focSetSpan=0, _focSetNA=0, _focSetPW=0;
+    let _calSetPitch=0, _calSetSpan=0, _calSetNA=0, _calSetPW=0;
+    function _micSetStale(pitch0, span0, na0, pw0){
         const p=(state.tickPitch>0)?state.tickPitch:0.01;
         const s=(state.demarcDist>0)?state.demarcDist:0.4;
-        return p!==pitch0 || s!==span0 || state.effNA!==na0;
+        // photoWidth scales px linearly (scale = imageW/W) — a set analyzed under
+        // the old Photo Width must re-run or USE hands back a mis-scaled px.
+        return p!==pitch0 || s!==span0 || state.effNA!==na0 || (state.photoWidth||0)!==pw0;
     }
     function _focShowSpan(k){
         if (!_focCur || !_focCur.spans[k]) return;
@@ -10521,7 +10525,7 @@
         m.style.display='flex';
         // The set persists across open/close. Stale params → re-analyze from the kept
         // File handles; otherwise just restore the thumbs and the last selection.
-        if (_focFiles.length && _micSetStale(_focSetPitch, _focSetSpan, _focSetNA)){
+        if (_focFiles.length && _micSetStale(_focSetPitch, _focSetSpan, _focSetNA, _focSetPW)){
             focusHandleFiles(_focFiles.map(en=>en.file));
             return;
         }
@@ -10558,17 +10562,22 @@
                  -(isFinite(fa.focusWin) ? fa.focusWin : 0),
                  fa.best ? fa.best.sigmaPx : Infinity ];
     }
-    // Is score `a` a better frame than score `b`? Verdict first; then focus — but
-    // focus only decides when the gap is REAL (>5%): a 3% focus edge is inside the
-    // metric's noise, and preferring it over a measurably lower span uncertainty
-    // would star the wrong frame. Inside the tolerance it is a tie and the better
-    // MEASUREMENT (lower ±) wins.
-    function _focScoreBetter(a, b){
-        if (a[0] !== b[0]) return a[0] < b[0];
-        const fa=-a[1], fb=-b[1];
-        if (fa > fb*1.05) return true;
-        if (fb > fa*1.05) return false;
-        return a[2] < b[2];
+    // Order-independent best pick. (A pairwise 5% tie rule is non-transitive, so a
+    // best-so-far scan made the star depend on drop order.) Best verdict rank first;
+    // among those, every frame within 5% of the TOP focus is a tie — an absolute
+    // anchor, so the tie set is the same whatever the order — and the lowest
+    // span-± wins. Returns an index into `entries`.
+    function _focPickBest(entries){
+        const sc=entries.map(en=>_calScore(en));
+        let rank=Infinity; for (const s of sc) if (s[0]<rank) rank=s[0];
+        let F=0; for (let i=0;i<sc.length;i++) if (sc[i][0]===rank && -sc[i][1]>F) F=-sc[i][1];
+        let bi=-1;
+        for (let i=0;i<sc.length;i++){
+            if (sc[i][0]!==rank) continue;
+            if (-sc[i][1] < F/1.05) continue;
+            if (bi<0 || sc[i][2]<sc[bi][2]) bi=i;
+        }
+        return bi<0 ? 0 : bi;
     }
     // Set-wide best normalized focus — the color reference shared by every frame in
     // the set, so a soft frame reads red next to a sharp one instead of self-
@@ -10577,6 +10586,21 @@
         let m=0;
         for (const en of _focFiles)
             if (en && en.fa && !en.fa.error && isFinite(en.fa.focusBest) && en.fa.focusBest>m) m=en.fa.focusBest;
+        return m;
+    }
+    // Same, but over focusWin — the reference for the THUMB chips, which display
+    // focusWin. Dividing a window-median by a whole-band max mixed two statistics:
+    // even the set's sharpest frame rendered green-yellow instead of full green.
+    function _focFocusWinBest(){
+        let m=0;
+        for (const en of _focFiles)
+            if (en && en.fa && !en.fa.error && isFinite(en.fa.focusWin) && en.fa.focusWin>m) m=en.fa.focusWin;
+        return m;
+    }
+    function _calFocusWinBest(){
+        let m=0;
+        for (const en of _calFiles)
+            if (en && en.fa && !en.fa.error && isFinite(en.fa.focusWin) && en.fa.focusWin>m) m=en.fa.focusWin;
         return m;
     }
     // The span table's focus a→b cell: normalized focus (1.0 = optics' limit) at the
@@ -10598,37 +10622,44 @@
         if (!list.length){ vd.innerHTML='<span style="color:#ff6a6a;">No JPEG/PNG in that drop.</span>'; return; }
         const dz=document.getElementById('foc-drop');
         dz.innerHTML='Analyzing&hellip;';
-        _focFiles=[]; _focSel=-1; _focBest=-1;
+        // Stale UI must not stay interactive while the set is rebuilt — the old
+        // thumbs'/rows' onclick indices would point into the array being replaced.
+        for (const id of ['foc-thumbs','foc-plotwrap','foc-profwrap','foc-spans','foc-handoff'])
+            document.getElementById(id).style.display='none';
+        document.getElementById('foc-note').textContent='';
         // Same analyzer as MEASURE FROM PHOTO — one shared entry shape (File handle +
         // base measurement + focus analysis + thumb), so a set can be handed across
-        // to the other tool, or re-analyzed from its File handles when pitch/span/NA
-        // change, without re-dropping anything.
+        // to the other tool, or re-analyzed from its File handles when pitch/span/
+        // NA/width change, without re-dropping anything. NA/width are captured ONCE
+        // here so a mid-run edit can't split the set across two scales.
         const pitchMm=(state.tickPitch>0)?state.tickPitch:0.01;
         const demarcMm=(state.demarcDist>0)?state.demarcDist:0.4;
+        const na=state.effNA, pw=state.photoWidth||0;
+        // Accumulate locally; the live set is replaced only on COMPLETION, so an
+        // aborted run (panel closed, new drop) leaves the previous set intact
+        // instead of silently truncating it.
+        const out=[];
         for (let i=0;i<list.length;i++){
-            vd.innerHTML='Analyzing '+(i+1)+' / '+list.length+' &mdash; '+list[i].name;
+            vd.textContent='Analyzing '+(i+1)+' / '+list.length+' — '+list[i].name;
             await new Promise(r=>setTimeout(r,0));            // let the UI paint between frames
             let entry=null;
-            try { entry=await _calAnalyzeFile(list[i], pitchMm, demarcMm); } catch(e){ entry=null; }
+            try { entry=await _calAnalyzeFile(list[i], pitchMm, demarcMm, na, pw); } catch(e){ entry=null; }
             if (myGen!==_focGen) return;                      // newer run started, or panel closed
-            if (entry){ entry.srcCv=null; _focFiles.push(entry); }   // never retain the big canvas
+            if (entry){ entry.srcCv=null; out.push(entry); }  // never retain the big canvas
         }
-        if (!_focFiles.length){
-            vd.innerHTML='<span style="color:#ff6a6a;">Could not analyse any of those frames.</span>';
+        if (!out.length || out.every(en=>en.err)){
+            vd.innerHTML='<span style="color:#ff6a6a;">Could not analyse any of those frames'+
+                (out.length && out[0].err ? ' — '+_mtfEsc(out[0].err) : '')+'.</span>';
             dz.innerHTML='Drop your candidate micrometer shots here<br><span style="color:#5a8;">or click to choose</span>';
-            return;
+            return;                                           // previous set (if any) survives
         }
-        // rank
-        let bi=0;
-        for (let i=1;i<_focFiles.length;i++){
-            if (_focScoreBetter(_calScore(_focFiles[i]), _calScore(_focFiles[bi]))) bi=i;
-        }
-        _focBest=bi;
-        _focSetPitch=pitchMm; _focSetSpan=demarcMm; _focSetNA=state.effNA;
+        _focFiles=out; _focSel=-1;
+        _focBest=_focPickBest(out);
+        _focSetPitch=pitchMm; _focSetSpan=demarcMm; _focSetNA=na; _focSetPW=pw;
         dz.innerHTML='&#10003; '+_focFiles.length+' frame'+(_focFiles.length>1?'s':'')+
                      ' · click to load a different set';
         _focRenderThumbs();
-        _focSelect(bi);
+        _focSelect(_focBest);
     }
 
     // Thumbnails, without the moiré. Scaling a 4000-px frame straight down to ~130 px
@@ -10663,13 +10694,13 @@
     function focHandoffToMeasure(){
         if (!_focFiles.length) return;
         _calFiles=_focFiles.slice(); _calBest=_focBest; _calSel=_focSel;
-        _calSetPitch=_focSetPitch; _calSetSpan=_focSetSpan; _calSetNA=_focSetNA;
+        _calSetPitch=_focSetPitch; _calSetSpan=_focSetSpan; _calSetNA=_focSetNA; _calSetPW=_focSetPW;
         closeFocus(); openCalPhoto();
     }
     function calHandoffToRank(){
         if (!_calFiles.length) return;
         _focFiles=_calFiles.slice(); _focBest=_calBest; _focSel=_calSel;
-        _focSetPitch=_calSetPitch; _focSetSpan=_calSetSpan; _focSetNA=_calSetNA;
+        _focSetPitch=_calSetPitch; _focSetSpan=_calSetSpan; _focSetNA=_calSetNA; _focSetPW=_calSetPW;
         closeCalPhoto(); openFocus();
     }
 
@@ -10687,23 +10718,28 @@
         const ho=document.getElementById('foc-handoff');
         if (ho) ho.style.display=_focFiles.length?'block':'none';
         _focFiles.forEach((en,i)=>{
-            const fa=en.fa, v=en.err ? 'failed' : (fa&&!fa.error)?fa.verdict:'failed';
-            const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a', failed:'#ff6a6a'}[v]||'#fa6';
+            // 'blocked' (failed the measurement sanity gate) must be VISIBLE here too —
+            // the shared ranking demotes those frames, and a GOOD label losing the
+            // star for an unlabeled reason reads as a broken ranking.
+            const fa=en.fa, v=en.err ? 'failed' : en.bad ? 'blocked' : (fa&&!fa.error)?fa.verdict:'failed';
+            const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a',
+                       blocked:'#ff6a6a', failed:'#ff6a6a'}[v]||'#fa6';
             const div=document.createElement('div');
             div.className='foc-thumb'+(i===_focSel?' sel':'')+(i===_focBest?' best':'');
             if (en.thumb) div.appendChild(_micThumbCopy(en.thumb));
             const lab=document.createElement('div');
             const mm=(fa && !fa.error && isFinite(fa.focusWin)) ? fa.focusWin : NaN;
-            const ref=_micFocusRef(_focFocusBest());
+            const ref=_micFocusRef(_focFocusWinBest());
             lab.innerHTML=(i===_focBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
                 '<span style="color:'+col+';">'+v.toUpperCase()+'</span>'+
                 (isFinite(mm)? ' <span style="color:'+_micFocusColor(mm/ref,1,60)+';" '+
                                'title="focus metric: median edge sharpness over the MEASURED window, '+
                                'vs the optics&#39; limit (1.0 = as sharp as this NA can render) — '+
-                               'colored against the sharpest frame in this set. Frames within 5% '+
-                               'focus tie, and the lower-&plusmn; measurement wins the star.">focus '+
+                               'colored against the sharpest frame in this set (or the optics&#39; '+
+                               'limit, whichever is sharper). Frames within 5% of the sharpest '+
+                               'tie, and the lower-&plusmn; measurement wins the star.">focus '+
                                mm.toFixed(2)+'</span>' : '')+'<br>'+
-                '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
+                '<span style="color:#5e8c7e;">'+_mtfEsc(en.name.replace(/\.[^.]+$/,'').slice(0,14))+'</span>';
             div.appendChild(lab);
             div.onclick=()=>_focSelect(i);
             tb.appendChild(div);
@@ -10720,8 +10756,8 @@
         const note=document.getElementById('foc-note');
         const pw=document.getElementById('foc-plotwrap');
         if (!fa || fa.error){
-            vd.innerHTML='<b style="color:#ff6a6a;">'+en.name+' — analysis failed</b><br>'+
-                '<span style="font-size:11px;">'+((fa&&fa.error)||en.err||'unknown')+'</span>';
+            vd.innerHTML='<b style="color:#ff6a6a;">'+_mtfEsc(en.name)+' — analysis failed</b><br>'+
+                '<span style="font-size:11px;">'+_mtfEsc((fa&&fa.error)||en.err||'unknown')+'</span>';
             pw.style.display='none'; sp.style.display='none'; note.textContent='';
             document.getElementById('foc-profwrap').style.display='none';
             return;
@@ -10749,8 +10785,9 @@
             // depth of field. Saying "flat" here would contradict the plot beside it.
             head='&#10003; SHARP ACROSS THE SPAN';
             body='A slight tilt is measurable (&asymp; '+w.theta.toFixed(1)+'&deg;), but the slide only climbs <b>'+
-                 n1(fa.dzSpan)+' µm</b> across the '+en.demarcMm.toFixed(2)+' mm span — inside the '+n1(fa.dof)+
-                 ' µm depth of field, so the whole span stays in focus. Nothing to fix. Focus '+
+                 n1(fa.dzSpan)+' µm</b> across the '+(fa.best?fa.best.spanMm:en.demarcMm).toFixed(2)+
+                 ' mm measured window — inside the '+n1(fa.dof)+
+                 ' µm depth of field, so the whole window stays in focus. Nothing to fix. Focus '+
                  fa.focusWin.toFixed(2)+' <span style="color:#8a9;">(1.0 = the optics&rsquo; limit)</span>.';
         } else {
             head='&#10003; FLAT — square to the optic axis';
@@ -11781,7 +11818,7 @@
     // Analyze ONE file → an entry for _calFiles. Returns the deskewed working canvas
     // on the entry (srcCv) so the caller can reuse it for the zoom strip — the caller
     // MUST null it out when done, it is ~40 MB per frame.
-    function _calAnalyzeFile(file, pitchMm, spanMm){
+    function _calAnalyzeFile(file, pitchMm, spanMm, na, pw){
         return new Promise((resolve)=>{
             const url = URL.createObjectURL(file);
             const img = new Image();
@@ -11793,7 +11830,7 @@
                     const cw = Math.min(NW, 4000), ch = Math.round(NH*cw/NW);
                     const cv = document.createElement('canvas'); cv.width=cw; cv.height=ch;
                     const cx = cv.getContext('2d', { willReadFrequently:true }); cx.drawImage(img,0,0,cw,ch);
-                    const photoW = state.photoWidth || NW;
+                    const photoW = pw || NW;
                     // Deskew first: estimate the tick tilt and, if significant, rotate the
                     // working image so ticks are vertical — then the straight vertical
                     // analysis is exact regardless of stage tilt.
@@ -11827,7 +11864,7 @@
                     // gates above allowed. basePx keeps the full-span option byte-identical
                     // to what this tool always returned.
                     const fa = analyzeMicrometerFocus(imd, { pitchMm, demarcMm: spanMm,
-                                                             imageW: photoW, NA: state.effNA, basePx: px });
+                                                             imageW: photoW, NA: na, basePx: px });
                     Object.assign(entry, { r, px, errPct, tooFew, tooMany, bad, fa });
                 } catch(e){ entry.err = e.message || String(e); }
                 URL.revokeObjectURL(url);
@@ -11856,38 +11893,48 @@
     async function calPhotoHandleFiles(files){
         const res = document.getElementById('calphoto-result'), warn = document.getElementById('calphoto-warn');
         const myGen = ++_calPhotoGen;        // newest request wins; older loads become orphans
+        ++_calRenderGen;                     // and any in-flight strip decode is orphaned too
         const list = [...files].filter(f=>/\.(jpe?g|png)$/i.test(f.name)||/^image\//.test(f.type));
         if (!list.length){ res.style.color='#ff6a6a'; res.textContent='No JPEG/PNG in that drop.'; return; }
         warn.innerHTML=''; warn.style.color='#fa6'; res.style.color='var(--text-disabled)';
         _calPhotoResetUse();                 // never leave a stale enabled USE while loading
-        _calFiles=[]; _calSel=-1; _calBest=-1; _calRenderThumbs();
+        // Stale UI must not stay interactive while the set is rebuilt
+        document.getElementById('calphoto-thumbs').style.display='none';
+        document.getElementById('calphoto-handoff').style.display='none';
+        // NA/width are captured ONCE so a mid-run edit can't split the set (the
+        // stale check re-runs the whole set when they change later).
         const pitchMm = (state.tickPitch > 0) ? state.tickPitch : 0.01;
         const spanMm  = (state.demarcDist > 0) ? state.demarcDist : 0.4;
-        let bestCv = null;                   // ONE working canvas stays alive: the best frame's
+        const na = state.effNA, pw = state.photoWidth||0;
+        // Accumulate locally; the live set is replaced only on COMPLETION, so an
+        // aborted run leaves the previous set intact instead of truncating it.
+        const out = [];
         for (let i=0;i<list.length;i++){
             res.textContent = 'Analyzing ' + (i+1) + ' / ' + list.length + ' — ' + list[i].name;
             await new Promise(r=>setTimeout(r,0));           // let the UI paint between frames
             let en = null;
-            try { en = await _calAnalyzeFile(list[i], pitchMm, spanMm); } catch(e){ en = null; }
+            try { en = await _calAnalyzeFile(list[i], pitchMm, spanMm, na, pw); } catch(e){ en = null; }
             if (myGen !== _calPhotoGen) return;              // newer drop or panel closed
             if (!en) continue;
-            _calFiles.push(en);
-            if (_calBest<0 || _focScoreBetter(_calScore(en), _calScore(_calFiles[_calBest]))){
-                _calBest = _calFiles.length-1; bestCv = en.srcCv || null;
-            }
             en.srcCv = null;                                 // never retain the big canvases
+            out.push(en);
         }
         if (myGen !== _calPhotoGen) return;
-        if (!_calFiles.length){
-            res.style.color='#ff6a6a'; res.textContent='Could not analyse any of those files.'; return;
+        if (!out.length || out.every(en=>en.err)){
+            res.style.color='#ff6a6a';
+            res.textContent='Could not analyse any of those files'+
+                (out.length && out[0].err ? ' — '+out[0].err : '')+'.';
+            return;                                          // previous set (if any) survives
         }
-        _calSetPitch=pitchMm; _calSetSpan=spanMm; _calSetNA=state.effNA;
+        _calFiles=out; _calSel=-1;
+        _calBest=_focPickBest(out);
+        _calSetPitch=pitchMm; _calSetSpan=spanMm; _calSetNA=na; _calSetPW=pw;
         // Collapse the drop zone to a one-line status once it has served its purpose
         const dz0 = document.getElementById('calphoto-drop');
         dz0.style.padding='6px 8px'; dz0.style.fontSize='11px'; dz0.style.lineHeight='1.3';
         dz0.innerHTML='&#10003; '+_calFiles.length+' photo'+(_calFiles.length>1?'s':'')+
                       ' · click to load another set';
-        _calSelect(_calBest, bestCv);
+        _calSelect(_calBest, null);
     }
 
     function _calRenderThumbs(){
@@ -11898,7 +11945,7 @@
         const ho=document.getElementById('calphoto-handoff');
         if (ho) ho.style.display=_calFiles.length?'block':'none';
         if (_calFiles.length<2) return;
-        const ref = _micFocusRef(_calFocusBest());
+        const ref = _micFocusRef(_calFocusWinBest());
         _calFiles.forEach((en,i)=>{
             const fa=en.fa;
             const v = en.err ? 'failed' : en.bad ? 'blocked' : (fa&&!fa.error) ? fa.verdict : 'failed';
@@ -11914,10 +11961,11 @@
                 (isFinite(mm)? ' <span style="color:'+_micFocusColor(mm/ref,1,60)+';" '+
                                'title="focus metric: median edge sharpness over the MEASURED window, '+
                                'vs the optics&#39; limit (1.0 = as sharp as this NA can render) — '+
-                               'colored against the sharpest frame in this set. Frames within 5% '+
-                               'focus tie, and the lower-&plusmn; measurement wins the star.">focus '+
+                               'colored against the sharpest frame in this set (or the optics&#39; '+
+                               'limit, whichever is sharper). Frames within 5% of the sharpest '+
+                               'tie, and the lower-&plusmn; measurement wins the star.">focus '+
                                mm.toFixed(2)+'</span>' : '')+'<br>'+
-                '<span style="color:#5e8c7e;">'+en.name.replace(/\.[^.]+$/,'').slice(0,14)+'</span>';
+                '<span style="color:#5e8c7e;">'+_mtfEsc(en.name.replace(/\.[^.]+$/,'').slice(0,14))+'</span>';
             div.appendChild(lab);
             div.onclick=()=>{ if (i!==_calSel) _calSelect(i, null); };
             tb.appendChild(div);
@@ -11937,18 +11985,21 @@
         const res = document.getElementById('calphoto-result'), warn = document.getElementById('calphoto-warn');
         const mySel = ++_calRenderGen;       // a later thumb click orphans this render's async strip
         warn.innerHTML=''; warn.style.color='#fa6';
+        // USE stays DISABLED and the previous frame's chips/verdict are hidden until
+        // finish() renders THIS frame's — otherwise the old chips stay clickable
+        // during the decode and a fast USE tap commits the wrong frame's px.
+        const u = document.getElementById('calphoto-use');
+        u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
+        _calPhotoHideFocus();
         if (en.err){
             res.style.color='#ff6a6a'; res.textContent = 'Analysis failed: ' + en.err + ' — ' + en.name;
-            const u = document.getElementById('calphoto-use');
-            u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
             document.getElementById('calphoto-prev').style.display='none';
             document.getElementById('calphoto-prevcap').style.display='none';
-            _calPhotoHideFocus();
             return;
         }
         const r=en.r, px=en.px, errPct=en.errPct, spanMm=en.spanMm, photoW=en.photoW;
         const tilt = Math.abs(en.angle) >= 0.02 ? ' · deskewed ' + en.angle.toFixed(2) + '°' : '';
-        const who  = _calFiles.length>1 ? '<span style="color:#5e8c7e;">'+en.name.slice(0,22)+' · </span>' : '';
+        const who  = _calFiles.length>1 ? '<span style="color:#5e8c7e;">'+_mtfEsc(en.name.slice(0,22))+' · </span>' : '';
         const info = who + r.nTicks + ' ticks (≈' + r.intervals + ' expected) · err ' +
             '<span style="color:' + (errPct<5?'#3d8':'#fa6') + '">' + errPct.toFixed(1) + '%</span>' +
             ' · FOV ' + (spanMm*photoW/px).toFixed(3) + ' mm' + tilt;
@@ -11967,10 +12018,7 @@
                 : en.tooMany
                 ? '⚠ ' + r.nTicks + ' ticks found vs ~' + r.intervals + ' expected — Tick Pitch (CALIBRATOR screen) looks too large (0.1 instead of 0.01?). Not measured.'
                 : '⚠ High spacing error — check focus and that the slide is flat. Not measured.';
-            const u = document.getElementById('calphoto-use');
-            u.style.opacity='0.4'; u.style.pointerEvents='none'; u.textContent='USE MEASUREMENT'; _calPhotoPx=null;
         } else {
-            _calPhotoPx = px;
             const notes = [];
             if (en.NW !== photoW)
                 notes.push('ℹ Photo is ' + en.NW + ' px wide vs Photo Width ' + photoW +
@@ -11985,18 +12033,23 @@
                     'CALCULATED span of the chosen distance from the ' + r.nTicks +
                     ' visible ticks, and the FOV result is unaffected.');
             warn.innerHTML = notes.join('<br>');
-            const use = document.getElementById('calphoto-use');
-            use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
         }
         // The zoom is drawn per-span from a retained band strip. If the focus pass
         // couldn't build a tick table, fall back to the old fixed preview so an odd
-        // photo still shows its evidence.
+        // photo still shows its evidence. USE is enabled HERE: normally by
+        // calPhotoPickSpan (the starred span's px), or with the base px when the
+        // focus pass produced no span options to pick from.
         const finish = (cv)=>{
             if (mySel !== _calRenderGen) return;
             if (en.fa && !en.fa.error && en.fa.table){
                 if (cv) _calPhotoMakeStrip(cv, en.fa.table); else _calPhotoStrip = null;
             } else if (cv) drawCalPhotoPreview(cv, r, spanMm);
             calPhotoRenderFocus(en.fa, spanMm, en.bad);
+            if (!en.bad && _calPhotoPx == null){
+                _calPhotoPx = px;
+                const use = document.getElementById('calphoto-use');
+                use.textContent = 'USE ' + px + ' px'; use.style.opacity='1'; use.style.pointerEvents='auto';
+            }
         };
         if (srcCv){ finish(srcCv); return; }
         const url = URL.createObjectURL(en.file);
@@ -12151,6 +12204,18 @@
                 'title="Toggle the focus overlay: green = in focus, red = defocused">focus map '+
                 (_calPhotoHeatOn?'on':'off')+'</span>'; }
     }
+    // Tap fallback for the ⓘ tooltips — title= is hover-only and most of this UI
+    // is used by touch. Tapping toggles the tip text inline under its block.
+    function micTipToggle(el, ev){
+        if (ev){ ev.stopPropagation(); ev.preventDefault(); }
+        if (el._tip){ el._tip.remove(); el._tip=null; return; }
+        const d=document.createElement('div');
+        d.textContent=el.getAttribute('title')||'';
+        d.style.cssText='font-size:10px; line-height:1.45; color:#8fb0a4; background:#0a1f1a; '+
+                        'border-left:2px solid #2a7a6a; padding:4px 7px; margin:4px 0;';
+        el._tip=d;
+        (el.closest('.calphoto-chip')||el.parentElement).appendChild(d);
+    }
     function calPhotoToggleHeat(){
         _calPhotoHeatOn = !_calPhotoHeatOn;
         const sel = (_calPhotoSpans && _calPhotoSpanSel>=0) ? _calPhotoSpans[_calPhotoSpanSel]
@@ -12185,7 +12250,8 @@
             // Tilt measured but harmless — the span stays inside the depth of field.
             head = '&#10003; SHARP ACROSS THE SPAN';
             body = 'A slight tilt is measurable (&asymp;' + w.theta.toFixed(1) + '&deg;), but the slide rises '+
-                   'only ' + n1(fa.dzSpan) + ' µm across the span — well inside the ' + n1(fa.dof) +
+                   'only ' + n1(fa.dzSpan) + ' µm across the ' +
+                   (fa.best?fa.best.spanMm:spanMm).toFixed(2) + ' mm measured window — well inside the ' + n1(fa.dof) +
                    ' µm depth of field. Nothing to fix. Focus ' + fa.focusWin.toFixed(2) +
                    ' <span style="color:#8a9;">(1.0 = optics&rsquo; limit)</span>.';
         } else {
@@ -12197,7 +12263,7 @@
             if (fa.verdict==='marginal') body += '<br><span style="color:#fa6;">Contrast is low — usable, but a sharper frame would measure better.</span>';
         }
         fx.innerHTML = '<b style="color:'+col+';"'+(tip?' title="'+tip+'"':'')+'>'+head+'</b>'+
-            (tip? ' <span title="'+tip+'" style="cursor:help; color:#5e8c7e;">&#9432;</span>' : '')+
+            (tip? ' <span title="'+tip+'" onclick="micTipToggle(this, event)" style="cursor:help; color:#5e8c7e;">&#9432;</span>' : '')+
             '<br>'+body;
         fx.style.display='block';
 
@@ -12260,7 +12326,7 @@
             return '<div class="calphoto-chip" data-i="'+i+'" onclick="calPhotoPickSpan('+i+')">'+
               '<div class="cc-row"><span><b>'+s.spanMm.toFixed(2)+' mm</b>'+
               (s.best?' <span style="color:#3ddb7a;">&#9733; best</span>'+
-                      (whyTip?' <span title="'+whyTip+'" style="cursor:help; color:#5e8c7e;">&#9432;</span>':''):'')+
+                      (whyTip?' <span title="'+whyTip+'" onclick="micTipToggle(this, event)" style="cursor:help; color:#5e8c7e;">&#9432;</span>':''):'')+
               (s.fr===1.0?'':'<span style="color:#6d8a99;">*</span>')+'</span>'+
               '<span style="color:#9cc;">'+px+' px <span style="color:#678;">&plusmn;'+
               s.sigmaPx.toFixed(1)+'</span></span></div>'+
