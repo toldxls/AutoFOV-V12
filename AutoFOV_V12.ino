@@ -4518,7 +4518,8 @@ void sensorTask(void *pvParameters) {
 
           static uint32_t prevSig  = 0xFFFFFFFF;
           static uint16_t lastPubT = 0;
-          if (tofTgtEvtClearReq.exchange(false, std::memory_order_acq_rel)) {
+          const bool logCleared = tofTgtEvtClearReq.exchange(false, std::memory_order_acq_rel);
+          if (logCleared) {
             tofTgtEvtCount.store(0, std::memory_order_release);
             tofTgtEvtDropped.store(0, std::memory_order_relaxed);
             prevSig  = sig;        // the clear itself must not log an edge
@@ -4536,6 +4537,13 @@ void sensorTask(void *pvParameters) {
 
           // Slow trend sample — the level trajectory between events.
           static uint32_t lastTrendMs = 0;
+          if (logCleared) {
+            // CLEAR wipes the 10-min trend too — an A/B run wants the graph to
+            // restart, not to keep drawing the pre-clear history. Same-task write
+            // (sensorTask owns both rings); the /tofdbg reader just sees count 0.
+            tofTrendCount.store(0, std::memory_order_release);
+            lastTrendMs = 0;       // seed a fresh first point this pass
+          }
           if (lastTrendMs == 0 || snap.ms - lastTrendMs >= TOF_TREND_INTERVAL_MS) {
             lastTrendMs = snap.ms;
             TofTrendPt tp;
