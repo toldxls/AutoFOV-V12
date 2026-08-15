@@ -3492,6 +3492,14 @@
           <!-- one thumb per dropped photo (shown for 2+), reusing the FOCUS tool's
                .foc-thumb look; click to measure from a different frame -->
           <div id="calphoto-thumbs" style="display:none; flex-wrap:wrap; gap:6px;"></div>
+          <!-- hand this set to FOCUS / TILT — same analyses, no re-drop -->
+          <div id="calphoto-handoff" style="display:none;">
+            <span onclick="calHandoffToRank()" style="cursor:pointer; display:inline-block;
+                  border:1px solid #2a5a7a; border-radius:4px; padding:3px 9px; font-size:11px;
+                  color:#5ad6ff; background:#0a1c26;"
+                  title="Open FOCUS / TILT with this exact set — analyses are reused and your selected frame stays selected">
+              RANK THIS SET &rarr;</span>
+          </div>
           <!-- Read-only echo of the two pre-cal settings this measurement depends on.
                Both are set on the CALIBRATOR screen before START CAL — editing them
                mid-run would silently rescale the points already captured. -->
@@ -3661,6 +3669,14 @@
           <input type="file" id="foc-file" accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                  multiple style="display:none;" onchange="focusChosen(this)">
           <div id="foc-thumbs"></div>
+          <!-- hand the ranked set to MEASURE FROM PHOTO — same analyses, no re-drop -->
+          <div id="foc-handoff" style="display:none;">
+            <span onclick="focHandoffToMeasure()" style="cursor:pointer; display:inline-block;
+                  border:1px solid #2a7a6a; border-radius:4px; padding:3px 9px; font-size:11px;
+                  color:#7fd8c0; background:#0a1f1a;"
+                  title="Open MEASURE FROM PHOTO with this exact set — analyses are reused and your selected frame stays selected">
+              MEASURE THIS SET &rarr;</span>
+          </div>
         </div>
         <div id="foc-right">
           <div id="foc-verdict">Drop one or more shots to rank them.</div>
@@ -10336,14 +10352,9 @@
         const m = document.getElementById('calphoto');
         document.getElementById('calphoto-span').textContent  = (state.demarcDist||0.4).toFixed(2);
         document.getElementById('calphoto-pitch').textContent = (state.tickPitch||0.01).toFixed(3);
-        const dz0 = document.getElementById('calphoto-drop');    // restore the full drop zone
-        dz0.style.padding=''; dz0.style.fontSize=''; dz0.style.lineHeight='';
-        dz0.innerHTML='Drop micrometer photo(s) here<br><span style="color:#5a8;">or click to choose &mdash; '+
-                      'several at once are ranked and the sharpest wins</span>';
         document.getElementById('calphoto-result').textContent = '';
         document.getElementById('calphoto-warn').textContent = '';
         _calPhotoGen++;                 // orphan any in-flight decode from a prior session
-        _calFiles=[]; _calSel=-1; _calBest=-1; _calRenderThumbs();
         _calPhotoResetUse();
         if (!_calPhotoDropBound){
             const dz = document.getElementById('calphoto-drop');
@@ -10355,12 +10366,30 @@
             _calPhotoDropBound = true;
         }
         m.style.display = 'flex';
+        const dz0 = document.getElementById('calphoto-drop');
+        // The set persists across open/close. Stale params → re-analyze from the kept
+        // File handles; otherwise restore the thumbs and the last selection.
+        if (_calFiles.length && _micSetStale(_calSetPitch, _calSetSpan, _calSetNA)){
+            calPhotoHandleFiles(_calFiles.map(en=>en.file));
+            return;
+        }
+        if (_calFiles.length){
+            dz0.style.padding='6px 8px'; dz0.style.fontSize='11px'; dz0.style.lineHeight='1.3';
+            dz0.innerHTML='&#10003; '+_calFiles.length+' photo'+(_calFiles.length>1?'s':'')+
+                          ' · click to load another set';
+            _calRenderThumbs();
+            _calSelect(_calSel>=0 ? _calSel : Math.max(0,_calBest), null);
+            return;
+        }
+        dz0.style.padding=''; dz0.style.fontSize=''; dz0.style.lineHeight='';   // full drop zone
+        dz0.innerHTML='Drop micrometer photo(s) here<br><span style="color:#5a8;">or click to choose &mdash; '+
+                      'several at once are ranked and the sharpest wins</span>';
+        _calRenderThumbs();
     }
     function closeCalPhoto(){
         document.getElementById('calphoto').style.display = 'none';
         document.getElementById('cph-help').style.display = 'none';
-        _calPhotoStrip = null;          // drop the retained band strip
-        _calFiles=[]; _calSel=-1; _calBest=-1;   // thumbs + analyses go too
+        _calPhotoStrip = null;          // drop the retained band strip (the set stays)
     }
     function calPhotoToggleHelp(){ const h=document.getElementById('cph-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
@@ -10451,6 +10480,16 @@
     // (the per-point span choice lives in MEASURE FROM PHOTO, where it belongs).
     // ─────────────────────────────────────────────────────────────────────────
     let _focDropBound=false, _focGen=0, _focFiles=[], _focSel=-1, _focBest=-1, _focCur=null;
+    // Params each tool's set was analyzed with. A set persists across open/close (the
+    // File handles live for the whole page session); when pitch/span/NA changed in
+    // between, the tool re-analyzes from those handles instead of asking for a re-drop.
+    let _focSetPitch=0, _focSetSpan=0, _focSetNA=0;
+    let _calSetPitch=0, _calSetSpan=0, _calSetNA=0;
+    function _micSetStale(pitch0, span0, na0){
+        const p=(state.tickPitch>0)?state.tickPitch:0.01;
+        const s=(state.demarcDist>0)?state.demarcDist:0.4;
+        return p!==pitch0 || s!==span0 || state.effNA!==na0;
+    }
     function _focShowSpan(k){
         if (!_focCur || !_focCur.spans[k]) return;
         drawMicProfile(document.getElementById('foc-prof'), _focCur, _focCur.spans[k], _focFocusBest());
@@ -10475,17 +10514,31 @@
             }, true);
             _focDropBound=true;
         }
-        _focGen++; _focFiles=[]; _focSel=-1; _focBest=-1;
+        _focGen++;                       // orphan any in-flight run from a prior open
+        document.getElementById('foc-help').style.display='none';
+        document.getElementById('foc-scale').textContent=
+            'pitch ' + (state.tickPitch||0.01).toFixed(3) + ' mm · span ' + (state.demarcDist||0.4).toFixed(2) + ' mm';
+        m.style.display='flex';
+        // The set persists across open/close. Stale params → re-analyze from the kept
+        // File handles; otherwise just restore the thumbs and the last selection.
+        if (_focFiles.length && _micSetStale(_focSetPitch, _focSetSpan, _focSetNA)){
+            focusHandleFiles(_focFiles.map(en=>en.file));
+            return;
+        }
+        if (_focFiles.length){
+            document.getElementById('foc-drop').innerHTML='&#10003; '+_focFiles.length+' frame'+
+                (_focFiles.length>1?'s':'')+' · click to load a different set';
+            _focRenderThumbs();
+            _focSelect(_focSel>=0 ? _focSel : Math.max(0,_focBest));
+            return;
+        }
         document.getElementById('foc-verdict').innerHTML='Drop one or more shots to rank them.';
         document.getElementById('foc-thumbs').style.display='none';
         document.getElementById('foc-plotwrap').style.display='none';
         document.getElementById('foc-profwrap').style.display='none';
         document.getElementById('foc-spans').style.display='none';
         document.getElementById('foc-note').textContent='';
-        document.getElementById('foc-help').style.display='none';
-        document.getElementById('foc-scale').textContent=
-            'pitch ' + (state.tickPitch||0.01).toFixed(3) + ' mm · span ' + (state.demarcDist||0.4).toFixed(2) + ' mm';
-        m.style.display='flex';
+        document.getElementById('foc-handoff').style.display='none';
     }
     function closeFocus(){ _focGen++; document.getElementById('focus').style.display='none'; }
     function focusToggleHelp(){ const h=document.getElementById('foc-help');
@@ -10545,16 +10598,20 @@
         if (!list.length){ vd.innerHTML='<span style="color:#ff6a6a;">No JPEG/PNG in that drop.</span>'; return; }
         const dz=document.getElementById('foc-drop');
         dz.innerHTML='Analyzing&hellip;';
-        _focFiles=[];
+        _focFiles=[]; _focSel=-1; _focBest=-1;
+        // Same analyzer as MEASURE FROM PHOTO — one shared entry shape (File handle +
+        // base measurement + focus analysis + thumb), so a set can be handed across
+        // to the other tool, or re-analyzed from its File handles when pitch/span/NA
+        // change, without re-dropping anything.
         const pitchMm=(state.tickPitch>0)?state.tickPitch:0.01;
         const demarcMm=(state.demarcDist>0)?state.demarcDist:0.4;
         for (let i=0;i<list.length;i++){
             vd.innerHTML='Analyzing '+(i+1)+' / '+list.length+' &mdash; '+list[i].name;
             await new Promise(r=>setTimeout(r,0));            // let the UI paint between frames
             let entry=null;
-            try { entry=await _focAnalyze(list[i], pitchMm, demarcMm); } catch(e){ entry=null; }
+            try { entry=await _calAnalyzeFile(list[i], pitchMm, demarcMm); } catch(e){ entry=null; }
             if (myGen!==_focGen) return;                      // newer run started, or panel closed
-            if (entry) _focFiles.push(entry);
+            if (entry){ entry.srcCv=null; _focFiles.push(entry); }   // never retain the big canvas
         }
         if (!_focFiles.length){
             vd.innerHTML='<span style="color:#ff6a6a;">Could not analyse any of those frames.</span>';
@@ -10564,9 +10621,10 @@
         // rank
         let bi=0;
         for (let i=1;i<_focFiles.length;i++){
-            if (_focScoreBetter(_focScore(_focFiles[i].fa), _focScore(_focFiles[bi].fa))) bi=i;
+            if (_focScoreBetter(_calScore(_focFiles[i]), _calScore(_focFiles[bi]))) bi=i;
         }
         _focBest=bi;
+        _focSetPitch=pitchMm; _focSetSpan=demarcMm; _focSetNA=state.effNA;
         dz.innerHTML='&#10003; '+_focFiles.length+' frame'+(_focFiles.length>1?'s':'')+
                      ' · click to load a different set';
         _focRenderThumbs();
@@ -10597,53 +10655,43 @@
         return th;
     }
 
-    function _focAnalyze(file, pitchMm, demarcMm){
-        return new Promise((resolve)=>{
-            const url=URL.createObjectURL(file);
-            const img=new Image();
-            img.onerror=()=>{ URL.revokeObjectURL(url); resolve(null); };
-            img.onload=()=>{
-                try {
-                    const NW=img.naturalWidth, NH=img.naturalHeight;
-                    const cw=Math.min(NW,4000), ch=Math.round(NH*cw/NW);
-                    const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
-                    const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(img,0,0,cw,ch);
-                    // same deskew the measurement path uses — the wedge must be measured
-                    // on ticks that are actually vertical
-                    const angle=estimateTickAngle(cx.getImageData(0,0,cw,ch));
-                    let srcCv=cv;
-                    if (Math.abs(angle)>0.005){
-                        const rc=document.createElement('canvas'); rc.width=cw; rc.height=ch;
-                        const rx=rc.getContext('2d',{willReadFrequently:true});
-                        rx.fillStyle='#bcbfb9'; rx.fillRect(0,0,cw,ch);
-                        rx.translate(cw/2,ch/2); rx.rotate(angle*Math.PI/180); rx.drawImage(cv,-cw/2,-ch/2);
-                        srcCv=rc;
-                    }
-                    const imd=srcCv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cw,ch);
-                    const base=analyzeMicrometer(imd,{ pitchMm, spanMm:demarcMm, imageW: state.photoWidth||NW });
-                    const fa=analyzeMicrometerFocus(imd,{ pitchMm, demarcMm, imageW: state.photoWidth||NW,
-                                                          NA: state.effNA,
-                                                          basePx: base.error ? 0 : Math.round(base.pixelsSpan) });
-                    // keep only a thumbnail — a full ImageData per frame would blow memory
-                    const th=_focThumb(srcCv, cw, ch);
-                    URL.revokeObjectURL(url);
-                    resolve({ name:file.name, thumb:th, fa, angle, demarcMm });
-                } catch(e){ URL.revokeObjectURL(url); resolve(null); }
-            };
-            img.src=url;
-        });
+    // (per-file analysis lives in _calAnalyzeFile — shared with MEASURE FROM PHOTO)
+
+    // Hand-off between the two tools: the entries are shared objects (they are
+    // read-only after analysis), only the arrays and selection are per-tool. The
+    // opening tool's own staleness check re-analyzes if pitch/span/NA changed.
+    function focHandoffToMeasure(){
+        if (!_focFiles.length) return;
+        _calFiles=_focFiles.slice(); _calBest=_focBest; _calSel=_focSel;
+        _calSetPitch=_focSetPitch; _calSetSpan=_focSetSpan; _calSetNA=_focSetNA;
+        closeFocus(); openCalPhoto();
+    }
+    function calHandoffToRank(){
+        if (!_calFiles.length) return;
+        _focFiles=_calFiles.slice(); _focBest=_calBest; _focSel=_calSel;
+        _focSetPitch=_calSetPitch; _focSetSpan=_calSetSpan; _focSetNA=_calSetNA;
+        closeCalPhoto(); openFocus();
     }
 
+    // A canvas node can only live in ONE place in the DOM, and the same entry can be
+    // rendered by both tools' thumb rows — so always append a pixel copy.
+    function _micThumbCopy(th){
+        const c=document.createElement('canvas'); c.width=th.width; c.height=th.height;
+        c.getContext('2d').drawImage(th,0,0);
+        return c;
+    }
     function _focRenderThumbs(){
         const tb=document.getElementById('foc-thumbs');
         tb.style.display=_focFiles.length?'flex':'none';
         tb.innerHTML='';
+        const ho=document.getElementById('foc-handoff');
+        if (ho) ho.style.display=_focFiles.length?'block':'none';
         _focFiles.forEach((en,i)=>{
-            const fa=en.fa, v=(fa&&!fa.error)?fa.verdict:'failed';
+            const fa=en.fa, v=en.err ? 'failed' : (fa&&!fa.error)?fa.verdict:'failed';
             const col={good:'#7fff7f', marginal:'#fd5', tilt:'#fa6', soft:'#ff6a6a', failed:'#ff6a6a'}[v]||'#fa6';
             const div=document.createElement('div');
             div.className='foc-thumb'+(i===_focSel?' sel':'')+(i===_focBest?' best':'');
-            div.appendChild(en.thumb);
+            if (en.thumb) div.appendChild(_micThumbCopy(en.thumb));
             const lab=document.createElement('div');
             const mm=(fa && !fa.error && isFinite(fa.focusWin)) ? fa.focusWin : NaN;
             const ref=_micFocusRef(_focFocusBest());
@@ -10673,7 +10721,7 @@
         const pw=document.getElementById('foc-plotwrap');
         if (!fa || fa.error){
             vd.innerHTML='<b style="color:#ff6a6a;">'+en.name+' — analysis failed</b><br>'+
-                '<span style="font-size:11px;">'+((fa&&fa.error)||'unknown')+'</span>';
+                '<span style="font-size:11px;">'+((fa&&fa.error)||en.err||'unknown')+'</span>';
             pw.style.display='none'; sp.style.display='none'; note.textContent='';
             document.getElementById('foc-profwrap').style.display='none';
             return;
@@ -11737,9 +11785,9 @@
         return new Promise((resolve)=>{
             const url = URL.createObjectURL(file);
             const img = new Image();
-            img.onerror = ()=>{ URL.revokeObjectURL(url); resolve({ file, name:file.name, spanMm, err:'could not load image' }); };
+            img.onerror = ()=>{ URL.revokeObjectURL(url); resolve({ file, name:file.name, spanMm, demarcMm:spanMm, err:'could not load image' }); };
             img.onload = ()=>{
-                const entry = { file, name:file.name, spanMm };
+                const entry = { file, name:file.name, spanMm, demarcMm:spanMm };
                 try {
                     const NW = img.naturalWidth, NH = img.naturalHeight;
                     const cw = Math.min(NW, 4000), ch = Math.round(NH*cw/NW);
@@ -11833,6 +11881,7 @@
         if (!_calFiles.length){
             res.style.color='#ff6a6a'; res.textContent='Could not analyse any of those files.'; return;
         }
+        _calSetPitch=pitchMm; _calSetSpan=spanMm; _calSetNA=state.effNA;
         // Collapse the drop zone to a one-line status once it has served its purpose
         const dz0 = document.getElementById('calphoto-drop');
         dz0.style.padding='6px 8px'; dz0.style.fontSize='11px'; dz0.style.lineHeight='1.3';
@@ -11846,6 +11895,8 @@
         if (!tb) return;
         tb.style.display = _calFiles.length>1 ? 'flex' : 'none';
         tb.innerHTML='';
+        const ho=document.getElementById('calphoto-handoff');
+        if (ho) ho.style.display=_calFiles.length?'block':'none';
         if (_calFiles.length<2) return;
         const ref = _micFocusRef(_calFocusBest());
         _calFiles.forEach((en,i)=>{
@@ -11856,7 +11907,7 @@
             const mm=(fa && !fa.error && isFinite(fa.focusWin)) ? fa.focusWin : NaN;
             const div=document.createElement('div');
             div.className='foc-thumb'+(i===_calSel?' sel':'')+(i===_calBest?' best':'');
-            if (en.thumb) div.appendChild(en.thumb);
+            if (en.thumb) div.appendChild(_micThumbCopy(en.thumb));
             const lab=document.createElement('div');
             lab.innerHTML=(i===_calBest?'<span style="color:#3ddb7a;">&#9733; </span>':'')+
                 '<span style="color:'+col+';">'+v.toUpperCase()+'</span>'+
