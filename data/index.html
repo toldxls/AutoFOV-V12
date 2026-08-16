@@ -4924,7 +4924,45 @@
     function tofcalSave() {
         try { localStorage.setItem('afovTofcalPts', JSON.stringify(tofcalPts)); } catch (e) {}
     }
-    function tofcalOpen()  { tofcalOpenFlag = true;  document.getElementById('tofcal-overlay').classList.add('open'); tofcalRender(); }
+    function tofcalOpen()  { tofcalOpenFlag = true;  document.getElementById('tofcal-overlay').classList.add('open'); tofcalRender(); tofcalFetchPassive(); }
+    // ── Passive points: the 10-min trend ring, filtered to the static cluster ──
+    // (median level ±5 mm — a soak passes whole; racking excursions drop out).
+    // Same axes as the manual captures, so they overlay directly on the graph.
+    let tofcalPassive = null;
+    async function tofcalFetchPassive() {
+        tofcalPassive = null;
+        try {
+            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store' });
+            if (!r.ok) return;
+            const j = await r.json();
+            const tval = row => (row.length > 7 && row[7] !== -32768 && isFinite(row[7])) ? row[7] / 10
+                              : (row.length > 6 && isFinite(row[6])) ? row[6] / 10 : null;
+            let pts = (j.trend || []).filter(row => row[1] > 0 && tval(row) !== null)
+                                     .map(row => ({ t: tval(row), d: row[1] / 10 }));
+            if (pts.length >= 8) {
+                const lv = pts.map(p => p.d).sort((a, b) => a - b);
+                const med = lv[lv.length >> 1];
+                pts = pts.filter(p => Math.abs(p.d - med) <= 5);
+            }
+            if (pts.length < 8) { tofcalRender(); return; }
+            const n = pts.length;
+            const mt = pts.reduce((a, p) => a + p.t, 0) / n, md = pts.reduce((a, p) => a + p.d, 0) / n;
+            let stt = 0, sdd = 0, std_ = 0;
+            for (const p of pts) { const dt = p.t - mt, dd = p.d - md; stt += dt * dt; sdd += dd * dd; std_ += dt * dd; }
+            const span = Math.max(...pts.map(p => p.t)) - Math.min(...pts.map(p => p.t));
+            tofcalPassive = { pts, n, span, ref: mt, mean: md,
+                              slope: stt > 1e-9 ? std_ / stt : 0,
+                              r: (stt * sdd > 1e-12) ? std_ / Math.sqrt(stt * sdd) : 0 };
+        } catch (e) { tofcalPassive = null; }
+        tofcalRender();
+    }
+    // Fill the manual coeff/ref inputs from the passive fit — one click to adopt.
+    function tofcalAdoptPassive() {
+        const pa = tofcalPassive; if (!pa) return;
+        document.getElementById('tofcal-coeff').value = pa.slope.toFixed(3);
+        document.getElementById('tofcal-ref').value   = pa.ref.toFixed(1);
+        tofcalIo('passive fit loaded into the manual fields — press SET to apply');
+    }
     function tofcalClose() {
         tofcalOpenFlag = false;
         document.getElementById('tofcal-overlay').classList.remove('open');
@@ -5086,7 +5124,9 @@
     function tofcalDrawGraph(fit) {
         const cv = document.getElementById('tofcal-graph');
         if (!cv) return;
-        if (tofcalPts.length < TOFCAL_GRAPH_MIN_PTS || !fit) { cv.classList.remove('show'); return; }
+        const haveMan = !!fit && tofcalPts.length >= TOFCAL_GRAPH_MIN_PTS;
+        const pa = tofcalPassive, havePas = !!(pa && pa.pts.length >= 8);
+        if (!haveMan && !havePas) { cv.classList.remove('show'); return; }
         cv.classList.add('show');                      // must be visible to measure
         const dpr = window.devicePixelRatio || 1;
         const W = cv.clientWidth, H = cv.clientHeight;
@@ -5100,13 +5140,14 @@
         const L = 48, R = 10, T = 12, B = 26;
         const pw = W - L - R, ph = H - T - B;
 
-        // Axis ranges: data extent padded 10%, with a floor so a tight cluster
-        // doesn't blow the noise up into a full-height fake trend.
-        const ts = tofcalPts.map(p => p.t), ds = tofcalPts.map(p => p.d);
+        // Axis ranges over BOTH layers (manual captures ±σ, passive cloud),
+        // padded 10% with a floor so a tight cluster doesn't fake a trend.
         const sds = tofcalPts.map(p => (typeof p.sd === 'number' ? p.sd : 0));
-        let t0 = Math.min(...ts), t1 = Math.max(...ts);
-        let d0 = Math.min(...ds.map((d, i) => d - sds[i]));
-        let d1 = Math.max(...ds.map((d, i) => d + sds[i]));
+        const exT = [], exD = [];
+        if (haveMan) tofcalPts.forEach((p, i2) => { exT.push(p.t); exD.push(p.d - sds[i2], p.d + sds[i2]); });
+        if (havePas) pa.pts.forEach(p => { exT.push(p.t); exD.push(p.d); });
+        let t0 = Math.min(...exT), t1 = Math.max(...exT);
+        let d0 = Math.min(...exD), d1 = Math.max(...exD);
         const tPad = Math.max((t1 - t0) * 0.1, 0.25), dPad = Math.max((d1 - d0) * 0.1, 0.15);
         t0 -= tPad; t1 += tPad; d0 -= dPad; d1 += dPad;
         const X = t => L + (t - t0) / (t1 - t0) * pw;
@@ -5116,35 +5157,54 @@
         g.strokeStyle = '#14302a'; g.lineWidth = 1;
         g.strokeRect(L + 0.5, T + 0.5, pw - 1, ph - 1);
         g.beginPath();
-        for (let i = 1; i < 3; i++) {
-            const gx = Math.round(L + pw * i / 3) + 0.5, gy = Math.round(T + ph * i / 3) + 0.5;
+        for (let i2 = 1; i2 < 3; i2++) {
+            const gx = Math.round(L + pw * i2 / 3) + 0.5, gy = Math.round(T + ph * i2 / 3) + 0.5;
             g.moveTo(gx, T); g.lineTo(gx, T + ph);
             g.moveTo(L, gy);  g.lineTo(L + pw, gy);
         }
         g.stroke();
 
-        // Fitted line: d = slope·(T − ref) + mean(d)
-        const md = ds.reduce((a, b) => a + b, 0) / ds.length;
-        g.strokeStyle = '#00c8b4'; g.lineWidth = 1.5;
-        g.beginPath();
-        g.moveTo(X(t0), Y(fit.slope * (t0 - fit.ref) + md));
-        g.lineTo(X(t1), Y(fit.slope * (t1 - fit.ref) + md));
-        g.stroke();
+        // Passive layer UNDERNEATH: faint pink cloud (the auto-logged 10-min
+        // points, static cluster only) + its dashed fit when the span is real.
+        if (havePas) {
+            g.fillStyle = 'rgba(232,123,164,0.45)';
+            pa.pts.forEach(p => g.fillRect(X(p.t) - 1, Y(p.d) - 1, 2, 2));
+            if (pa.span >= 1.0) {
+                g.strokeStyle = 'rgba(232,123,164,0.8)'; g.lineWidth = 1;
+                g.setLineDash([4, 3]);
+                g.beginPath();
+                g.moveTo(X(t0), Y(pa.slope * (t0 - pa.ref) + pa.mean));
+                g.lineTo(X(t1), Y(pa.slope * (t1 - pa.ref) + pa.mean));
+                g.stroke();
+                g.setLineDash([]);
+            }
+        }
 
-        // ±σ bars — capped, and in a warmer green than the grid so a tall bar
-        // reads as a shaky point rather than as another gridline.
-        g.strokeStyle = '#3fa98c'; g.lineWidth = 1;
-        g.beginPath();
-        tofcalPts.forEach((p, i) => {
-            if (!sds[i]) return;
-            const x = Math.round(X(p.t)) + 0.5, yLo = Y(p.d - sds[i]), yHi = Y(p.d + sds[i]);
-            g.moveTo(x, yLo); g.lineTo(x, yHi);
-            g.moveTo(x - 3, yLo); g.lineTo(x + 3, yLo);
-            g.moveTo(x - 3, yHi); g.lineTo(x + 3, yHi);
-        });
-        g.stroke();
-        g.fillStyle = '#40f5a8';
-        tofcalPts.forEach(p => { g.beginPath(); g.arc(X(p.t), Y(p.d), 3.5, 0, 6.284); g.fill(); });
+        if (haveMan) {
+            // Fitted line: d = slope·(T − ref) + mean(d)
+            const ds = tofcalPts.map(p => p.d);
+            const md = ds.reduce((a, b) => a + b, 0) / ds.length;
+            g.strokeStyle = '#00c8b4'; g.lineWidth = 1.5;
+            g.beginPath();
+            g.moveTo(X(t0), Y(fit.slope * (t0 - fit.ref) + md));
+            g.lineTo(X(t1), Y(fit.slope * (t1 - fit.ref) + md));
+            g.stroke();
+
+            // ±σ bars — capped, and in a warmer green than the grid so a tall bar
+            // reads as a shaky point rather than as another gridline.
+            g.strokeStyle = '#3fa98c'; g.lineWidth = 1;
+            g.beginPath();
+            tofcalPts.forEach((p, i2) => {
+                if (!sds[i2]) return;
+                const x = Math.round(X(p.t)) + 0.5, yLo = Y(p.d - sds[i2]), yHi = Y(p.d + sds[i2]);
+                g.moveTo(x, yLo); g.lineTo(x, yHi);
+                g.moveTo(x - 3, yLo); g.lineTo(x + 3, yLo);
+                g.moveTo(x - 3, yHi); g.lineTo(x + 3, yHi);
+            });
+            g.stroke();
+            g.fillStyle = '#40f5a8';
+            tofcalPts.forEach(p => { g.beginPath(); g.arc(X(p.t), Y(p.d), 3.5, 0, 6.284); g.fill(); });
+        }
 
         // Axis end labels only — the fit line below carries the numbers.
         g.fillStyle = '#7ab4a2'; g.font = '10px monospace';
@@ -5189,6 +5249,17 @@
             if (fit.span < 1.0) msg += ' <span class="warn">(span &lt; 1 °C — collect more range before trusting it)</span>';
             else if (fit.r2 < 0.5) msg += ' <span class="warn">(weak fit)</span>';
             fEl.innerHTML = msg; apply.disabled = false;
+        }
+        // The auto-logged 10-min points (pink cloud on the graph) get their own
+        // fit line + one-click adopt into the manual fields.
+        if (tofcalPassive) {
+            const pa = tofcalPassive;
+            fEl.innerHTML += '<br><span style="color:#e87ba4">passive 10-min log: <b>' +
+                (pa.slope >= 0 ? '+' : '') + pa.slope.toFixed(3) + '</b> mm/°C · r ' + pa.r.toFixed(2) +
+                ' · ΔT ' + pa.span.toFixed(1) + ' °C · n ' + pa.n + '</span>' +
+                (Math.abs(pa.r) < 0.5 || pa.span < 1.0 ? ' <span class="warn">(weak — needs a bigger swing or a static soak)</span>'
+                 : ' · <span style="cursor:pointer; color:#7fd8c0; text-decoration:underline" onclick="tofcalAdoptPassive()" ' +
+                   'title="Copy the passive slope + reference into the manual fields below — press SET to apply">adopt</span>');
         }
         const cf = state.tcCoeff, rf = state.tcRef, act = document.getElementById('tofcal-active');
         act.innerHTML = (typeof cf === 'number' && cf !== 0)
