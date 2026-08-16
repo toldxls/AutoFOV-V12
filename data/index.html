@@ -2498,6 +2498,8 @@
         <div class="tofcal-row">
           <button id="tofcal-cap" onclick="tofcalCapture()">CAPTURE POINT</button>
           <button onclick="tofcalClearPts()">clear points</button>
+          <button onclick="tofcalClearPassive()"
+                  title="Clears the device's trend ring (the auto-logged pink cloud) — also resets the TOF TARGETS event log">clear passive log</button>
         </div>
         <div id="tofcal-pts"></div>
         <canvas id="tofcal-graph" width="880" height="440"></canvas>
@@ -4969,6 +4971,15 @@
                               r: (stt * sdd > 1e-12) ? std_ / Math.sqrt(stt * sdd) : 0 };
         } catch (e) { tofcalPassive = null; }
         tofcalRender();
+    }
+    // The pink cloud lives in the DEVICE trend ring — clearing it is the same
+    // command the TOF TARGETS CLEAR uses (events reset too, by design).
+    function tofcalClearPassive() {
+        sendCommand('tofdbgclear', 1);
+        tofcalPassive = null; tofcalPassiveN = 0;
+        tofcalRender();
+        tofcalIo('passive log cleared — ring restarts on the device');
+        setTimeout(tofcalFetchPassive, 600);        // ring owner resets on its next pass
     }
     // Fill the manual coeff/ref inputs from the passive fit — one click to adopt.
     function tofcalAdoptPassive() {

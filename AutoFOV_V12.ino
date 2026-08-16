@@ -4923,14 +4923,18 @@ void vibTask(void *pvParameters) {
 
     // ── Auto power-off (1 h idle) ──
     // loop() sets vibAutoOff; we own every LSM6DSOX register write so the
-    // transition happens here, on this core. Power the accel down (ODR off,
-    // FIFO bypassed) while off; re-arm exactly like imuSetup() on wake, with
-    // the 30 ms filter-settle delay taken with the I²C mutex released.
+    // transition happens here, on this core. Drop the accel to its lowest ODR
+    // (NOT shutdown: the temp register only updates while the accel has a data
+    // rate — the 8/16 overnight soak logged 27.3 °C for 9.8 h straight because
+    // full power-down froze the ambient proxy and gutted the passive temp
+    // log). 12.5 Hz low-power is ~26 µA; FIFO stays bypassed so no batching.
+    // Re-arm exactly like imuSetup() on wake, with the 30 ms filter-settle
+    // delay taken with the I²C mutex released.
     bool wantOff = vibAutoOff.load(std::memory_order_acquire);
     if (wantOff && !imuPoweredDown) {
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
         imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);     // FIFO → bypass (stop batching)
-        lsm.setAccelDataRate(LSM6DS_RATE_SHUTDOWN);   // accelerometer power-down
+        lsm.setAccelDataRate(LSM6DS_RATE_12_5_HZ);    // idle: temp sensor stays alive
         xSemaphoreGive(i2cMutex);
       }
       imuPoweredDown = true;
@@ -4953,11 +4957,11 @@ void vibTask(void *pvParameters) {
       imuPoweredDown = false;
       newSamples = 0; dcPrimed = false; basisInited = false;   // re-prime cleanly
     }
-    if (imuPoweredDown) continue;
-
     // V12.6: sample the LSM6DSOX die temperature ~1 Hz as the TOF-comp ambient
     // proxy. Direct OUT_TEMP register read (no FIFO interference); the IMU
     // self-heats far less than the SoC die, so this tracks room temp closely.
+    // BEFORE the idle gate: the passive temp log must keep flowing overnight —
+    // that is its whole reason to exist.
     {
       static uint32_t lastTempMs = 0;
       uint32_t nowMs = millis();
@@ -4975,6 +4979,7 @@ void vibTask(void *pvParameters) {
         }
       }
     }
+    if (imuPoweredDown) continue;
 
     // ── Refresh the horizontal-plane basis from the current gravity vector ──
     // Combined horizontal power is basis-invariant, so any in-plane (e1,e2)
