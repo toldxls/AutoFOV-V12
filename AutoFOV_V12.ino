@@ -1215,8 +1215,14 @@ std::atomic<bool> tofTgtEvtClearReq{false};
 // frame-to-frame, so [L] stays silent while the level walks. 8/11/26 overnight
 // log: the target's signal grew 19.2→24.7 MCps in 16 h — the optical state
 // drifts on hours timescales and the trajectory is the evidence.
+// SoC die temperature ×10, cached. temperatureRead() lazily installs the
+// temp-sensor peripheral with a non-thread-safe init and a shared handle —
+// calling it from more than one task races. Only wifiLoop() (Core 1) reads the
+// hardware; the JSON builders AND the trend writer below read this cache.
+std::atomic<uint32_t> gDieTempC10{0};
 struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100;
-                    uint16_t spads; uint8_t n; uint8_t pad; };
+                    uint16_t spads; uint8_t n; uint8_t pad;
+                    int16_t dieT10; };   // die temp ×10 — the mm/°C correlation axis
 constexpr int      TOF_TREND_RING        = 144;      // × 10 min = 24 h
 constexpr uint32_t TOF_TREND_INTERVAL_MS = 600000UL;
 TofTrendPt tofTrend[TOF_TREND_RING];
@@ -4550,6 +4556,7 @@ void sensorTask(void *pvParameters) {
             TofTrendPt tp;
             tp.ms = snap.ms; tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
             tp.spads = snap.spads; tp.n = snap.n; tp.pad = 0;
+            tp.dieT10 = (int16_t)(int32_t)gDieTempC10.load(std::memory_order_relaxed);
             uint16_t maxc = 0;
             for (int i = 0; i < snap.n; i++) if (snap.t[i].cps100 > maxc) maxc = snap.t[i].cps100;
             tp.cps100 = maxc;

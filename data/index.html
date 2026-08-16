@@ -2553,7 +2553,8 @@
                   style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
-        <canvas id="tofdbg-trend" title="EMA level, one sample / 10 min, up to 24 h"></canvas>
+        <canvas id="tofdbg-trend" title="EMA level (green) + die temp (pink), one sample / 10 min, up to 24 h"></canvas>
+        <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         <div id="tofdbg-log">no events fetched yet</div>
         <div class="tofcal-row" style="margin-top:8px;">
           <button onclick="tofdbgClose()">CLOSE</button>
@@ -5407,6 +5408,48 @@
         rows.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Y(r[1] / 10))
                                    : ctx.moveTo(X(r[0]), Y(r[1] / 10)); });
         ctx.stroke();
+        // die temp (pink, own scale, right-edge labels) — the mm/°C correlation axis.
+        // Rows may lack the field on pre-.61 firmware; draw only when it's there.
+        const fit = document.getElementById('tofdbg-tempfit');
+        const tr = rows.filter(r => r.length > 6 && isFinite(r[6]));
+        if (tr.length >= 2) {
+            const ts = tr.map(r => r[6] / 10);
+            let tMin = Math.min(...ts), tMax = Math.max(...ts);
+            let tLo = tMin, tHi = tMax;
+            if (tHi - tLo < 1) { const m = (tHi + tLo) / 2; tLo = m - 0.5; tHi = m + 0.5; }
+            const Yt = t => padT + (H - padT - padB) * (1 - (t - tLo) / (tHi - tLo));
+            ctx.strokeStyle = 'rgba(232,123,164,0.6)'; ctx.lineWidth = 1;
+            ctx.beginPath();
+            tr.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Yt(r[6] / 10))
+                                     : ctx.moveTo(X(r[0]), Yt(r[6] / 10)); });
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(232,123,164,0.85)'; ctx.textAlign = 'right';
+            ctx.fillText(tHi.toFixed(1) + '\u00b0', W - padR - 2, padT + 8);
+            ctx.fillText(tLo.toFixed(1) + '\u00b0', W - padR - 2, H - padB - 2);
+            // Passive temp cal: OLS level-vs-temp over the logged pairs, shown with r
+            // so a random-walk-dominated night reads as weak correlation, not a fake
+            // coefficient. Needs a real temperature span to mean anything.
+            if (fit) {
+                if (tr.length >= 8 && (tMax - tMin) >= 1.5) {
+                    const xs = ts, ys = tr.map(r => r[1] / 10), n = xs.length;
+                    const mx = xs.reduce((a,v)=>a+v,0)/n, my = ys.reduce((a,v)=>a+v,0)/n;
+                    let sxx=0, syy=0, sxy=0;
+                    for (let k=0;k<n;k++){ const dx=xs[k]-mx, dy=ys[k]-my; sxx+=dx*dx; syy+=dy*dy; sxy+=dx*dy; }
+                    const slope = sxx>0 ? sxy/sxx : 0;
+                    const r2den = sxx*syy;
+                    const rr = r2den>0 ? sxy/Math.sqrt(r2den) : 0;
+                    fit.style.display='block';
+                    fit.innerHTML = 'passive temp fit: <b>' + (slope>=0?'+':'') + slope.toFixed(2) +
+                        ' mm/\u00b0C</b> \u00b7 r ' + rr.toFixed(2) + ' \u00b7 \u0394T ' +
+                        (tMax-tMin).toFixed(1) + '\u00b0C over ' + tr.length + ' pts' +
+                        (Math.abs(rr) < 0.5 ? ' <span style="color:#e7c35a;">(weak \u2014 mostly non-thermal drift)</span>' : '');
+                } else {
+                    fit.style.display='block';
+                    fit.innerHTML = 'passive temp fit: needs \u22651.5\u00b0C of span and 8+ points \u2014 ' +
+                        'leave it logging (home\u2019d, zeroed, static scene)';
+                }
+            }
+        } else if (fit) fit.style.display='none';
     }
     function tofdbgClearLog() {
         sendCommand('tofdbgclear', 1);

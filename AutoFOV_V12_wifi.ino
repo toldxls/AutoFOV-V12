@@ -71,12 +71,8 @@ static const uint32_t  RECONNECT_INTERVAL_MS = 30000UL;  // retry every 30 s
 static const uint32_t  FAST_TELEM_MS       = 33UL;       // ~30 Hz live sensor push — matches VL53L4CX timing budget 1:1
 static const uint32_t  SLOW_TELEM_MS       = 5000UL;     // 5 s memory + BT push
 static const int       CMD_QUEUE_DEPTH     = 16;
-// SoC die temperature ×10, cached. temperatureRead() lazily installs the
-// temp-sensor peripheral with a non-thread-safe init and a shared handle —
-// calling it from both the AsyncTCP task (WS-connect / GET /state on Core 0)
-// and the slow telemetry (Core 1) races. Only wifiLoop() (Core 1) reads the
-// hardware; every JSON builder reads this cache.
-static std::atomic<uint32_t> gDieTempC10{0};
+// gDieTempC10 (SoC die temp cache) moved to the main tab — the TOF trend
+// writer in sensorTask logs it per point, and the main tab compiles first.
 static char            otaPassword[13]     = {0};            // auto-generated on first boot, NVS "wifi"/"otapw" — the DEFAULT login password shown on the TFT
 // Optional user-set device password (NVS "wifi"/"devpw"). When non-empty it
 // overrides otaPassword as the login/OTA credential; empty means "use the
@@ -1883,7 +1879,9 @@ static void startFullServer() {
             }
         }
         // 10-min level/signal trend, oldest → newest:
-        // [ms, emaT, cps100, amb100, n, spads(8.8)]
+        // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10] — dieT10 is the die
+        // temp ×10, logged per point so an overnight soak yields (temp, level)
+        // pairs for the mm/°C correlation with zero manual captures.
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         JsonArray tr = doc.createNestedArray("trend");
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
@@ -1899,6 +1897,7 @@ static void startFullServer() {
             JsonArray row = tr.createNestedArray();
             row.add(tp.ms); row.add(tp.emaT); row.add(tp.cps100);
             row.add(tp.amb100); row.add(tp.n); row.add(tp.spads);
+            row.add(tp.dieT10);
         }
         String out; serializeJson(doc, out);
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
