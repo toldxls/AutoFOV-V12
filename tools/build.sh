@@ -64,6 +64,7 @@ echo "=== Done ==="
 BIN="$BUILD_DIR/AutoFOV_V12.ino.bin"
 if [ -n "$VERSION" ] && [ -f "$BIN" ]; then
     VERSIONED="$BUILD_DIR/AutoFOV_V12_${VERSION}.bin"
+    rm -f "$BUILD_DIR"/AutoFOV_V12_v*.bin   # only the current build's versioned copy is kept
     cp "$BIN" "$VERSIONED"
     echo "Binary: $VERSIONED"
     echo "        (also $BIN)"
