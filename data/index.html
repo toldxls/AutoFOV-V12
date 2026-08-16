@@ -4939,7 +4939,14 @@
     function tofcalSave() {
         try { localStorage.setItem('afovTofcalPts', JSON.stringify(tofcalPts)); } catch (e) {}
     }
-    function tofcalOpen()  { tofcalOpenFlag = true;  document.getElementById('tofcal-overlay').classList.add('open'); tofcalRender(); tofcalFetchPassive(); }
+    let _tofcalPoll = null;
+    function tofcalOpen()  {
+        tofcalOpenFlag = true;
+        document.getElementById('tofcal-overlay').classList.add('open');
+        tofcalRender(); tofcalFetchPassive();
+        // Same self-refresh as TOF TARGETS: the passive cloud grows on its own.
+        if (!_tofcalPoll) _tofcalPoll = setInterval(() => { if (tofcalOpenFlag) tofcalFetchPassive(); }, 60000);
+    }
     // ── Passive points: the 5-min trend ring, filtered to the static cluster ──
     // (median level ±5 mm — a soak passes whole; racking excursions drop out).
     // Same axes as the manual captures, so they overlay directly on the graph.
@@ -4992,6 +4999,7 @@
         tofcalOpenFlag = false;
         document.getElementById('tofcal-overlay').classList.remove('open');
         document.getElementById('tofcal-gh-list').style.display = 'none';
+        if (_tofcalPoll) { clearInterval(_tofcalPoll); _tofcalPoll = null; }
     }
     function tofcalTemp() { return (typeof state.ambC === 'number' && state.ambC > 0) ? state.ambC : null; }
     function tofcalDist() { const d = (typeof state._pendingDist === 'number') ? state._pendingDist : state.dist; return (typeof d === 'number' && d > 0) ? d : null; }
@@ -5332,16 +5340,22 @@
     // topology-change events with device-millis timestamps.
     let tofdbgOpenFlag = false, tofdbgLastTg = null, tofdbgLogRaw = null,
         tofdbgPrevFetch = null;
+    // While the panel is open, keep the log + trend current by themselves —
+    // the trend gains a point every 5 min, and re-entering the menu should not
+    // be the refresh mechanism. 60 s poll; REFRESH LOG stays for impatience.
+    let _tofdbgPoll = null;
     function tofdbgOpen() {
         tofzeroStatusIdle();
         tofdbgOpenFlag = true;
         document.getElementById('tofdbg-overlay').classList.add('open');
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
         tofdbgFetchLog();
+        if (!_tofdbgPoll) _tofdbgPoll = setInterval(() => { if (tofdbgOpenFlag) tofdbgFetchLog(); }, 60000);
     }
     function tofdbgClose() {
         tofdbgOpenFlag = false;
         document.getElementById('tofdbg-overlay').classList.remove('open');
+        if (_tofdbgPoll) { clearInterval(_tofdbgPoll); _tofdbgPoll = null; }
     }
     function tofdbgOnLive(tg) {
         tofdbgLastTg = tg;
