@@ -3302,6 +3302,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["calWidth"]      = (int)sensorWidthPixels;
     doc["demarcDist"]    = roundf(demarcationDist * 100.0f) / 100.0f;
     doc["calPoints"]     = nPoints;
+    // Session zero: home reference + live offset (tenths -> mm), so the
+    // dashboard can show "home set / offset -1.5 mm" without a command round-trip.
+    doc["tofHome"]       = tofZeroHomeT.load(std::memory_order_relaxed) / 10.0f;
+    doc["tofOff"]        = tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f;
 
     // Cal graph scatter data — only sent when calibration changes or on new connect.
     if (includeCalGraph) {
@@ -3775,6 +3779,7 @@ void wifiPushTofZero(int ok, float offMm, float dMm, const char* msg) {
     o["ok"]  = ok;
     o["off"] = roundf(offMm * 100.0f) / 100.0f;
     o["d"]   = roundf(dMm   * 100.0f) / 100.0f;
+    o["home"]= tofZeroHomeT.load(std::memory_order_relaxed) / 10.0f;   // 0 = unset
     o["msg"] = msg;
     String out; serializeJson(doc, out);
     wsServer.textAll(out);

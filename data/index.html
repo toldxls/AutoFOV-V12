@@ -5222,6 +5222,7 @@
     let tofdbgOpenFlag = false, tofdbgLastTg = null, tofdbgLogRaw = null,
         tofdbgPrevFetch = null;
     function tofdbgOpen() {
+        tofzeroStatusIdle();
         tofdbgOpenFlag = true;
         document.getElementById('tofdbg-overlay').classList.add('open');
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
@@ -5427,12 +5428,33 @@
         document.getElementById('tofzero-status').innerText = 'measuring (2 s)… hold at max rack';
         sendCommand('tofzero', 1);
     }
+    // Persistent line: proof the home reference exists + the live correction.
+    // Shown whenever no command result is being displayed.
+    let _tofzeroMsgTimer = null;
+    function tofzeroStatusIdle() {
+        if (_tofzeroMsgTimer) return;               // a transient result is on screen
+        const el = document.getElementById('tofzero-status');
+        if (!el) return;
+        if (state.tofHome > 0) {
+            const off = state.tofOff || 0;
+            el.style.color = '#7ab4a2';
+            el.innerText = 'home ' + state.tofHome.toFixed(1) + ' mm · offset ' +
+                           (off >= 0 ? '\u2212' : '+') + Math.abs(off).toFixed(2) + ' mm applied';
+        } else if (state.tofHome === 0) {
+            el.style.color = '#e7c35a';
+            el.innerText = '\u26a0 no home set — SET HOME once @ max rack';
+        } else el.innerText = '';                   // firmware predates tofHome — say nothing
+    }
     function tofzeroOnResult(z) {
         const el = document.getElementById('tofzero-status');
         if (!el) return;
+        if (z.home !== undefined) state.tofHome = z.home;
+        if (z.ok) state.tofOff = z.off;
         el.style.color = z.ok ? '#9fe6cf' : '#e7c35a';
         el.innerText = z.msg + (z.ok ? ' · offset ' + (z.off >= 0 ? '+' : '') + z.off.toFixed(2) + ' mm' +
                                        ' · read ' + z.d.toFixed(2) + ' mm' : '');
+        clearTimeout(_tofzeroMsgTimer);
+        _tofzeroMsgTimer = setTimeout(()=>{ _tofzeroMsgTimer = null; tofzeroStatusIdle(); }, 8000);
     }
     function tofdbgSaveLog() {
         if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }
@@ -14360,6 +14382,8 @@
         // ── V12.6: TOF temp-cal point result (2 s device-side average) ──
         if (data.tofSample !== undefined) tofcalOnSample(data.tofSample);
         if (data.tofZero !== undefined) tofzeroOnResult(data.tofZero);
+        if (data.tofHome !== undefined) { state.tofHome = data.tofHome; tofzeroStatusIdle(); }
+        if (data.tofOff  !== undefined) { state.tofOff  = data.tofOff;  tofzeroStatusIdle(); }
         if (data.tg !== undefined) tofdbgOnLive(data.tg);
 
         // ── Memory ──

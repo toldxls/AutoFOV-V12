@@ -1240,19 +1240,20 @@ std::atomic<uint32_t> tofTrendCount{0};
 // all see the corrected frame. Offset + home persist in NVS "tofzero"
 // (deliberately outside CalibData — no CALIB_MAGIC bump).
 std::atomic<int32_t> tofZeroOffsetT{0};  // tenths of mm, subtracted at publication
-uint32_t tofZeroHomeT = 0;               // home reference, tenths; 0 = unset
+std::atomic<uint32_t> tofZeroHomeT{0};   // home reference, tenths; 0 = unset
+                                         // (atomic: /state serializes it on the AsyncTCP task)
 uint8_t  tofSampleMode = 0;              // 0 = temp-cal point, 1 = SET HOME, 2 = ZERO
 void loadTofZeroPrefs() {
   Preferences p;
   p.begin("tofzero", true);
-  tofZeroHomeT = p.getUInt("homeT", 0);
+  tofZeroHomeT.store(p.getUInt("homeT", 0), std::memory_order_relaxed);
   tofZeroOffsetT.store(p.getInt("offT", 0), std::memory_order_relaxed);
   p.end();
 }
 void saveTofZeroPrefs() {
   Preferences p;
   p.begin("tofzero", false);
-  p.putUInt("homeT", tofZeroHomeT);
+  p.putUInt("homeT", tofZeroHomeT.load(std::memory_order_relaxed));
   p.putInt("offT", tofZeroOffsetT.load(std::memory_order_relaxed));
   p.end();
 }
@@ -6335,21 +6336,21 @@ void loop() {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           0.0f, "no valid range in the 2 s window");
         } else if (mode == 1) {
-          tofZeroHomeT = meanT;
+          tofZeroHomeT.store(meanT, std::memory_order_relaxed);
           tofZeroOffsetT.store(0, std::memory_order_relaxed);
           saveTofZeroPrefs();
           wifiPushTofZero(1, 0.0f, meanMm, "home set");
-        } else if (tofZeroHomeT == 0) {
+        } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "no home reference — SET HOME first");
-        } else if (labs((long)meanT - (long)tofZeroHomeT) > 100) {
+        } else if (labs((long)meanT - (long)tofZeroHomeT.load(std::memory_order_relaxed)) > 100) {
           // >10 mm from home: almost certainly not racked to max — refuse
           // rather than silently absorb a huge phantom offset.
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "reading is >10 mm from home — bellows racked to max?");
         } else {
           int32_t newOff = tofZeroOffsetT.load(std::memory_order_relaxed)
-                         + ((int32_t)meanT - (int32_t)tofZeroHomeT);
+                         + ((int32_t)meanT - (int32_t)tofZeroHomeT.load(std::memory_order_relaxed));
           tofZeroOffsetT.store(newOff, std::memory_order_relaxed);
           saveTofZeroPrefs();
           wifiPushTofZero(1, newOff / 10.0f, meanMm, "zeroed");
