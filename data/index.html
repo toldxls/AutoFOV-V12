@@ -5482,7 +5482,12 @@
     function tofdbgDrawTrend(j) {
         const cv = document.getElementById('tofdbg-trend');
         const rows = (j.trend || []).filter(r => r[1] > 0);
-        if (rows.length < 2) { cv.style.display = 'none'; return; }
+        if (rows.length < 2) {
+            cv.style.display = 'none';
+            const f0 = document.getElementById('tofdbg-tempfit');
+            if (f0) f0.style.display = 'none';       // no stale fit text either
+            return;
+        }
         cv.style.display = 'block';
         const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
         if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
@@ -5648,6 +5653,12 @@
     function tofdbgClearLog() {
         sendCommand('tofdbgclear', 1);
         tofdbgPrevFetch = null;               // rate baseline restarts at zero
+        // Hide the trend + fit line NOW — the refetch confirms, but the user
+        // pressed CLEAR and the picture should react immediately. (The graph
+        // legitimately returns ~10 min later once two fresh points exist.)
+        document.getElementById('tofdbg-trend').style.display = 'none';
+        const f0 = document.getElementById('tofdbg-tempfit');
+        if (f0) f0.style.display = 'none';
         document.getElementById('tofdbg-io').innerText = 'clearing…';
         setTimeout(tofdbgFetchLog, 400);      // ring owner resets on its next pass
     }
