@@ -1210,7 +1210,7 @@ std::atomic<uint32_t> tofTgtEvtDropped{0};  // rate-limited flap events
 // performs the reset at the top of its capture pass, so there is no cross-task
 // read-modify-write race and the clear never fabricates a [T]/[L] edge.
 std::atomic<bool> tofTgtEvtClearReq{false};
-// Slow trend ring: one point / 10 min, 24 h deep. Catches the overnight CREEP
+// Slow trend ring: one point / 5 min, 24 h deep. Catches the overnight CREEP
 // no step trigger can see — a smooth 18.5→19.5 drift never moves ≥1.5 mm
 // frame-to-frame, so [L] stays silent while the level walks. 8/11/26 overnight
 // log: the target's signal grew 19.2→24.7 MCps in 16 h — the optical state
@@ -1225,8 +1225,10 @@ struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100
                     int16_t dieT10;      // SoC die ×10 — load-correlated (WiFi/CPU)
                     int16_t imuT10; };   // LSM6DSOX ×10 — the TOF ambient proxy;
                                          // -32768 = IMU not read yet
-constexpr int      TOF_TREND_RING        = 144;      // × 10 min = 24 h
-constexpr uint32_t TOF_TREND_INTERVAL_MS = 600000UL;
+constexpr int      TOF_TREND_RING        = 288;      // × 5 min = 24 h
+constexpr uint32_t TOF_TREND_INTERVAL_MS = 300000UL; // 5 min: halves time-to-first-fit
+                                                     // after a reboot (ring is RAM);
+                                                     // same RAM/JSON as 10 min × 24 h
 TofTrendPt tofTrend[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];
 std::atomic<uint32_t> tofTrendCount{0};

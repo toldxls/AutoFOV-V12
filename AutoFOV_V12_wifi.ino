@@ -1845,7 +1845,10 @@ static void startFullServer() {
         uint32_t cnt = tofTgtEvtCount.load(std::memory_order_acquire);
         // 32 KB: 48 events (~10 KB of pool) + 144 five-int trend rows (~14 KB).
         // Transient heap; freed before the response streams.
-        DynamicJsonDocument doc(32768);
+        // Events only — the trend is appended as hand-built text below, so the
+        // pool no longer scales with the ring (288 rows would have needed a
+        // ~60 KB doc; as text they are ~13 KB of String).
+        DynamicJsonDocument doc(16384);
         if (doc.capacity() == 0) {       // alloc failed (low/fragmented heap) —
             req->send(503, "text/plain", "low heap - retry");   // honest 503, not garbage JSON
             return;
@@ -1878,15 +1881,21 @@ static void startFullServer() {
                 row.add(e.t[i].mm); row.add(e.t[i].st); row.add(e.t[i].cps100);
             }
         }
-        // 10-min level/signal trend, oldest → newest:
+        String out;
+        out.reserve(12288 + (size_t)TOF_TREND_RING * 48);
+        serializeJson(doc, out);
+        // 5-min level/signal trend, oldest → newest, appended as text:
         // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10, imuT10] — both temps
         // ×10 logged per point so an overnight soak yields (temp, level) pairs
         // for the mm/°C correlation with zero manual captures. imuT10 (LSM6DSOX,
         // low self-heat, near the sensor) is the preferred axis; dieT10 (SoC)
         // separates load-driven heating. imuT10 = -32768 until first IMU read.
+        out.remove(out.length() - 1);              // strip the closing '}'
+        out += ",\"trend\":[";
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
-        JsonArray tr = doc.createNestedArray("trend");
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
+        bool firstRow = true;
+        char rowBuf[80];
         for (uint32_t k = 0; k < tn; k++) {
             int idx = (int)((tcnt - tn + k) % TOF_TREND_RING);
             TofTrendPt tp; uint32_t s1, s2; int tries = 0;
@@ -1896,12 +1905,14 @@ static void startFullServer() {
                 s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
             } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
             if (s1 != s2 || (s1 & 1)) continue;
-            JsonArray row = tr.createNestedArray();
-            row.add(tp.ms); row.add(tp.emaT); row.add(tp.cps100);
-            row.add(tp.amb100); row.add(tp.n); row.add(tp.spads);
-            row.add(tp.dieT10); row.add(tp.imuT10);
+            snprintf(rowBuf, sizeof(rowBuf), "%s[%lu,%u,%u,%u,%u,%u,%d,%d]",
+                     firstRow ? "" : ",", (unsigned long)tp.ms,
+                     tp.emaT, tp.cps100, tp.amb100, tp.n, tp.spads,
+                     (int)tp.dieT10, (int)tp.imuT10);
+            out += rowBuf;
+            firstRow = false;
         }
-        String out; serializeJson(doc, out);
+        out += "]}";
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
         r->addHeader("Cache-Control", "no-store");
         req->send(r);
