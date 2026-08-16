@@ -2312,6 +2312,14 @@
       <div class="lgSub">Enter the device password.<br>If you didn't set your own,
         it's the "Login pw" shown on the device's WiFi Info screen.</div>
       <form id="login-form" onsubmit="loginSubmit(); return false;">
+        <!-- Visually-hidden username: password managers key credentials on
+             (origin, username) — without one, save/autofill offers are flaky.
+             With it, the browser stores the device password once and Face ID /
+             Touch ID gates the one-tap fill (the closest a plain-HTTP LAN
+             device gets to biometric login; WebAuthn needs a secure context). -->
+        <input type="text" name="username" value="autofov" autocomplete="username"
+               readonly aria-hidden="true" tabindex="-1"
+               style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0;">
         <input id="login-pw" type="password" placeholder="Device password"
                autocomplete="current-password">
         <label id="login-remember"><input type="checkbox" id="login-remember-cb">
@@ -2656,6 +2664,11 @@
       <div class="opTitle">FLASH FIRMWARE</div>
       <div id="otapw-sub" class="opSub"></div>
       <form id="otapw-form" onsubmit="otaPwSubmit(); return false;">
+        <!-- same hidden username as the login form → same stored credential
+             autofills here, so the OTA re-auth is also a biometric tap -->
+        <input type="text" name="username" value="autofov" autocomplete="username"
+               readonly aria-hidden="true" tabindex="-1"
+               style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0;">
         <input id="otapw-pw" type="password" placeholder="Device password"
                autocomplete="current-password"
                onkeydown="if (event.key === 'Escape') otaPwCancel();">
@@ -13860,6 +13873,7 @@
     // in localStorage only when the checkbox is set — that token is reused on
     // reopen until the device reboots (rotating it) or the user signs out.
     let _loginPromise = null, _loginResolve = null;
+    let _loginKeystrokes = 0, _loginAutoBound = false, _loginAutoFired = false;
     function doLogin() {
         if (_loginPromise) return _loginPromise;        // already showing
         _loginPromise = new Promise(res => { _loginResolve = res; });
@@ -13870,6 +13884,21 @@
         pw.value = '';
         err.textContent = '';
         cb.checked = localStorage.getItem('afovRemember') === '1';
+        // One-tap biometric flow: when the password manager FILLS the field (a
+        // whole value arriving in one input event with zero keystrokes — the
+        // biometric already happened), sign in without a second tap. Typed
+        // entry (keystrokes > 0, incl. Cmd+V) keeps the explicit SIGN IN.
+        if (!_loginAutoBound) {
+            _loginAutoBound = true;
+            pw.addEventListener('keydown', () => { _loginKeystrokes++; });
+            pw.addEventListener('input', () => {
+                if (_loginKeystrokes === 0 && !_loginAutoFired && pw.value.length >= 6) {
+                    _loginAutoFired = true;
+                    setTimeout(loginSubmit, 80);        // let the fill settle
+                }
+            });
+        }
+        _loginKeystrokes = 0; _loginAutoFired = false;
         ov.classList.add('open');
         setTimeout(() => pw.focus(), 50);
         return _loginPromise;
