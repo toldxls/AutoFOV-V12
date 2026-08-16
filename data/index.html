@@ -13926,7 +13926,9 @@
         // entry (keystrokes > 0, incl. Cmd+V) keeps the explicit SIGN IN.
         if (!_loginAutoBound) {
             _loginAutoBound = true;
-            pw.addEventListener('keydown', () => { _loginKeystrokes++; });
+            // Count only PRINTABLE keys as typing — Enter/arrows are how the
+            // autofill dropdown is navigated, and must not veto the auto-submit.
+            pw.addEventListener('keydown', (e) => { if (e.key && e.key.length === 1) _loginKeystrokes++; });
             pw.addEventListener('input', () => {
                 if (_loginKeystrokes === 0 && !_loginAutoFired && pw.value.length >= 6) {
                     _loginAutoFired = true;
@@ -13935,6 +13937,17 @@
             });
         }
         _loginKeystrokes = 0; _loginAutoFired = false;
+        // Chrome doesn't reliably dispatch 'input' for autofill — poll as the
+        // event-independent fallback: a value that appeared with zero typed
+        // characters is a manager fill (the biometric already happened).
+        const pollT = setInterval(() => {
+            if (!ov.classList.contains('open')) { clearInterval(pollT); return; }
+            if (!_loginAutoFired && _loginKeystrokes === 0 && pw.value.length >= 6) {
+                _loginAutoFired = true;
+                clearInterval(pollT);
+                loginSubmit();
+            }
+        }, 400);
         ov.classList.add('open');
         setTimeout(() => pw.focus(), 50);
         return _loginPromise;
