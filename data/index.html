@@ -4928,9 +4928,9 @@
     // ── Passive points: the 10-min trend ring, filtered to the static cluster ──
     // (median level ±5 mm — a soak passes whole; racking excursions drop out).
     // Same axes as the manual captures, so they overlay directly on the graph.
-    let tofcalPassive = null;
+    let tofcalPassive = null, tofcalPassiveN = null;   // N = raw usable rows, even below the plot threshold
     async function tofcalFetchPassive() {
-        tofcalPassive = null;
+        tofcalPassive = null; tofcalPassiveN = null;
         try {
             const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store' });
             if (!r.ok) return;
@@ -4939,6 +4939,7 @@
                               : (row.length > 6 && isFinite(row[6])) ? row[6] / 10 : null;
             let pts = (j.trend || []).filter(row => row[1] > 0 && tval(row) !== null)
                                      .map(row => ({ t: tval(row), d: row[1] / 10 }));
+            tofcalPassiveN = pts.length;
             if (pts.length >= 8) {
                 const lv = pts.map(p => p.d).sort((a, b) => a - b);
                 const med = lv[lv.length >> 1];
@@ -5251,7 +5252,14 @@
             fEl.innerHTML = msg; apply.disabled = false;
         }
         // The auto-logged 10-min points (pink cloud on the graph) get their own
-        // fit line + one-click adopt into the manual fields.
+        // fit line + one-click adopt into the manual fields. Below the plot
+        // threshold, say what's collecting instead of silently showing nothing —
+        // the ring is RAM, so every reboot restarts it at zero.
+        if (!tofcalPassive && typeof tofcalPassiveN === 'number') {
+            fEl.innerHTML += '<br><span style="color:#7a958c">passive 10-min log: ' + tofcalPassiveN +
+                ' pt' + (tofcalPassiveN === 1 ? '' : 's') + ' since boot — plots at 8+ ' +
+                '(~' + Math.max(0, (8 - tofcalPassiveN)) + '0 min to go; the log restarts on reboot)</span>';
+        }
         if (tofcalPassive) {
             const pa = tofcalPassive;
             fEl.innerHTML += '<br><span style="color:#e87ba4">passive 10-min log: <b>' +
