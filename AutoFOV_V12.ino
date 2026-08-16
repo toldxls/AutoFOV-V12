@@ -1222,7 +1222,9 @@ std::atomic<bool> tofTgtEvtClearReq{false};
 std::atomic<uint32_t> gDieTempC10{0};
 struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100;
                     uint16_t spads; uint8_t n; uint8_t pad;
-                    int16_t dieT10; };   // die temp ×10 — the mm/°C correlation axis
+                    int16_t dieT10;      // SoC die ×10 — load-correlated (WiFi/CPU)
+                    int16_t imuT10; };   // LSM6DSOX ×10 — the TOF ambient proxy;
+                                         // -32768 = IMU not read yet
 constexpr int      TOF_TREND_RING        = 144;      // × 10 min = 24 h
 constexpr uint32_t TOF_TREND_INTERVAL_MS = 600000UL;
 TofTrendPt tofTrend[TOF_TREND_RING];
@@ -4557,6 +4559,8 @@ void sensorTask(void *pvParameters) {
             tp.ms = snap.ms; tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
             tp.spads = snap.spads; tp.n = snap.n; tp.pad = 0;
             tp.dieT10 = (int16_t)(int32_t)gDieTempC10.load(std::memory_order_relaxed);
+            uint32_t a10 = gAmbientTempC10.load(std::memory_order_relaxed);
+            tp.imuT10 = a10 ? (int16_t)(int32_t)a10 : (int16_t)-32768;
             uint16_t maxc = 0;
             for (int i = 0; i < snap.n; i++) if (snap.t[i].cps100 > maxc) maxc = snap.t[i].cps100;
             tp.cps100 = maxc;
@@ -7087,13 +7091,14 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
   float fillFrac = 0.0f;
 
   if (status == 0) {
-    // Map mcps 0..50 to 0..1. Colour thresholds match segment logic.
+    // Map mcps 0..50 to 0..1. INVERTED thresholds (match the web 3D box): LOW
+    // count rate is this sensor's healthy regime; high MCps (close, reflective
+    // target) is pile-up territory where ranging distorts.
     fillFrac = constrain(mcps / 50.0f, 0.02f, 1.0f);
-    if      (fillFrac >= 0.90f) color = COLOR_DARKGREEN;
-    else if (fillFrac >= 0.70f) color = COLOR_PUREGREEN;
-    else if (fillFrac >= 0.50f) color = COLOR_YELLOW;
-    else if (fillFrac >= 0.30f) color = COLOR_ORANGE;
-    else                        color = COLOR_RED;
+    if      (fillFrac >= 0.80f) color = COLOR_RED;
+    else if (fillFrac >= 0.60f) color = COLOR_ORANGE;
+    else if (fillFrac >= 0.40f) color = COLOR_YELLOW;
+    else                        color = COLOR_PUREGREEN;
   } else if (status == 11) {
     fillFrac = 0.2f; color = COLOR_ORANGE;
   } else {

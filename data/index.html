@@ -357,7 +357,8 @@
         /* TOF signal strength — an isometric 3D box (white wireframe, empty
            interior) extruded up-right; setTofBar() fills it from the left with a
            color-coded 3D sub-box whose leading "cube face" marks the level.
-           Color ramp matches the firmware thresholds (green ≥60%, yellow ≥30%). */
+           Ramp is INVERTED vs a naive meter: low MCps = green (healthy), high =
+           orange/red (pile-up regime). Matches the TFT bar thresholds. */
         #tof-box { position: absolute; left: 12px; top: 11px; }
         #dist-box { position: absolute; left: 42px; top: 165px; }
 
@@ -2540,6 +2541,8 @@
           <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
           <button onclick="tofdbgSaveLog()">SAVE LOG</button>
           <button onclick="tofdbgClearLog()" title="Reset the event counters and ring — for before/after tests of a scene or config change">CLEAR</button>
+          <button id="tofdbg-sweep-btn" onclick="tofdbgSweepToggle()"
+                  title="Log (distance, signal) pairs at 30 Hz while you rack the bellows from max to closest — maps count rate vs distance">LOG SWEEP</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
         <!-- Session zero (V12.6 B+): the sensor's absolute reading random-walks
@@ -2555,6 +2558,10 @@
         </div>
         <canvas id="tofdbg-trend" title="EMA level (green) + die temp (pink), one sample / 10 min, up to 24 h"></canvas>
         <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
+        <canvas id="tofdbg-sweep" style="display:none; width:100%; height:96px; background:#061512;
+                border:1px solid #14302a; border-radius:4px; margin-top:4px;"
+                title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
+        <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         <div id="tofdbg-log">no events fetched yet</div>
         <div class="tofcal-row" style="margin-top:8px;">
           <button onclick="tofdbgClose()">CLOSE</button>
@@ -5411,17 +5418,22 @@
         // die temp (pink, own scale, right-edge labels) — the mm/°C correlation axis.
         // Rows may lack the field on pre-.61 firmware; draw only when it's there.
         const fit = document.getElementById('tofdbg-tempfit');
-        const tr = rows.filter(r => r.length > 6 && isFinite(r[6]));
+        // Preferred axis: the IMU (LSM6DSOX — near the sensor, low self-heat);
+        // the SoC die is the fallback for pre-IMU rows/hardware.
+        const tval = r => (r.length > 7 && r[7] !== -32768 && isFinite(r[7])) ? r[7] / 10
+                        : (r.length > 6 && isFinite(r[6])) ? r[6] / 10 : null;
+        const usedImu = rows.some(r => r.length > 7 && r[7] !== -32768);
+        const tr = rows.filter(r => tval(r) !== null);
         if (tr.length >= 2) {
-            const ts = tr.map(r => r[6] / 10);
+            const ts = tr.map(tval);
             let tMin = Math.min(...ts), tMax = Math.max(...ts);
             let tLo = tMin, tHi = tMax;
             if (tHi - tLo < 1) { const m = (tHi + tLo) / 2; tLo = m - 0.5; tHi = m + 0.5; }
             const Yt = t => padT + (H - padT - padB) * (1 - (t - tLo) / (tHi - tLo));
             ctx.strokeStyle = 'rgba(232,123,164,0.6)'; ctx.lineWidth = 1;
             ctx.beginPath();
-            tr.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Yt(r[6] / 10))
-                                     : ctx.moveTo(X(r[0]), Yt(r[6] / 10)); });
+            tr.forEach((r, k) => { k ? ctx.lineTo(X(r[0]), Yt(tval(r)))
+                                     : ctx.moveTo(X(r[0]), Yt(tval(r))); });
             ctx.stroke();
             ctx.fillStyle = 'rgba(232,123,164,0.85)'; ctx.textAlign = 'right';
             ctx.fillText(tHi.toFixed(1) + '\u00b0', W - padR - 2, padT + 8);
@@ -5439,7 +5451,8 @@
                     const r2den = sxx*syy;
                     const rr = r2den>0 ? sxy/Math.sqrt(r2den) : 0;
                     fit.style.display='block';
-                    fit.innerHTML = 'passive temp fit: <b>' + (slope>=0?'+':'') + slope.toFixed(2) +
+                    fit.innerHTML = 'passive temp fit (' + (usedImu ? 'imu' : 'die') +
+                        '): <b>' + (slope>=0?'+':'') + slope.toFixed(2) +
                         ' mm/\u00b0C</b> \u00b7 r ' + rr.toFixed(2) + ' \u00b7 \u0394T ' +
                         (tMax-tMin).toFixed(1) + '\u00b0C over ' + tr.length + ' pts' +
                         (Math.abs(rr) < 0.5 ? ' <span style="color:#e7c35a;">(weak \u2014 mostly non-thermal drift)</span>' : '');
@@ -5450,6 +5463,84 @@
                 }
             }
         } else if (fit) fit.style.display='none';
+    }
+    // ── Rack-sweep logger: (distance, MCps) pairs at fast-telemetry rate ──
+    // Maps count rate vs distance (the parallax-overlap × inverse-square curve)
+    // so the meter thresholds and the pile-up onset are measured, not guessed.
+    let _tofSweep = null;
+    function tofdbgSweepToggle() {
+        const b = document.getElementById('tofdbg-sweep-btn');
+        if (_tofSweep && !_tofSweep.done) {
+            _tofSweep.done = true;
+            b.innerText = 'LOG SWEEP';
+            tofdbgDrawSweep();
+        } else {
+            _tofSweep = { pts: [], done: false, _last: 0 };
+            b.innerText = 'STOP (0)';
+            document.getElementById('tofdbg-sweep').style.display = 'block';
+            const cap = document.getElementById('tofdbg-sweepcap');
+            cap.style.display = 'block';
+            cap.innerText = 'sweeping — rack the bellows slowly from max to closest and back';
+        }
+    }
+    function tofdbgSweepFeed(distMm, mcps) {
+        if (!_tofSweep || _tofSweep.done || !(distMm > 0)) return;
+        if (_tofSweep.pts.length >= 6000) {              // ~3 min at 30 Hz — plenty
+            _tofSweep.done = true;
+            const b = document.getElementById('tofdbg-sweep-btn');
+            if (b) b.innerText = 'LOG SWEEP';
+            return;
+        }
+        _tofSweep.pts.push([distMm, mcps]);
+        const n = _tofSweep.pts.length;
+        if (n % 10 === 0) {
+            const b = document.getElementById('tofdbg-sweep-btn');
+            if (b) b.innerText = 'STOP (' + n + ')';
+        }
+        const now = Date.now();
+        if (now - _tofSweep._last > 250) { _tofSweep._last = now; tofdbgDrawSweep(); }
+    }
+    function tofdbgDrawSweep() {
+        const cv = document.getElementById('tofdbg-sweep');
+        const cap = document.getElementById('tofdbg-sweepcap');
+        if (!cv || !_tofSweep || _tofSweep.pts.length < 2) return;
+        const pts = _tofSweep.pts;
+        const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
+        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        const padL = 34, padR = 8, padT = 8, padB = 14;
+        let dMin = Infinity, dMax = -Infinity, sMin = Infinity, sMax = -Infinity;
+        for (const [d, sg] of pts) {
+            if (d < dMin) dMin = d; if (d > dMax) dMax = d;
+            if (sg < sMin) sMin = sg; if (sg > sMax) sMax = sg;
+        }
+        if (dMax - dMin < 1) dMax = dMin + 1;
+        if (sMax - sMin < 1) { const m = (sMax + sMin) / 2; sMin = m - 0.5; sMax = m + 0.5; }
+        const X = d => padL + (W - padL - padR) * (d - dMin) / (dMax - dMin);
+        const Y = sg => padT + (H - padT - padB) * (1 - (sg - sMin) / (sMax - sMin));
+        ctx.font = '9px monospace'; ctx.fillStyle = '#7ab4a2';
+        ctx.textAlign = 'right';
+        ctx.fillText(sMax.toFixed(1), padL - 3, padT + 8);
+        ctx.fillText(sMin.toFixed(1), padL - 3, H - padB);
+        ctx.textAlign = 'left';  ctx.fillText(dMin.toFixed(0) + 'mm', padL + 2, H - 3);
+        ctx.textAlign = 'right'; ctx.fillText(dMax.toFixed(0) + 'mm', W - padR, H - 3);
+        ctx.strokeStyle = '#14302a';
+        ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
+        // dots, colored by the same inverted health ramp as the 3D box
+        for (const [d, sg] of pts) {
+            const [r, g, b2] = tofRGB(Math.min(100, sg / 50 * 100));
+            ctx.fillStyle = `rgba(${r},${g},${b2},0.65)`;
+            ctx.fillRect(X(d) - 1, Y(sg) - 1, 2, 2);
+        }
+        if (cap) {
+            cap.style.display = 'block';
+            cap.innerText = 'MCps vs distance · ' + pts.length + ' pts · ' +
+                dMin.toFixed(0) + '–' + dMax.toFixed(0) + ' mm · ' +
+                sMin.toFixed(1) + '–' + sMax.toFixed(1) + ' MCps' +
+                (_tofSweep.done ? ' · SAVE LOG includes it' : ' — sweeping…');
+        }
     }
     function tofdbgClearLog() {
         sendCommand('tofdbgclear', 1);
@@ -5502,7 +5593,8 @@
     function tofdbgSaveLog() {
         if (!tofdbgLogRaw) { document.getElementById('tofdbg-io').innerText = 'nothing fetched'; return; }
         calioDownload({ fmt: 'autofov-tofdbg', ver: 1, saved: new Date().toISOString(),
-                        log: tofdbgLogRaw, lastLive: tofdbgLastTg },
+                        log: tofdbgLogRaw, lastLive: tofdbgLastTg,
+                        sweep: (_tofSweep && _tofSweep.pts.length) ? _tofSweep.pts : undefined },
                       'tofdbg-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.json');
         document.getElementById('tofdbg-io').innerText = 'saved ✓';
     }
@@ -14009,16 +14101,20 @@
     // TOF signal box (isometric, up-right extrusion). Fills from the left with a
     // 3D color sub-box; the leading "cube face" marks the current level color.
     function tofRGB(pct) {
+        // INVERTED on purpose: for this sensor LOW count rate is the healthy
+        // regime — high MCps (close, reflective target) is pile-up territory
+        // where ranging distorts. Green ≤40% of the 50 MCps full scale
+        // (≤20 MCps), gold by 60%, orange by 80%, red at the top.
         pct = Math.max(0, Math.min(100, pct));
-        const stops = [[0,[255,68,0]], [20,[255,165,0]], [40,[255,215,0]], [60,[0,255,0]]];
-        if (pct >= 60) return [0,255,0];
+        if (pct <= 40) return [0,255,0];
+        const stops = [[40,[0,255,0]], [60,[255,215,0]], [80,[255,165,0]], [100,[255,68,0]]];
         for (let i = 1; i < stops.length; i++) {
             if (pct <= stops[i][0]) {
                 const a = stops[i-1], b = stops[i], t = (pct - a[0]) / (b[0] - a[0]);
                 return a[1].map((v,k) => Math.round(v + (b[1][k]-v)*t));
             }
         }
-        return [0,255,0];
+        return [255,68,0];
     }
     function setTofBar(pct) {
         const top = document.getElementById('tof-fill-top');
@@ -14060,6 +14156,7 @@
         if (data.f  !== undefined) data.fov           = data.f;
         if (data.e  !== undefined) data.fovErr        = data.e;
         if (data.sg !== undefined) data.signal        = data.sg;
+        if (data.d !== undefined && data.sg !== undefined) tofdbgSweepFeed(data.d, data.sg);
         if (data.a  !== undefined) data.sensorAmbient = data.a;
         if (data.ss !== undefined) data.sensorStatus  = data.ss;
         if (data.t  !== undefined) data.trigger       = data.t;

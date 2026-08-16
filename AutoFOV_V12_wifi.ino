@@ -1879,9 +1879,11 @@ static void startFullServer() {
             }
         }
         // 10-min level/signal trend, oldest → newest:
-        // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10] — dieT10 is the die
-        // temp ×10, logged per point so an overnight soak yields (temp, level)
-        // pairs for the mm/°C correlation with zero manual captures.
+        // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10, imuT10] — both temps
+        // ×10 logged per point so an overnight soak yields (temp, level) pairs
+        // for the mm/°C correlation with zero manual captures. imuT10 (LSM6DSOX,
+        // low self-heat, near the sensor) is the preferred axis; dieT10 (SoC)
+        // separates load-driven heating. imuT10 = -32768 until first IMU read.
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         JsonArray tr = doc.createNestedArray("trend");
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
@@ -1897,7 +1899,7 @@ static void startFullServer() {
             JsonArray row = tr.createNestedArray();
             row.add(tp.ms); row.add(tp.emaT); row.add(tp.cps100);
             row.add(tp.amb100); row.add(tp.n); row.add(tp.spads);
-            row.add(tp.dieT10);
+            row.add(tp.dieT10); row.add(tp.imuT10);
         }
         String out; serializeJson(doc, out);
         AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
