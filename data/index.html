@@ -2491,9 +2491,10 @@
           where the correction is zero &mdash; use the FOV cal's capture temperature (recorded
           automatically from your next recal on) so absolute readings stay anchored to the state the
           system was calibrated in; any ref error is a constant that ZERO @ MAX RACK absorbs.
-          <b>auto-update</b> adopts qualifying fits (&Delta;T &ge; 1.5 &deg;C, r &ge; 0.7, 8 h+) and
-          blends them by information weight (&Delta;T&sup2;&middot;n) &mdash; a narrow-range night
-          barely moves a coefficient earned over a wide swing. Fits are only meaningful over periods
+          <b>auto-update</b> is strictly quality-gated: the applied coefficient is FROZEN until a
+          new fit <i>beats its pedigree</i> &mdash; significantly wider &Delta;T (&ge;1.25&times;), or
+          comparable range with better r and more points &mdash; and with compensation live, only a
+          wide, well-correlated residual of real size (&ge;0.1 mm/&deg;C) forces a correction. Fits are only meaningful over periods
           with a static scene; slow overnight legs beat fast morning warm-ups (thermal lag).
           SAVE/LOAD moves capture points between machines or the gh-pages library.</div>
         <div id="tofcal-live">
@@ -2505,7 +2506,7 @@
           <button onclick="tofcalClearAll()"
                   title="One dataset, one clear: removes the captured points AND the device's passive ring (this also resets the TOF TARGETS event log)">clear all points</button>
           <label style="font-size:11px; color:#7ab4a2; cursor:pointer;"
-                 title="Adopt qualifying passive fits automatically (ΔT ≥ 1.5 °C, r ≥ 0.7, 8 h+), blended by information weight — a wide-range coefficient is effectively frozen against narrow-range noise">
+                 title="The coefficient only changes when a strictly better fit appears: significantly wider ΔT, or comparable range with higher r and more points. A good wide-range coefficient stays frozen.">
             <input type="checkbox" id="tofcal-auto" onchange="tofcalAutoToggle(this)"> auto-update</label>
         </div>
         <div id="tofcal-pts"></div>
@@ -5009,40 +5010,48 @@
         document.getElementById('tofcal-gh-list').style.display = 'none';
         if (_tofcalPoll) { clearInterval(_tofcalPoll); _tofcalPoll = null; }
     }
-    // ── Auto-update: adopt qualifying fits automatically, information-weighted ──
-    // Once a wide-ΔT coefficient is set, its weight W (Σ(T−mean)² of the data
-    // that earned it) makes narrow-range nights nearly powerless to move it;
-    // with compensation live, fits measure the residual and NUDGE the coeff.
+    // ── Auto-update: strictly quality-gated, never a blend ──
+    // A coefficient is FROZEN until a new fit BEATS the pedigree that set it:
+    // significantly wider ΔT, or comparable ΔT with better r and more points.
+    // With compensation live the fit measures the RESIDUAL — a correct
+    // coefficient leaves no slope, so silence is success; only a wide,
+    // well-correlated residual of real size forces a correction.
     function tofcalAutoEnabled(){ return localStorage.getItem('afovTcAuto') === '1'; }
     function tofcalAutoToggle(cb){
         localStorage.setItem('afovTcAuto', cb.checked ? '1' : '0');
-        tofcalIo(cb.checked ? 'auto-update on — qualifying fits (ΔT≥1.5 °C, r≥0.7, 8 h+) adopt themselves' : 'auto-update off');
+        tofcalIo(cb.checked ? 'auto-update on — the coefficient only changes when a strictly better fit appears' : 'auto-update off');
+    }
+    function _tofcalAdopt(coeff, ref, fit, why){
+        sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
+                    (fit.span * 10).toFixed(0) + ',' +
+                    (Math.sqrt(Math.max(0, fit.r2)) * 100).toFixed(0) + ',' + fit.n);
+        state.tcCoeff = parseFloat(coeff.toFixed(4)); state.tcRef = parseFloat(ref.toFixed(2));
+        state.tcSpan = fit.span; state.tcR = Math.sqrt(Math.max(0, fit.r2)); state.tcN = fit.n;
+        _tofcalResetData();
+        tofcalIo('auto-update (' + why + '): ' + coeff.toFixed(3) + ' mm/°C · ΔT ' +
+                 fit.span.toFixed(1) + ' °C · r ' + state.tcR.toFixed(2) + ' · n ' + fit.n);
+        tofcalRender();
     }
     function tofcalAutoConsider(){
         if (!tofcalAutoEnabled()) return;
         if (state.screen === 'screen-calrun') return;          // never mid-calibration
         const fit = tofcalFit();
-        if (!fit || fit.span < 1.5 || fit.n < 96) return;      // 8 h of 5-min points
-        const cur = state.tcCoeff || 0, W = state.tcW || 0, wNew = fit.den;
-        let coeff, Wout;
-        if (!cur || !W) {
-            if (fit.r2 < 0.49) return;                         // first adoption needs r ≥ 0.7
-            coeff = fit.slope; Wout = wNew;
-        } else {
-            // residual nudge, inverse-variance weighted; W capped so ~10 good
-            // days of staleness can still be worked off
-            coeff = cur + fit.slope * (wNew / (W + wNew));
-            Wout  = Math.min(W + wNew, wNew * 10);
-        }
-        if (cur && Math.abs(coeff - cur) < 0.02) return;       // nothing meaningful to write
+        if (!fit || fit.span < 1.5 || fit.n < 96) return;      // 8 h of 5-min points minimum
+        const r = Math.sqrt(Math.max(0, fit.r2));
+        const cur = state.tcCoeff || 0;
         const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
-        sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
-                    (fit.span * 10).toFixed(0) + ',' + Wout.toFixed(1));
-        state.tcCoeff = parseFloat(coeff.toFixed(4)); state.tcRef = parseFloat(ref.toFixed(2));
-        state.tcSpan = fit.span; state.tcW = Wout;
-        _tofcalResetData();
-        tofcalIo('auto-update: ' + coeff.toFixed(3) + ' mm/°C adopted (ΔT ' + fit.span.toFixed(1) + ' °C · n ' + fit.n + ')');
-        tofcalRender();
+        if (!cur) {
+            if (r < 0.7) return;
+            _tofcalAdopt(fit.slope, ref, fit, 'first fit');
+            return;
+        }
+        const ps = state.tcSpan || 0, pr = state.tcR || 0, pn = state.tcN || 0;
+        const extended = fit.span >= ps * 1.25;                        // range grew significantly
+        const better   = fit.span >= ps * 0.9 && r >= Math.max(0.7, pr) && fit.n >= pn;
+        if (!(extended || better)) return;                             // pedigree stands
+        if (r < 0.7) return;                                           // residual must be REAL
+        if (Math.abs(fit.slope) < 0.1) return;                         // and big enough to matter
+        _tofcalAdopt(cur + fit.slope, ref, fit, extended ? 'range extended' : 'better fit');
     }
     // Background consideration every 30 min even with the dialog closed —
     // "captured automatically" should not require anyone to open a panel.
@@ -5357,7 +5366,8 @@
             + (state.calAmbC > 0 ? ' <span style="color:#7a958c">· FOV cal captured @ ' +
                state.calAmbC.toFixed(1) + ' °C — the principled ref</span>' : '')
             + (state.tcSpan > 0 ? ' <span style="color:#7a958c">· pedigree ΔT ' +
-               state.tcSpan.toFixed(1) + ' °C</span>' : '');
+               state.tcSpan.toFixed(1) + ' °C · r ' + (state.tcR || 0).toFixed(2) +
+               ' · n ' + (state.tcN || 0) + '</span>' : '');
     }
     // Apply/set/off echo the new value into state IMMEDIATELY — tcCoeff rides
     // the 5 s slow telemetry frame, so without the local echo the Active line
@@ -5379,10 +5389,11 @@
         const coeff = cur ? cur + fit.slope : fit.slope;   // residual adds to the live coeff
         const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
         sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
-                    (fit.span * 10).toFixed(0) + ',' + fit.den.toFixed(1));
+                    (fit.span * 10).toFixed(0) + ',' +
+                    (Math.sqrt(Math.max(0, fit.r2)) * 100).toFixed(0) + ',' + fit.n);
         state.tcCoeff = parseFloat(coeff.toFixed(4));
         state.tcRef   = parseFloat(ref.toFixed(2));
-        state.tcSpan  = fit.span; state.tcW = fit.den;
+        state.tcSpan  = fit.span; state.tcR = Math.sqrt(Math.max(0, fit.r2)); state.tcN = fit.n;
         _tofcalResetData();
         tofcalRender(); tofcalIo('fit applied ✓ — dataset reset (now logging the compensated frame)');
     }
@@ -5393,7 +5404,7 @@
         sendCommand('tofcomp', cf.toFixed(4) + ',' + (isNaN(rf) ? 21 : rf).toFixed(2));
         state.tcCoeff = cf;
         state.tcRef   = isNaN(rf) ? 21 : rf;
-        state.tcSpan  = 0; state.tcW = 0;          // manual = no pedigree
+        state.tcSpan  = 0; state.tcR = 0; state.tcN = 0;   // manual = no pedigree
         _tofcalResetData();
         tofcalRender(); tofcalIo('manual coefficient set ✓ — dataset reset');
     }
@@ -14799,7 +14810,8 @@
         if (data.tofHome !== undefined) { state.tofHome = data.tofHome; tofzeroStatusIdle(); }
         if (data.calAmbC !== undefined) state.calAmbC = data.calAmbC;
         if (data.tcSpan !== undefined) state.tcSpan = data.tcSpan;
-        if (data.tcW !== undefined) state.tcW = data.tcW;
+        if (data.tcR !== undefined) state.tcR = data.tcR;
+        if (data.tcN !== undefined) state.tcN = data.tcN;
         if (data.tofOff  !== undefined) { state.tofOff  = data.tofOff;  tofzeroStatusIdle(); }
         if (data.tg !== undefined) tofdbgOnLive(data.tg);
 
