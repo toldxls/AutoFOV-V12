@@ -2559,7 +2559,7 @@
           <b style="color:#3987e5;">&#9632;</b> 6 no-wrap&ensp;
           <b style="color:#e66767;">&#9632;</b> other&ensp;
           <b style="color:#e87ba4;">&#9650;</b> published blend</div>
-        <div id="tofdbg-stale" style="font-size:10px; min-height:13px;"></div>
+        <div id="tofdbg-stale" style="font-size:12px; min-height:16px; margin:2px 0;"></div>
         <div id="tofdbg-live">waiting for telemetry&hellip;</div>
         <div class="tofcal-row">
           <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
@@ -5430,13 +5430,21 @@
     function _tofdbgStaleTick() {
         const el = document.getElementById('tofdbg-stale');
         if (!el) return;
-        if (state.sensorSleeping) { el.style.color = '#787878'; el.innerText = 'sensor asleep — values are last-known'; return; }
-        if (!tofdbgLastTgAt) { el.innerText = ''; return; }
+        // A status LAMP, not a footnote — this line is the one thing a frozen
+        // feed can't fake, so it must be the loudest thing near the readout.
+        if (state.sensorSleeping) {
+            el.innerHTML = '<b style="color:#787878;">● ASLEEP</b> <span style="color:#787878; font-size:10px;">— values are last-known</span>';
+            return;
+        }
+        if (!tofdbgLastTgAt) { el.innerHTML = ''; return; }
         const age = (Date.now() - tofdbgLastTgAt) / 1000;
         const st = (tofdbgLastTg && tofdbgLastTg.t || []).map(r => r[1]).join('/');
-        if (age < 3) { el.style.color = '#5a8'; el.innerText = 'live · st ' + (st || '—'); }
-        else { el.style.color = '#ff6a6a';
-               el.innerText = '⚠ STALE — no frame for ' + age.toFixed(0) + ' s (sensor silent; self-heal kicks at 10 s, or REBOOT)'; }
+        if (age < 3) {
+            el.innerHTML = '<b style="color:#3ddb7a;">● LIVE</b> <span style="color:#5e8c7e; font-size:10px;">st ' + (st || '—') + '</span>';
+        } else {
+            el.innerHTML = '<b style="color:#ff6a6a; background:#3a0f0f; padding:1px 6px; border-radius:3px;">● STALE — no frame for ' +
+                age.toFixed(0) + ' s</b> <span style="color:#e7967a; font-size:10px;">sensor silent — self-heal kicks at 10 s, or REBOOT</span>';
+        }
     }
     function tofdbgReboot() {
         if (!confirm('Reboot the AutoFOV now?\nRanging pauses ~5 s; the trend ring and event log restart.')) return;
