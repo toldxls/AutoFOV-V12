@@ -2546,6 +2546,7 @@
           <b style="color:#3987e5;">&#9632;</b> 6 no-wrap&ensp;
           <b style="color:#e66767;">&#9632;</b> other&ensp;
           <b style="color:#e87ba4;">&#9650;</b> published blend</div>
+        <div id="tofdbg-stale" style="font-size:10px; min-height:13px;"></div>
         <div id="tofdbg-live">waiting for telemetry&hellip;</div>
         <div class="tofcal-row">
           <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
@@ -2553,6 +2554,8 @@
           <button onclick="tofdbgClearLog()" title="Reset the event counters and ring — for before/after tests of a scene or config change">CLEAR</button>
           <button id="tofdbg-sweep-btn" onclick="tofdbgSweepToggle()"
                   title="Log (distance, signal) pairs at 30 Hz while you rack the bellows from max to closest — maps count rate vs distance">LOG SWEEP</button>
+          <button onclick="tofdbgReboot()"
+                  title="Warm-restart the device (rails stay up, so the TOF re-references warm — the cold-start-bias cure and the wedge recovery lever). Trend ring and event log restart.">REBOOT</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
         <!-- Session zero (V12.6 B+): the sensor's absolute reading random-walks
@@ -5343,7 +5346,25 @@
     // While the panel is open, keep the log + trend current by themselves —
     // the trend gains a point every 5 min, and re-entering the menu should not
     // be the refresh mechanism. 60 s poll; REFRESH LOG stays for impatience.
-    let _tofdbgPoll = null;
+    let _tofdbgPoll = null, _tofdbgStaleT = null;
+    // A frozen sensor leaves every number on screen stale — INCLUDING the OK(0)
+    // status, which then lies. Data AGE is the only honest liveness signal.
+    function _tofdbgStaleTick() {
+        const el = document.getElementById('tofdbg-stale');
+        if (!el) return;
+        if (state.sensorSleeping) { el.style.color = '#787878'; el.innerText = 'sensor asleep — values are last-known'; return; }
+        if (!tofdbgLastTgAt) { el.innerText = ''; return; }
+        const age = (Date.now() - tofdbgLastTgAt) / 1000;
+        const st = (tofdbgLastTg && tofdbgLastTg.t || []).map(r => r[1]).join('/');
+        if (age < 3) { el.style.color = '#5a8'; el.innerText = 'live · st ' + (st || '—'); }
+        else { el.style.color = '#ff6a6a';
+               el.innerText = '⚠ STALE — no frame for ' + age.toFixed(0) + ' s (sensor silent; self-heal kicks at 10 s, or REBOOT)'; }
+    }
+    function tofdbgReboot() {
+        if (!confirm('Reboot the AutoFOV now?\nRanging pauses ~5 s; the trend ring and event log restart.')) return;
+        sendCommand('reboot', 1);
+        document.getElementById('tofdbg-io').innerText = 'rebooting…';
+    }
     function tofdbgOpen() {
         tofzeroStatusIdle();
         tofdbgOpenFlag = true;
@@ -5351,14 +5372,19 @@
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
         tofdbgFetchLog();
         if (!_tofdbgPoll) _tofdbgPoll = setInterval(() => { if (tofdbgOpenFlag) tofdbgFetchLog(); }, 60000);
+        if (!_tofdbgStaleT) _tofdbgStaleT = setInterval(_tofdbgStaleTick, 1000);
+        _tofdbgStaleTick();
     }
     function tofdbgClose() {
         tofdbgOpenFlag = false;
         document.getElementById('tofdbg-overlay').classList.remove('open');
         if (_tofdbgPoll) { clearInterval(_tofdbgPoll); _tofdbgPoll = null; }
+        if (_tofdbgStaleT) { clearInterval(_tofdbgStaleT); _tofdbgStaleT = null; }
     }
+    let tofdbgLastTgAt = 0;
     function tofdbgOnLive(tg) {
         tofdbgLastTg = tg;
+        tofdbgLastTgAt = Date.now();
         if (tofdbgOpenFlag) tofdbgDraw(tg);
     }
     const TOFDBG_STATUS_COL = { 0:'#3ddb7a', 3:'#eda100', 6:'#3987e5' };
@@ -5470,7 +5496,8 @@
             tofdbgPrevFetch = { count: j.count, dropped: j.dropped, now: j.now };
             document.getElementById('tofdbg-io').innerText =
                 j.count + ' events since clear' +
-                (j.dropped ? ' (+' + j.dropped + ' rate-capped)' : '') + rate;
+                (j.dropped ? ' (+' + j.dropped + ' rate-capped)' : '') + rate +
+                (j.heals ? ' · ' + j.heals + ' sensor self-heal' + (j.heals > 1 ? 's' : '') : '');
             if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
             el.innerHTML = j.events.slice().reverse().map(e =>
                 tofdbgWhen(e.ms, j.now) +

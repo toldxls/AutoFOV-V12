@@ -1313,6 +1313,13 @@ const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mod
 // staleness means the shared I²C bus is wedged (any task stuck holding
 // i2cMutex), which a reboot heals via recoverI2CBus() at boot.
 std::atomic<uint32_t> sensorHeartbeatMs{0};
+// Data-silence self-heal (8/16/26): the sensor stopped raising data-ready 46 min
+// after a cold boot and stayed silent 5.8 h with the task alive — invisible to
+// the bus watchdog. sensorTask stamps tofLastFrameMs on every processed frame;
+// 10 s of silence while awake → stop/start the measurement in place. The
+// attempt counter rides /tofdbg so a healed freeze leaves evidence.
+uint32_t tofLastFrameMs = 0;                 // sensorTask-only
+std::atomic<uint32_t> tofSelfHealCount{0};
 // V12.5: worst sensorTask heartbeat stall observed this session (ms). Recorded
 // but NOT acted on — see the F3 note in loop(). Surfaced in /diag to diagnose
 // the intermittent real-hardware I²C stall without rebooting.
@@ -4388,6 +4395,7 @@ void sensorTask(void *pvParameters) {
     // before any i2cMutex take, so a task blocked on the mutex/Wire never
     // refreshes it.
     sensorHeartbeatMs.store(millis(), std::memory_order_release);
+    if (!tofLastFrameMs) tofLastFrameMs = millis();   // arm the silence clock
 
     // V17b: reset EMA state after a sleep/wake cycle
     if (sensorEmaReset.load(std::memory_order_acquire)) {
@@ -4403,6 +4411,7 @@ void sensorTask(void *pvParameters) {
     if (sensorSleeping.load(std::memory_order_acquire)) {
       sensorState.store(0, std::memory_order_release);
       sensorHealth.store(0xFF000000UL, std::memory_order_release);
+      tofLastFrameMs = millis();             // sleep is intentional silence
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -4419,6 +4428,7 @@ void sensorTask(void *pvParameters) {
       }
       sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
       if (dataReady) {
+        tofLastFrameMs = millis();
         VL53L4CX_MultiRangingData_t multiRangingData;
         sensor.VL53L4CX_GetMultiRangingData(&multiRangingData);
         sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
@@ -4619,6 +4629,17 @@ void sensorTask(void *pvParameters) {
           sensorDistTenths.store(0, std::memory_order_release);
         }
       } else {
+        // 10 s without a frame while awake: kick the measurement state machine
+        // in place (we already hold the mutex). Repeats every 10 s until
+        // frames flow again; counted so /tofdbg shows it happened.
+        uint32_t nowMs = millis();
+        if ((uint32_t)(nowMs - tofLastFrameMs) > 10000UL) {
+          sensor.VL53L4CX_StopMeasurement();
+          sensor.VL53L4CX_StartMeasurement();
+          tofSelfHealCount.fetch_add(1, std::memory_order_relaxed);
+          tofLastFrameMs = nowMs;            // next attempt in 10 s, not 10 ms
+          Serial.println("[TOF] data-silence self-heal: measurement restarted");
+        }
         xSemaphoreGive(i2cMutex); 
       }
     }

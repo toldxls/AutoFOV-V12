@@ -1854,6 +1854,7 @@ static void startFullServer() {
             return;
         }
         doc["now"]     = millis();            // dashboard renders event ages
+        doc["heals"]   = tofSelfHealCount.load(std::memory_order_relaxed);
         doc["count"]   = cnt;
         doc["dropped"] = tofTgtEvtDropped.load(std::memory_order_relaxed);
         JsonArray evs = doc.createNestedArray("events");
@@ -2664,6 +2665,12 @@ static void handleWifiCommand(const char* key, const char* val) {
     //   Raises a flag; sensorTask (counter owner) resets the event ring on its
     //   next capture pass. Trend ring is deliberately kept — it is timestamped
     //   history and a scene change shows up in it as the level moving.
+    } else if (strcmp(key, "reboot") == 0) {
+        // Web REBOOT button: warm restart on stable rails — re-references the
+        // TOF warm (the cold-start-bias cure) and recovers wedged states.
+        // Deferred so the WS/HTTP response flushes first (never inline).
+        restartPendingMs = millis();
+
     } else if (strcmp(key, "tofdbgclear") == 0) {
         tofTgtEvtClearReq.store(true, std::memory_order_release);
 
