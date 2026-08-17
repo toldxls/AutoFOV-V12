@@ -2581,12 +2581,18 @@
                   style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
-        <canvas id="tofdbg-trend" title="EMA level (green) + die temp (pink), one sample / 5 min, up to 24 h"></canvas>
+        <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
+          5-min trend · <b style="color:#9fe6cf;">level mm</b> ·
+          <b style="color:#eda100;">signal MCps (faint)</b> ·
+          <b style="color:#e87ba4;">temp °C (right scale)</b></div>
+        <canvas id="tofdbg-trend" title="EMA level + signal + temperature, one sample / 5 min, up to 24 h"></canvas>
         <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         <canvas id="tofdbg-sweep" style="display:none; width:100%; height:96px; background:#061512;
                 border:1px solid #14302a; border-radius:4px; margin-top:4px;"
                 title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
         <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
+        <div style="font-size:10px; color:#7ab4a2; margin-top:8px; padding-top:5px;
+             border-top:1px solid #14302a;">EVENT LOG <span style="color:#5a7a70;">— [T] topology · [L] level step · local time</span></div>
         <div id="tofdbg-log">no events fetched yet</div>
         <div class="tofcal-row" style="margin-top:8px;">
           <button onclick="tofdbgClose()">CLOSE</button>
@@ -5443,6 +5449,7 @@
         if (_tofdbgStaleT) { clearInterval(_tofdbgStaleT); _tofdbgStaleT = null; }
     }
     let tofdbgLastTgAt = 0;
+    let _tofdbgCpsHi = 0;
     function tofdbgOnLive(tg) {
         tofdbgLastTg = tg;
         tofdbgLastTgAt = Date.now();
@@ -5459,8 +5466,14 @@
         ctx.clearRect(0, 0, W, H);
         const t = tg.t || [];
         const padL = 34, padR = 10, padT = 8, padB = 22;
-        const maxMm  = Math.max(30, ...t.map(r => r[0])) * 1.15;
-        const maxCps = Math.max(0.5, ...t.map(r => r[2] / 100));
+        // FIXED x-range: the axis must not dance with each frame's targets.
+        // A completed LOG SWEEP defines the rack's real span (persisted);
+        // otherwise 160 mm covers the bellows. y is a grow-only high-water
+        // so the log decades hold still too.
+        const sweepMax = parseFloat(localStorage.getItem('afovSweepMaxMm') || '0');
+        const maxMm = (sweepMax > 20 ? Math.ceil(sweepMax * 1.08 / 10) * 10 : 160);
+        _tofdbgCpsHi = Math.max(_tofdbgCpsHi, 0.5, ...t.map(r => r[2] / 100));
+        const maxCps = _tofdbgCpsHi;
         // log y: floor two decades below max so weak phantoms stay visible
         const yTop = maxCps * 2, yBot = Math.max(0.01, maxCps / 100);
         const X = mm => padL + (W - padL - padR) * Math.max(0, mm) / maxMm;
@@ -5470,12 +5483,15 @@
         // axes + x ticks
         ctx.strokeStyle = '#14302a'; ctx.fillStyle = '#7ab4a2';
         ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.lineWidth = 1;
-        const step = maxMm > 60 ? 10 : 5;
+        const step = maxMm > 120 ? 20 : maxMm > 60 ? 10 : 5;
         for (let m = 0; m <= maxMm; m += step) {
             ctx.beginPath(); ctx.moveTo(X(m), padT); ctx.lineTo(X(m), H - padB); ctx.stroke();
-            ctx.fillText(m + '', X(m), H - padB + 12);
+            if (X(m) < W - padR - 26) ctx.fillText(m + '', X(m), H - padB + 12);   // keep clear of 'mm'
         }
         ctx.fillText('mm', W - padR - 8, H - padB + 12);
+        // y-axis label — the decades are MCps
+        ctx.save(); ctx.translate(9, padT + (H - padT - padB) / 2); ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = 'center'; ctx.fillText('MCps', 0, 0); ctx.restore();
         // y ticks (MCps, log decades)
         ctx.textAlign = 'right';
         for (let d = Math.ceil(Math.log10(yBot)); d <= Math.log10(yTop); d++) {
@@ -5534,11 +5550,15 @@
             ' &middot; ' + t.map((r, i) => ((tg.i >> i) & 1 ? 'IN' : 'out') +
                 ' ' + r[0] + 'mm@' + (r[2] / 100).toFixed(2)).join(' | ');
     }
+    // Local wall-clock rendering: device millis are mapped through the delta
+    // captured at fetch time. (The old '-0.5s' relative ages read as noise.)
+    let tofdbgWallDelta = 0;
     function tofdbgWhen(devMs, nowMs) {
-        const ago = Math.max(0, nowMs - devMs) / 1000;
-        return ago < 90 ? '-' + ago.toFixed(1) + 's'
-             : ago < 5400 ? '-' + (ago / 60).toFixed(1) + 'm'
-             : '-' + (ago / 3600).toFixed(1) + 'h';
+        const d = new Date(devMs + tofdbgWallDelta);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        return hh + ':' + mm + ':' + ss;
     }
     async function tofdbgFetchLog() {
         const el = document.getElementById('tofdbg-log');
@@ -5547,6 +5567,7 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const j = await r.json();
             tofdbgLogRaw = j;
+            tofdbgWallDelta = Date.now() - j.now;   // device-ms → local wall clock
             // Event rate between refreshes — THE A/B number for a scene change.
             let rate = '';
             if (tofdbgPrevFetch && j.count >= tofdbgPrevFetch.count && j.now > tofdbgPrevFetch.now) {
@@ -5584,13 +5605,16 @@
     function tofdbgDrawTrend(j) {
         const cv = document.getElementById('tofdbg-trend');
         const rows = (j.trend || []).filter(r => r[1] > 0);
+        const lg = document.getElementById('tofdbg-trendlegend');
         if (rows.length < 2) {
             cv.style.display = 'none';
+            if (lg) lg.style.display = 'none';
             const f0 = document.getElementById('tofdbg-tempfit');
             if (f0) f0.style.display = 'none';       // no stale fit text either
             return;
         }
         cv.style.display = 'block';
+        if (lg) lg.style.display = 'block';
         const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
         if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
         const ctx = cv.getContext('2d');
@@ -5684,6 +5708,11 @@
             _tofSweep.done = true;
             b.innerText = 'LOG SWEEP';
             tofdbgDrawSweep();
+            // the swept span defines the live graph's fixed x-range from now on
+            if (_tofSweep.pts.length > 20) {
+                const mx = Math.max(...(_tofSweep.pts.map(p => p[0])));
+                if (mx > 20) localStorage.setItem('afovSweepMaxMm', mx.toFixed(1));
+            }
         } else {
             _tofSweep = { pts: [], done: false, _last: 0 };
             b.innerText = 'STOP (0)';
