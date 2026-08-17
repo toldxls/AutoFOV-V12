@@ -1391,6 +1391,11 @@ std::atomic<uint32_t> vibPulseMs{0};         // millis() at the pulse edge
 // tofTempCoeff·(T − tofTempRef) mm from the averaged distance. coeff 0 = off.
 std::atomic<uint32_t> gAmbientTempC10{0};    // LSM6DSOX temp ×10 °C; 0 = not read yet
 float tofTempCoeff = 0.0f;                   // TOF offset temp coefficient, mm/°C
+// Ambient (IMU) at FOV-cal completion, ×10 °C; 0 = unknown. The cal's capture
+// temperature DEFINES the absolute frame's anchor — it is the principled ref
+// for the temp compensation, so the machine records it instead of the user.
+// Lives in "tofcomp" NVS (outside CalibData — no CALIB_MAGIC bump).
+uint16_t calAmbT10 = 0;
 float tofTempRef   = 21.0f;                  // reference temperature, °C (mid of 65–75 °F)
 // Web-triggered temp-cal point capture: a 2 s rolling average of the sub-mm
 // distance, the SAME window and source (sensorDistTenths) the CAL_SAMPLING
@@ -2466,6 +2471,7 @@ void loadTofComp() {
   preferences.begin("tofcomp", true);
   tofTempCoeff = preferences.getFloat("coeff", 0.0f);
   tofTempRef   = preferences.getFloat("ref",  21.0f);
+  calAmbT10    = preferences.getUShort("calT", 0);
   preferences.end();
   if (!(tofTempCoeff > -50.0f && tofTempCoeff < 50.0f)) tofTempCoeff = 0.0f;   // sanity
   if (!(tofTempRef   > -20.0f && tofTempRef   < 60.0f)) tofTempRef   = 21.0f;
@@ -2474,6 +2480,7 @@ void saveTofComp() {
   preferences.begin("tofcomp", false);
   preferences.putFloat("coeff", tofTempCoeff);
   preferences.putFloat("ref",   tofTempRef);
+  preferences.putUShort("calT", calAmbT10);
   preferences.end();
 }
 // mm to SUBTRACT from the raw averaged distance (0 when disabled / no temp yet).
@@ -7237,6 +7244,10 @@ void finalizeCalibration() {
   // us, but a future code path could miss that check and we'd otherwise read
   // uninitialised distPoints[] / fovPoints[] entries.
   int fitN = (pointsCaptured < nPoints) ? pointsCaptured : nPoints;
+  // Stamp the cal's capture temperature (see calAmbT10) — the fit below always
+  // completes, and ambient doesn't move within this function's runtime.
+  calAmbT10 = (uint16_t)gAmbientTempC10.load(std::memory_order_relaxed);
+  saveTofComp();
   // V12.3: fit in PIXEL space. Pixels are linear in distance; FOV (∝ 1/pixels)
   // is not, so the old FOV-vs-distance line systematically under/over-shot over
   // a wide range. Recover each point's measured pixel count from its stored FOV

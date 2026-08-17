@@ -4995,7 +4995,11 @@
     function tofcalAdoptPassive() {
         const pa = tofcalPassive; if (!pa) return;
         document.getElementById('tofcal-coeff').value = pa.slope.toFixed(3);
-        document.getElementById('tofcal-ref').value   = pa.ref.toFixed(1);
+        // The FOV cal's capture temp is the principled anchor (readings stay
+        // true where the calibration was made); the cloud centroid is the
+        // fallback when no cal temp was recorded.
+        const ref = (state.calAmbC > 0) ? state.calAmbC : pa.ref;
+        document.getElementById('tofcal-ref').value   = ref.toFixed(1);
         tofcalIo('passive fit loaded into the manual fields — press SET to apply');
     }
     function tofcalClose() {
@@ -5305,9 +5309,11 @@
                    'title="Copy the passive slope + reference into the manual fields below — press SET to apply">adopt</span>');
         }
         const cf = state.tcCoeff, rf = state.tcRef, act = document.getElementById('tofcal-active');
-        act.innerHTML = (typeof cf === 'number' && cf !== 0)
+        act.innerHTML = ((typeof cf === 'number' && cf !== 0)
             ? 'Active: <b style="color:#3ddb7a">' + cf.toFixed(3) + ' mm/°C @ ' + (typeof rf === 'number' ? rf.toFixed(1) : '?') + ' °C</b>'
-            : 'Active: <span style="color:#7a958c">off (no compensation)</span>';
+            : 'Active: <span style="color:#7a958c">off (no compensation)</span>')
+            + (state.calAmbC > 0 ? ' <span style="color:#7a958c">· FOV cal captured @ ' +
+               state.calAmbC.toFixed(1) + ' °C — the principled ref</span>' : '');
     }
     // Apply/set/off echo the new value into state IMMEDIATELY — tcCoeff rides
     // the 5 s slow telemetry frame, so without the local echo the Active line
@@ -14707,6 +14713,7 @@
         if (data.tofSample !== undefined) tofcalOnSample(data.tofSample);
         if (data.tofZero !== undefined) tofzeroOnResult(data.tofZero);
         if (data.tofHome !== undefined) { state.tofHome = data.tofHome; tofzeroStatusIdle(); }
+        if (data.calAmbC !== undefined) state.calAmbC = data.calAmbC;
         if (data.tofOff  !== undefined) { state.tofOff  = data.tofOff;  tofzeroStatusIdle(); }
         if (data.tg !== undefined) tofdbgOnLive(data.tg);
 

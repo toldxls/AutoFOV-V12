@@ -2144,6 +2144,7 @@ static void startFullServer() {
         doc["calWidth"]   = isCustomCalib ? sensorWidthPixels : Config::DEFAULT_SENSOR_WIDTH_PX;
         doc["demarcDist"] = isCustomCalib ? demarcationDist   : Config::DEFAULT_DEMARCATION_MM;
         doc["calPoints"]  = nPoints;
+        doc["ambC"]       = calAmbT10 / 10.0f;   // capture temp — provenance for the shared library
         JsonObject fit = doc.createNestedObject("fit");   // informational only
         fit["slope"]     = CTRLX;
         fit["intercept"] = CTRLY;
@@ -3318,6 +3319,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // rounded to 1.000 / 0.005 over the wire — that defeated the web's 4-dp display.
     doc["calibError"]    = roundf(CALIB_ERROR * 100000.0f) / 100000.0f;
     doc["calibR2"]       = roundf(CALIB_R2 * 100000.0f) / 100000.0f;
+    doc["calAmbC"]       = calAmbT10 / 10.0f;             // 0 = not recorded
     doc["calWidth"]      = (int)sensorWidthPixels;
     doc["demarcDist"]    = roundf(demarcationDist * 100.0f) / 100.0f;
     doc["calPoints"]     = nPoints;
