@@ -249,6 +249,7 @@ struct PendingCalib {
     float dist[20];
     float fov[20];
     char  name[32];     // V12.3: optional profile name, shown on the CAL_SUCCESS screen
+    float ambC;         // capture temp from the file's ambC (0 = unknown) — restored on apply
 };
 static PendingCalib pendingCalib;
 static std::atomic<bool> pendingCalibReady{false};
@@ -827,7 +828,7 @@ void wifiLoop() {
     // Checked before the portal early-return so it fires in either mode.
     // 800 ms matches the OTA restart window — enough for AsyncTCP to flush
     // the queued response and FIN to the client at LAN latency.
-    if (restartPendingMs && (millis() - restartPendingMs) > 800UL) {
+    if (restartPendingMs && !otaInProgress && (millis() - restartPendingMs) > 800UL) {
         Serial.println("[WiFi] deferred restart firing");
         Serial.flush();
         ESP.restart();
@@ -2206,6 +2207,7 @@ static void startFullServer() {
             pendingCalib.n      = 0;
             strncpy(pendingCalib.name, doc["name"] | "", sizeof(pendingCalib.name) - 1);
             pendingCalib.name[sizeof(pendingCalib.name) - 1] = '\0';
+            pendingCalib.ambC = doc["ambC"] | 0.0f;   // provenance round-trip (0 = unknown)
             for (JsonObject p : pts) {
                 float d = p["dist"] | NAN;
                 float f = p["fov"]  | NAN;
@@ -2675,7 +2677,10 @@ static void handleWifiCommand(const char* key, const char* val) {
         // Web REBOOT button: warm restart on stable rails — re-references the
         // TOF warm (the cold-start-bias cure) and recovers wedged states.
         // Deferred so the WS/HTTP response flushes first (never inline).
-        restartPendingMs = millis();
+        // REFUSED during OTA: telemetry is muted then, the staleness lamp goes
+        // red, and a restart mid-flush leaves a half-written slot the rollback
+        // probe would advertise as valid.
+        if (!otaInProgress) restartPendingMs = millis();
 
     } else if (strcmp(key, "tofdbgclear") == 0) {
         tofTgtEvtClearReq.store(true, std::memory_order_release);
@@ -2917,7 +2922,7 @@ static void handleWifiCommand(const char* key, const char* val) {
         // When all target points are captured, run the least-squares fit
         if (pointsCaptured >= nPoints) {
             lastCalibName[0] = '\0';   // web point-cal → generic success (no profile name)
-            finalizeCalibration();   // computes CTRLX/CTRLY, saves NVS, sets isCustomCalib
+            finalizeCalibration(/*fromCapture=*/true);   // computes CTRLX/CTRLY, saves NVS, sets isCustomCalib
             // finalizeCalibration() calls drawSuccessScreen() — the physical display
             // will show the CAL_SUCCESS screen briefly (same as touch-triggered flow)
             String out; buildFullStateJson(out);
@@ -2964,6 +2969,11 @@ static void handleWifiCommand(const char* key, const char* val) {
         lastCalibName[sizeof(lastCalibName) - 1] = '\0';
         pendingCalibReady.store(false, std::memory_order_relaxed);
         finalizeCalibration();                 // re-fit + NVS save + CAL_SUCCESS screen (shows the name)
+        // The imported cal's anchor is the FILE's capture temp — never the
+        // import-time room. Absent/invalid → 0 (honest unknown), not a lie.
+        calAmbT10 = (pendingCalib.ambC > 0.0f && pendingCalib.ambC < 60.0f)
+                    ? (uint16_t)lroundf(pendingCalib.ambC * 10.0f) : 0;
+        saveTofComp();
         String out; buildFullStateJson(out);
         wsServer.textAll(out);
 
@@ -3509,6 +3519,8 @@ static void buildFastTelemJson(String& out) {
         if (topoChanged || (++tgFrameCtr % 5) == 0) {
             tgLastSig = snap.sig;
             JsonObject tg = doc.createNestedObject("tg");
+            tg["ms"] = snap.ms;          // device time of the FRAME — the staleness
+                                         // lamp must age the data, not the transport
             tg["p"] = snap.pubT;         // published weighted dist, tenths mm
             tg["e"] = snap.emaT;         // EMA level, tenths mm
             tg["sc"] = snap.spads;       // effective SPADs, 8.8 fixed (÷256)

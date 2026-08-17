@@ -1320,6 +1320,11 @@ std::atomic<uint32_t> sensorHeartbeatMs{0};
 // attempt counter rides /tofdbg so a healed freeze leaves evidence.
 uint32_t tofLastFrameMs = 0;                 // sensorTask-only
 std::atomic<uint32_t> tofSelfHealCount{0};
+// Heal→relock hop: armTofRelock() is Core-1-owned, so the sensorTask heal
+// raises this and loop() arms the cure — a restart re-references the level
+// by ~mm; without the cure the UI would claim LOCKED (HOT) on a fresh state
+// while the session-zero offset still pointed at the old level.
+std::atomic<bool> tofHealRelockReq{false};
 // V12.5: worst sensorTask heartbeat stall observed this session (ms). Recorded
 // but NOT acted on — see the F3 note in loop(). Surfaced in /diag to diagnose
 // the intermittent real-hardware I²C stall without rebooting.
@@ -2546,7 +2551,7 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
 void drawLeftBoxedText(const char* txt, int x, int y, uint16_t bgCol);
 void drawCaptureSaveButton(Button& btn, uint16_t boxCol, uint16_t textCol);
 void centerStaticText(const char* txt, int y, uint8_t size);
-void finalizeCalibration();
+void finalizeCalibration(bool fromCapture = false);
 void finalizeEarly();
 void resetToFactory();
 void updateDisplay();
@@ -4529,9 +4534,15 @@ void sensorTask(void *pvParameters) {
           snap.pubT = (validSignalSum > 0.0)
               ? (uint16_t)min((double)lround(weightedDistanceSum / validSignalSum * 10.0), 65535.0)
               : 0;
-          // Level context: the EMA as it stood BEFORE this frame folds in.
-          snap.emaT = (emaDistance >= 0)
-              ? (uint16_t)min((double)lround(emaDistance * 10.0), 65535.0) : 0;
+          // Level context: the EMA as it stood BEFORE this frame folds in —
+          // in the SESSION-ZERO frame (offset subtracted), so trend points and
+          // the 2 s captures (sensorDistTenths) share ONE frame: pooling them
+          // in the temp fit must not straddle a constant zero-offset step.
+          // (Still no tofTempCorrMm — the fit must see the full drift.)
+          int32_t emaZ = (emaDistance >= 0)
+              ? (int32_t)lround(emaDistance * 10.0)
+                - tofZeroOffsetT.load(std::memory_order_relaxed) : -1;
+          snap.emaT = (emaZ >= 0) ? (uint16_t)min(65535L, (long)emaZ) : 0;
           snap.spads = multiRangingData.EffectiveSpadRtnCount;
           snap.pad2 = 0;
           uint32_t sig = ((uint32_t)snap.n << 8) | snap.incMask;
@@ -4658,6 +4669,11 @@ void sensorTask(void *pvParameters) {
           sensor.VL53L4CX_StopMeasurement();
           sensor.VL53L4CX_StartMeasurement();
           tofSelfHealCount.fetch_add(1, std::memory_order_relaxed);
+          // A restart is a re-reference: reset the EMA (stale scene must not
+          // blend into the fresh state) and arm the relock cure on Core 1 —
+          // every other stop/start path does both; this one missed them.
+          sensorEmaReset.store(true, std::memory_order_release);
+          tofHealRelockReq.store(true, std::memory_order_release);
           tofLastFrameMs = nowMs;            // next attempt in 10 s, not 10 ms
           Serial.println("[TOF] data-silence self-heal: measurement restarted");
         }
@@ -6251,6 +6267,9 @@ void loop() {
     // menu/settings change). The IMU is a pure power/heat saving with no
     // measurement consequence — unlike the TOF, which is deliberately never
     // auto-slept any more (see the sensorsAutoOff declaration).
+    if (tofHealRelockReq.exchange(false, std::memory_order_acq_rel)) {
+      armTofRelock();       // self-heal restarted ranging — treat like a wake
+    }
     if (!sensorsAutoOff && idle > SENSOR_IDLE_OFF_MS) {
       vibAutoOff.store(true, std::memory_order_release);   // vibTask powers the IMU down
       sensorsAutoOff = true;
@@ -6345,7 +6364,7 @@ void loop() {
           } else {
             currentMode = CAL_RUN;
             lastCalibName[0] = '\0';   // device cal → generic success (no profile name)
-            finalizeCalibration();
+            finalizeCalibration(/*fromCapture=*/true);
           }
         }
       } else {
@@ -7247,7 +7266,7 @@ static void clearCalibBackup() {
   p.end();
 }
 
-void finalizeCalibration() {
+void finalizeCalibration(bool fromCapture) {
   tft.fillRect(0, 305, 240, 15, THEME_BG);
   setSmoothFont(1); tft.setTextColor(0x07FF);
   tft.setCursor(5, 318); 
@@ -7258,10 +7277,14 @@ void finalizeCalibration() {
   // us, but a future code path could miss that check and we'd otherwise read
   // uninitialised distPoints[] / fovPoints[] entries.
   int fitN = (pointsCaptured < nPoints) ? pointsCaptured : nPoints;
-  // Stamp the cal's capture temperature (see calAmbT10) — the fit below always
-  // completes, and ambient doesn't move within this function's runtime.
-  calAmbT10 = (uint16_t)gAmbientTempC10.load(std::memory_order_relaxed);
-  saveTofComp();
+  // Stamp the cal's capture temperature (see calAmbT10) — ONLY for a genuine
+  // on-device capture: imports carry their own ambC (or none), the boot-time
+  // magic-bump restore runs before vibTask exists (reading is 0), and a
+  // sub-zero reading would wrap the uint16. Guarded on all three.
+  if (fromCapture) {
+    int32_t a10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
+    if (a10 > 0 && a10 < 600) { calAmbT10 = (uint16_t)a10; saveTofComp(); }
+  }
   // V12.3: fit in PIXEL space. Pixels are linear in distance; FOV (∝ 1/pixels)
   // is not, so the old FOV-vs-distance line systematically under/over-shot over
   // a wide range. Recover each point's measured pixel count from its stored FOV
@@ -7353,7 +7376,7 @@ void finalizeEarly() {
   isRetakeMode = false;
   lastCalibName[0] = '\0';      // device cal → generic success (no profile name)
   currentMode = CAL_RUN;        // finalizeCalibration() repaints into CAL_SUCCESS
-  finalizeCalibration();
+  finalizeCalibration(/*fromCapture=*/true);
 }
 
 // Main-screen TOF thermal-state tag (top-left at x=44,y=26 — replaces the old
@@ -8233,6 +8256,10 @@ void refreshPixelValue(int p, bool force) {
 }
 
 void resetToFactory() {
+  // Factory reset must not leave the OLD cal's temperature anchor behind —
+  // a stale "FOV cal captured @ T" on a default cal is false provenance.
+  calAmbT10 = 0;
+  saveTofComp();
   CTRLX = Config::DEFAULT_CTRL_X; CTRLY = Config::DEFAULT_CTRL_Y;
   sensorWidthPixels = Config::DEFAULT_SENSOR_WIDTH_PX; demarcationDist = Config::DEFAULT_DEMARCATION_MM;
   nPoints = 10;  // sensible default; user can adjust between MIN_CALIB_POINTS and MAX_CALIB_POINTS

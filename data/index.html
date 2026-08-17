@@ -2491,10 +2491,12 @@
           where the correction is zero &mdash; use the FOV cal's capture temperature (recorded
           automatically from your next recal on) so absolute readings stay anchored to the state the
           system was calibrated in; any ref error is a constant that ZERO @ MAX RACK absorbs.
-          <b>auto-update</b> is strictly quality-gated: the applied coefficient is FROZEN until a
-          new fit <i>beats its pedigree</i> &mdash; significantly wider &Delta;T (&ge;1.25&times;), or
-          comparable range with better r and more points &mdash; and with compensation live, only a
-          wide, well-correlated residual of real size (&ge;0.1 mm/&deg;C) forces a correction. Fits are only meaningful over periods
+          The logged points are deliberately <b>raw</b> (compensation never touches them), so every
+          fit measures the full coefficient and applying one <b>replaces</b> the old &mdash; nothing
+          accumulates. <b>auto-update</b> is strictly quality-gated: the applied coefficient is
+          FROZEN until a new fit <i>beats its pedigree</i> &mdash; significantly wider &Delta;T
+          (&ge;1.25&times;), or comparable range with strictly higher r and more points. A re-zero
+          steps the logged frame &mdash; clear the points after zeroing if a fit spans one. Fits are only meaningful over periods
           with a static scene; slow overnight legs beat fast morning warm-ups (thermal lag).
           SAVE/LOAD moves capture points between machines or the gh-pages library.</div>
         <div id="tofcal-live">
@@ -4975,10 +4977,12 @@
     // (median level ±5 mm — a soak passes whole; racking excursions drop out).
     // Same axes as the manual captures, so they overlay directly on the graph.
     let tofcalPassive = null, tofcalPassiveN = null;   // N = raw usable rows, even below the plot threshold
+    let _tofcalDataGen = 0;                            // bumped on clear — orphans in-flight fetches/captures
     async function tofcalFetchPassive() {
+        const myGen = _tofcalDataGen;
         tofcalPassive = null; tofcalPassiveN = null;
         try {
-            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store' });
+            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store', silent: !tofcalOpenFlag });
             if (!r.ok) return;
             const j = await r.json();
             const tval = row => (row.length > 7 && row[7] !== -32768 && isFinite(row[7])) ? row[7] / 10
@@ -5001,6 +5005,7 @@
                               slope: stt > 1e-9 ? std_ / stt : 0,
                               r: (stt * sdd > 1e-12) ? std_ / Math.sqrt(stt * sdd) : 0 };
         } catch (e) { tofcalPassive = null; }
+        if (myGen !== _tofcalDataGen) return;   // a clear superseded this response
         tofcalRender();
         tofcalAutoConsider();
     }
@@ -5010,12 +5015,13 @@
         document.getElementById('tofcal-gh-list').style.display = 'none';
         if (_tofcalPoll) { clearInterval(_tofcalPoll); _tofcalPoll = null; }
     }
-    // ── Auto-update: strictly quality-gated, never a blend ──
-    // A coefficient is FROZEN until a new fit BEATS the pedigree that set it:
-    // significantly wider ΔT, or comparable ΔT with better r and more points.
-    // With compensation live the fit measures the RESIDUAL — a correct
-    // coefficient leaves no slope, so silence is success; only a wide,
-    // well-correlated residual of real size forces a correction.
+    // ── Auto-update: strictly quality-gated, REPLACE semantics ──
+    // The firmware logs the fit data RAW (no temp correction, by design: "the
+    // fit must see the drift it models"), so every fit measures the FULL
+    // coefficient and adoption REPLACES — never adds, never blends. The
+    // coefficient is frozen until a new fit strictly beats its pedigree
+    // (wider ΔT, or comparable ΔT with strictly higher r AND more points —
+    // strict, so a dataset can never re-qualify against itself).
     function tofcalAutoEnabled(){ return localStorage.getItem('afovTcAuto') === '1'; }
     function tofcalAutoToggle(cb){
         localStorage.setItem('afovTcAuto', cb.checked ? '1' : '0');
@@ -5027,7 +5033,6 @@
                     (Math.sqrt(Math.max(0, fit.r2)) * 100).toFixed(0) + ',' + fit.n);
         state.tcCoeff = parseFloat(coeff.toFixed(4)); state.tcRef = parseFloat(ref.toFixed(2));
         state.tcSpan = fit.span; state.tcR = Math.sqrt(Math.max(0, fit.r2)); state.tcN = fit.n;
-        _tofcalResetData();
         tofcalIo('auto-update (' + why + '): ' + coeff.toFixed(3) + ' mm/°C · ΔT ' +
                  fit.span.toFixed(1) + ' °C · r ' + state.tcR.toFixed(2) + ' · n ' + fit.n);
         tofcalRender();
@@ -5035,23 +5040,28 @@
     function tofcalAutoConsider(){
         if (!tofcalAutoEnabled()) return;
         if (state.screen === 'screen-calrun') return;          // never mid-calibration
+        if (typeof state.tcCoeff !== 'number') return;         // device state not received yet —
+                                                               // "unknown" must never read as "off"
         const fit = tofcalFit();
         if (!fit || fit.span < 1.5 || fit.n < 96) return;      // 8 h of 5-min points minimum
         const r = Math.sqrt(Math.max(0, fit.r2));
-        const cur = state.tcCoeff || 0;
-        const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
-        if (!cur) {
-            if (r < 0.7) return;
+        if (r < 0.7) return;
+        const cur = state.tcCoeff;
+        // Ref is sticky while a coefficient is live: silently re-anchoring to a
+        // new calAmbC would step the published frame by coeff·Δref mid-session.
+        // A fresh adoption (cur = 0) anchors to the cal temp when recorded.
+        const ref = cur ? (typeof state.tcRef === 'number' ? state.tcRef : fit.ref)
+                        : ((state.calAmbC > 0) ? state.calAmbC : fit.ref);
+        if (!cur && !(state.tcSpan > 0)) {
             _tofcalAdopt(fit.slope, ref, fit, 'first fit');
             return;
         }
         const ps = state.tcSpan || 0, pr = state.tcR || 0, pn = state.tcN || 0;
         const extended = fit.span >= ps * 1.25;                        // range grew significantly
-        const better   = fit.span >= ps * 0.9 && r >= Math.max(0.7, pr) && fit.n >= pn;
+        const better   = fit.span >= ps * 0.9 && r > pr && fit.n > pn; // STRICTLY better
         if (!(extended || better)) return;                             // pedigree stands
-        if (r < 0.7) return;                                           // residual must be REAL
-        if (Math.abs(fit.slope) < 0.1) return;                         // and big enough to matter
-        _tofcalAdopt(cur + fit.slope, ref, fit, extended ? 'range extended' : 'better fit');
+        if (Math.abs(fit.slope - cur) < 0.02) return;                  // same answer — skip the NVS write
+        _tofcalAdopt(fit.slope, ref, fit, extended ? 'range extended' : 'better fit');
     }
     // Background consideration every 30 min even with the dialog closed —
     // "captured automatically" should not require anyone to open a panel.
@@ -5067,8 +5077,10 @@
     // with {"tofSample":{d,sd,t,n}}. The 30 Hz telemetry only carries whole mm,
     // which cannot resolve the ~0.05 mm/°C slope being fitted.
     let tofcalPendTimer = null;
+    let _tofcalCapGen = 0;
     function tofcalCapture() {
         if (tofcalPendTimer) return;                       // one at a time
+        _tofcalCapGen = _tofcalDataGen;                    // a clear mid-sample orphans the reply
         if (tofcalTemp() == null) { document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no ambient temperature yet — is the IMU awake?</span>'; return; }
         sendCommand('tofsample', 1);   // needs a value — {k:undefined} stringifies to {}
         const btn = document.getElementById('tofcal-cap');
@@ -5094,16 +5106,16 @@
             document.getElementById('tofcal-fit').innerHTML = '<span class="warn">no valid range in the 2 s window — is the sensor asleep or aimed at nothing?</span>';
             return;
         }
+        if (_tofcalCapGen !== _tofcalDataGen) return;      // dataset was cleared mid-sample
         tofcalPts.push({ t: s.t, d: s.d, sd: s.sd, n: s.n, ts: Date.now() });
         tofcalSave(); tofcalRender();
     }
     function tofcalClearAll() {
-        tofcalPts = []; tofcalSave();
-        sendCommand('tofdbgclear', 1);
-        tofcalPassive = null; tofcalPassiveN = 0;
+        if (!confirm('Clear ALL temp-cal data?\n\n• captured points in this browser (the only copy)\n' +
+                     '• the device\u2019s 24 h passive ring\n• the TOF TARGETS event log\n\nThere is no undo.')) return;
+        _tofcalResetData();
         tofcalRender();
         tofcalIo('all points cleared — the passive ring restarts on the device');
-        setTimeout(tofcalFetchPassive, 600);
     }
     function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalSave(); tofcalRender(); }
     // Capture time — HH:MM today, M/D for older points, so a stale point from a
@@ -5348,7 +5360,7 @@
             let msg = 'fit over <b>' + fit.n + '</b> pts (' + nPas + ' passive + ' + tofcalPts.length + ' captured): ' +
                       'slope <b>' + fit.slope.toFixed(3) + '</b> mm/°C · R² ' + fit.r2.toFixed(2) +
                       ' · ΔT ' + fit.span.toFixed(1) + ' °C';
-            if (state.tcCoeff) msg += ' <span style="color:#7a958c">(residual — compensation is live, expect ≈0)</span>';
+            if (state.tcCoeff) msg += ' <span style="color:#7a958c">(raw frame — the fit always sees the full drift; compensation never touches these points)</span>';
             if (fit.span < 1.0) msg += ' <span class="warn">(ΔT &lt; 1 °C — collect more range before trusting it)</span>';
             else if (fit.r2 < 0.5 && !state.tcCoeff) msg += ' <span class="warn">(weak fit)</span>';
             fEl.innerHTML = msg;
@@ -5374,10 +5386,12 @@
     // sits stale for seconds after the click and the button looks dead. The
     // next slow frame overwrites with the device's authoritative value (which
     // also reverts the echo if the command never landed).
-    // Adoption resets the dataset: from now on the log records the COMPENSATED
-    // frame, so pre-adoption points (old frame) would corrupt the next fit —
-    // and future fits measure the RESIDUAL slope (expect ≈0 when the coeff is right).
+    // NOTE: the dataset is NOT reset on adoption — the firmware logs raw
+    // (uncompensated) values, so the fit always measures the full coefficient
+    // and adoption simply replaces it. _tofcalResetData exists for the explicit
+    // clear button and for a re-zero (which steps the logged frame).
     function _tofcalResetData() {
+        _tofcalDataGen++;                       // orphan in-flight fetches/captures
         tofcalPts = []; tofcalSave();
         sendCommand('tofdbgclear', 1);
         tofcalPassive = null; tofcalPassiveN = 0;
@@ -5385,17 +5399,16 @@
     }
     function tofcalApply() {
         const fit = tofcalFit(); if (!fit) return;
-        const cur = state.tcCoeff || 0;
-        const coeff = cur ? cur + fit.slope : fit.slope;   // residual adds to the live coeff
-        const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
-        sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
+        const cur = (typeof state.tcCoeff === 'number') ? state.tcCoeff : 0;
+        const ref = cur ? (typeof state.tcRef === 'number' ? state.tcRef : fit.ref)
+                        : ((state.calAmbC > 0) ? state.calAmbC : fit.ref);
+        sendCommand('tofcomp', fit.slope.toFixed(4) + ',' + ref.toFixed(2) + ',' +
                     (fit.span * 10).toFixed(0) + ',' +
                     (Math.sqrt(Math.max(0, fit.r2)) * 100).toFixed(0) + ',' + fit.n);
-        state.tcCoeff = parseFloat(coeff.toFixed(4));
+        state.tcCoeff = parseFloat(fit.slope.toFixed(4));
         state.tcRef   = parseFloat(ref.toFixed(2));
         state.tcSpan  = fit.span; state.tcR = Math.sqrt(Math.max(0, fit.r2)); state.tcN = fit.n;
-        _tofcalResetData();
-        tofcalRender(); tofcalIo('fit applied ✓ — dataset reset (now logging the compensated frame)');
+        tofcalRender(); tofcalIo('fit applied ✓ (replaces the previous coefficient)');
     }
     function tofcalManual() {
         const cf = parseFloat(document.getElementById('tofcal-coeff').value);
@@ -5405,12 +5418,12 @@
         state.tcCoeff = cf;
         state.tcRef   = isNaN(rf) ? 21 : rf;
         state.tcSpan  = 0; state.tcR = 0; state.tcN = 0;   // manual = no pedigree
-        _tofcalResetData();
-        tofcalRender(); tofcalIo('manual coefficient set ✓ — dataset reset');
+        tofcalRender(); tofcalIo('manual coefficient set ✓');
     }
     function tofcalOff() {
         sendCommand('tofcomp', 'off');
         state.tcCoeff = 0;
+        state.tcSpan = 0; state.tcR = 0; state.tcN = 0;   // firmware zeroes its pedigree too
         tofcalRender(); tofcalIo('compensation off');
     }
 
@@ -5437,13 +5450,19 @@
             return;
         }
         if (!tofdbgLastTgAt) { el.innerHTML = ''; return; }
-        const age = (Date.now() - tofdbgLastTgAt) / 1000;
+        // Age the FRAME via the device's own timestamp (tg.ms mapped through
+        // the fetch-time wall delta) — the firmware re-sends a frozen snapshot
+        // every 5th fast frame, so receive-time aging would show LIVE over a
+        // corpse. Receive time is only the pre-first-fetch fallback.
+        const age = (tofdbgLastTg && tofdbgLastTg.ms !== undefined && tofdbgWallDelta)
+            ? (Date.now() - (tofdbgLastTg.ms + tofdbgWallDelta)) / 1000
+            : (Date.now() - tofdbgLastTgAt) / 1000;
         const st = (tofdbgLastTg && tofdbgLastTg.t || []).map(r => r[1]).join('/');
         if (age < 3) {
             el.innerHTML = '<b style="color:#3ddb7a;">● LIVE</b> <span style="color:#5e8c7e; font-size:10px;">st ' + (st || '—') + '</span>';
         } else {
-            el.innerHTML = '<b style="color:#ff6a6a; background:#3a0f0f; padding:1px 6px; border-radius:3px;">● STALE — no frame for ' +
-                age.toFixed(0) + ' s</b> <span style="color:#e7967a; font-size:10px;">sensor silent — self-heal kicks at 10 s, or REBOOT</span>';
+            el.innerHTML = '<b style="color:#ff6a6a; background:#3a0f0f; padding:1px 6px; border-radius:3px;">● STALE — no fresh frame for ' +
+                age.toFixed(0) + ' s</b> <span style="color:#e7967a; font-size:10px;">sensor silent, link busy, or OTA — the 10 s self-heal covers a stuck sensor</span>';
         }
     }
     function tofdbgReboot() {
@@ -5457,7 +5476,7 @@
         document.getElementById('tofdbg-overlay').classList.add('open');
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
         tofdbgFetchLog();
-        if (!_tofdbgPoll) _tofdbgPoll = setInterval(() => { if (tofdbgOpenFlag) tofdbgFetchLog(); }, 60000);
+        if (!_tofdbgPoll) _tofdbgPoll = setInterval(() => { if (tofdbgOpenFlag) tofdbgFetchLog(true); }, 60000);
         if (!_tofdbgStaleT) _tofdbgStaleT = setInterval(_tofdbgStaleTick, 1000);
         _tofdbgStaleTick();
     }
@@ -5492,10 +5511,11 @@
         const sweepMax = parseFloat(localStorage.getItem('afovSweepMaxMm') || '0');
         const maxMm = (sweepMax > 20 ? Math.ceil(sweepMax * 1.08 / 10) * 10 : 160);
         _tofdbgCpsHi = Math.max(_tofdbgCpsHi, 0.5, ...t.map(r => r[2] / 100));
-        const maxCps = _tofdbgCpsHi;
+        const maxCps = _tofdbgCpsHi;                 // AXIS scale only (stable)
+        const frameMax = Math.max(0.5, ...t.map(r => r[2] / 100));   // the blend rule's reference
         // log y: floor two decades below max so weak phantoms stay visible
-        const yTop = maxCps * 2, yBot = Math.max(0.01, maxCps / 100);
-        const X = mm => padL + (W - padL - padR) * Math.max(0, mm) / maxMm;
+        const yTop = maxCps * 2, yBot = 0.01;        // fixed floor — weak phantoms must plot
+        const X = mm => padL + (W - padL - padR) * Math.min(Math.max(0, mm), maxMm) / maxMm;   // clamp: far targets pin at the edge, never vanish
         const Y = c  => { const cl = Math.min(Math.max(c, yBot), yTop);
             return padT + (H - padT - padB) *
                    (1 - Math.log(cl / yBot) / Math.log(yTop / yBot)); };
@@ -5521,8 +5541,9 @@
         }
         ctx.strokeStyle = '#14302a';
         ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
-        // 20% threshold
-        const thr = maxCps * 0.2;
+        // 20% threshold — of THIS FRAME's strongest signal (the firmware's
+        // actual per-frame blend rule), not of the sticky axis high-water
+        const thr = frameMax * 0.2;
         ctx.strokeStyle = '#7ab4a2'; ctx.setLineDash([4, 3]);
         ctx.beginPath(); ctx.moveTo(padL, Y(thr)); ctx.lineTo(W - padR, Y(thr)); ctx.stroke();
         ctx.setLineDash([]);
@@ -5579,10 +5600,10 @@
         const ss = String(d.getSeconds()).padStart(2, '0');
         return hh + ':' + mm + ':' + ss;
     }
-    async function tofdbgFetchLog() {
+    async function tofdbgFetchLog(silent) {
         const el = document.getElementById('tofdbg-log');
         try {
-            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store' });
+            const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store', silent: !!silent });
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const j = await r.json();
             tofdbgLogRaw = j;
@@ -5727,10 +5748,13 @@
             _tofSweep.done = true;
             b.innerText = 'LOG SWEEP';
             tofdbgDrawSweep();
-            // the swept span defines the live graph's fixed x-range from now on
+            // the swept span defines the live graph's fixed x-range from now on —
+            // 99th percentile, clamped, so one phantom wall reading can't
+            // persist an absurd axis
             if (_tofSweep.pts.length > 20) {
-                const mx = Math.max(...(_tofSweep.pts.map(p => p[0])));
-                if (mx > 20) localStorage.setItem('afovSweepMaxMm', mx.toFixed(1));
+                const ds = _tofSweep.pts.map(p => p[0]).sort((a2, b2) => a2 - b2);
+                const mx = ds[Math.floor(ds.length * 0.99)];
+                if (mx > 20 && mx < 300) localStorage.setItem('afovSweepMaxMm', mx.toFixed(1));
             }
         } else {
             _tofSweep = { pts: [], done: false, _last: 0 };
@@ -5809,6 +5833,7 @@
         document.getElementById('tofdbg-trend').style.display = 'none';
         const f0 = document.getElementById('tofdbg-tempfit');
         if (f0) f0.style.display = 'none';
+        _tofdbgCpsHi = 0;                     // y high-water restarts with the log
         document.getElementById('tofdbg-io').innerText = 'clearing…';
         setTimeout(tofdbgFetchLog, 400);      // ring owner resets on its next pass
     }
@@ -9924,6 +9949,11 @@
         opts.headers = Object.assign({ 'X-AutoFOV-Token': csrfToken }, opts.headers || {});
         let r = await fetch(wifiBase + path, opts);
         if (r.status === 401 || r.status === 403) {
+            // Background timers must fail QUIETLY: after a reboot rotates the
+            // token, a closed-panel poll must not spawn a spontaneous login
+            // modal (or, via autofill, an unprompted biometric sheet). The
+            // next user-initiated call re-authenticates normally.
+            if (opts.silent) return r;
             csrfToken = ''; localStorage.removeItem('afovToken');
             if (await doLogin()) {
                 opts.headers['X-AutoFOV-Token'] = csrfToken;
@@ -14045,7 +14075,8 @@
     // in localStorage only when the checkbox is set — that token is reused on
     // reopen until the device reboots (rotating it) or the user signs out.
     let _loginPromise = null, _loginResolve = null;
-    let _loginKeystrokes = 0, _loginAutoBound = false, _loginAutoFired = false;
+    let _loginPrevLen = 0, _loginInputEvents = 0, _loginPasted = false;
+    let _loginAutoBound = false, _loginAutoFired = false;
     function doLogin() {
         if (_loginPromise) return _loginPromise;        // already showing
         _loginPromise = new Promise(res => { _loginResolve = res; });
@@ -14056,29 +14087,33 @@
         pw.value = '';
         err.textContent = '';
         cb.checked = localStorage.getItem('afovRemember') === '1';
-        // One-tap biometric flow: when the password manager FILLS the field (a
-        // whole value arriving in one input event with zero keystrokes — the
-        // biometric already happened), sign in without a second tap. Typed
-        // entry (keystrokes > 0, incl. Cmd+V) keeps the explicit SIGN IN.
+        // One-tap biometric flow. Detection must not rely on keydown contents:
+        // Android/IME keyboards report key='Unidentified' for every character,
+        // so "zero printable keydowns" false-fires on normally-typed passwords
+        // (auto-submitting a 6-char prefix into the per-IP lockout). Instead:
+        // a manager FILL is the whole value landing in ONE input event on an
+        // empty field; typing (any keyboard/IME) grows the value one event at
+        // a time; explicit paste is flagged and keeps the SIGN IN button.
         if (!_loginAutoBound) {
             _loginAutoBound = true;
-            // Count only PRINTABLE keys as typing — Enter/arrows are how the
-            // autofill dropdown is navigated, and must not veto the auto-submit.
-            pw.addEventListener('keydown', (e) => { if (e.key && e.key.length === 1) _loginKeystrokes++; });
+            pw.addEventListener('paste', () => { _loginPasted = true; });
             pw.addEventListener('input', () => {
-                if (_loginKeystrokes === 0 && !_loginAutoFired && pw.value.length >= 6) {
+                const len = pw.value.length, jump = len - _loginPrevLen;
+                _loginPrevLen = len; _loginInputEvents++;
+                if (_loginPasted) { _loginPasted = false; return; }
+                if (!_loginAutoFired && jump >= 6 && len === jump) {
                     _loginAutoFired = true;
                     setTimeout(loginSubmit, 80);        // let the fill settle
                 }
             });
         }
-        _loginKeystrokes = 0; _loginAutoFired = false;
-        // Chrome doesn't reliably dispatch 'input' for autofill — poll as the
-        // event-independent fallback: a value that appeared with zero typed
-        // characters is a manager fill (the biometric already happened).
+        _loginPrevLen = 0; _loginInputEvents = 0; _loginPasted = false; _loginAutoFired = false;
+        // Some Chrome autofill paths dispatch NO input event at all — poll for
+        // a value that appeared with zero input events. Any typing (IME
+        // included) fires input events and disarms this path entirely.
         const pollT = setInterval(() => {
             if (!ov.classList.contains('open')) { clearInterval(pollT); return; }
-            if (!_loginAutoFired && _loginKeystrokes === 0 && pw.value.length >= 6) {
+            if (!_loginAutoFired && _loginInputEvents === 0 && pw.value.length >= 6) {
                 _loginAutoFired = true;
                 clearInterval(pollT);
                 loginSubmit();
