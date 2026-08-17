@@ -2478,28 +2478,35 @@
     </style>
     <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
       <div id="tofcal-box">
-        <h3>TOF TEMPERATURE CAL</h3>
-        <div class="tc-sub">The TOF range drifts slightly with room temperature, which shifts the
-          live FOV (FOV = k / (a&middot;distance + b)). Aim at a <b>fixed</b> target and CAPTURE a point
-          now and then as the room warms/cools across the day; once the points span a degree or two,
-          APPLY fits the correction. Temperature is the LSM6DSOX sensor (close to ambient).
-          CAPTURE averages the distance over 2 seconds on the device &mdash; the same window the
-          calibration screen uses &mdash; so each point carries sub-mm resolution.
-          Points are kept in this browser across reloads; SAVE/LOAD moves a session between
-          machines or into the gh-pages library. A settled sensor has shown <b>no</b> measurable
-          ambient coefficient (7/27/26 bench: &minus;0.08 mm/&deg;C over 2.2 &deg;C) &mdash; but a
-          boot, wake, or RE-LOCK shifts the reading a couple of mm to a new flat level. If the
-          points form two shelves with a step, that is a re-lock epoch boundary, not temperature:
-          fit within one epoch (delete the other shelf), and expect the slope near zero.</div>
+        <h3>TOF TEMPERATURE CAL <span class="help-btn" onclick="tofcalToggleHelp()" title="How this works">?</span></h3>
+        <div class="tc-sub">The range drifts with room temperature (~1.5 mm/&deg;C measured 8/17/26,
+          r&nbsp;0.93 overnight). Points collect <b>automatically</b> every 5 min while the device is on;
+          CAPTURE adds a precise 2-s point to the same set. One good wide-&Delta;T fit is all it takes.</div>
+        <div id="tofcal-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
+          The correction subtracts <i>coeff &times; (T &minus; ref)</i> from the range before FOV,
+          zeroing, and capture. Temperature is the LSM6DSOX (outside the enclosure, tracks room air;
+          the TOF chip exposes no thermometer). The pink cloud is the passive 5-min log from the
+          device's 24 h ring (RAM &mdash; restarts on reboot); green dots are your CAPTURE points
+          (2-s device-side averages, kept in this browser). Both feed <b>one</b> fit. <b>ref</b> is
+          where the correction is zero &mdash; use the FOV cal's capture temperature (recorded
+          automatically from your next recal on) so absolute readings stay anchored to the state the
+          system was calibrated in; any ref error is a constant that ZERO @ MAX RACK absorbs.
+          <b>auto-update</b> adopts qualifying fits (&Delta;T &ge; 1.5 &deg;C, r &ge; 0.7, 8 h+) and
+          blends them by information weight (&Delta;T&sup2;&middot;n) &mdash; a narrow-range night
+          barely moves a coefficient earned over a wide swing. Fits are only meaningful over periods
+          with a static scene; slow overnight legs beat fast morning warm-ups (thermal lag).
+          SAVE/LOAD moves capture points between machines or the gh-pages library.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
         </div>
         <div class="tofcal-row">
           <button id="tofcal-cap" onclick="tofcalCapture()">CAPTURE POINT</button>
-          <button onclick="tofcalClearPts()">clear points</button>
-          <button onclick="tofcalClearPassive()"
-                  title="Clears the device's trend ring (the auto-logged pink cloud) — also resets the TOF TARGETS event log">clear passive log</button>
+          <button onclick="tofcalClearAll()"
+                  title="One dataset, one clear: removes the captured points AND the device's passive ring (this also resets the TOF TARGETS event log)">clear all points</button>
+          <label style="font-size:11px; color:#7ab4a2; cursor:pointer;"
+                 title="Adopt qualifying passive fits automatically (ΔT ≥ 1.5 °C, r ≥ 0.7, 8 h+), blended by information weight — a wide-range coefficient is effectively frozen against narrow-range noise">
+            <input type="checkbox" id="tofcal-auto" onchange="tofcalAutoToggle(this)"> auto-update</label>
         </div>
         <div id="tofcal-pts"></div>
         <canvas id="tofcal-graph" width="880" height="440"></canvas>
@@ -2531,14 +2538,19 @@
     <div id="tofdbg-overlay" onclick="if(event.target===this)tofdbgClose()">
       <div id="tofdbg-box">
         <h3>TOF TARGETS</h3>
-        <div class="tc-sub">Raw histogram output, live. The published distance is the
-          signal-weighted average of the <b>solid</b> stems — status 0/3/6 <i>and</i>
-          &ge;20% of the strongest signal (dashed line). Hollow stems are seen but
-          excluded. The log records <b>[T]</b> topology changes (a stem appearing,
-          vanishing, changing status, or crossing the 20% line) and <b>[L]</b> level
-          steps &mdash; the published distance moving &ge;1.5&nbsp;mm between frames
-          with <i>no</i> topology change: the signature of an internal re-reference
-          (what a re-lock does, and what the &ldquo;magic&rdquo; jumps look like).</div>
+        <div class="tc-sub">Raw histogram targets, live &mdash; solid stems are in the published
+          blend, hollow are excluded. <span class="help-btn" onclick="tofdbgToggleHelp()"
+          title="What the stems, log codes, and graphs mean">?</span></div>
+        <div id="tofdbg-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
+          The published distance is the signal-weighted average of the <b>solid</b> stems — status
+          0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). The log records <b>[T]</b>
+          topology changes (a stem appearing, vanishing, changing status, or crossing the 20% line)
+          and <b>[L]</b> level steps — the published distance moving &ge;1.5&nbsp;mm between frames
+          with no topology change (an internal re-reference). The liveness line above the readout
+          shows data AGE — a silent sensor freezes every number on screen including the status, so
+          age is the only honest signal; a 10 s stall triggers an automatic measurement restart
+          (counted below). The trend graph is the 5-min ring: level (green), signal (faint orange),
+          die + IMU temp (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -4947,6 +4959,8 @@
         tofcalOpenFlag = true;
         document.getElementById('tofcal-overlay').classList.add('open');
         tofcalRender(); tofcalFetchPassive();
+        const acb = document.getElementById('tofcal-auto');
+        if (acb) acb.checked = tofcalAutoEnabled();
         // Same self-refresh as TOF TARGETS: the passive cloud grows on its own.
         if (!_tofcalPoll) _tofcalPoll = setInterval(() => { if (tofcalOpenFlag) tofcalFetchPassive(); }, 60000);
     }
@@ -4981,26 +4995,7 @@
                               r: (stt * sdd > 1e-12) ? std_ / Math.sqrt(stt * sdd) : 0 };
         } catch (e) { tofcalPassive = null; }
         tofcalRender();
-    }
-    // The pink cloud lives in the DEVICE trend ring — clearing it is the same
-    // command the TOF TARGETS CLEAR uses (events reset too, by design).
-    function tofcalClearPassive() {
-        sendCommand('tofdbgclear', 1);
-        tofcalPassive = null; tofcalPassiveN = 0;
-        tofcalRender();
-        tofcalIo('passive log cleared — ring restarts on the device');
-        setTimeout(tofcalFetchPassive, 600);        // ring owner resets on its next pass
-    }
-    // Fill the manual coeff/ref inputs from the passive fit — one click to adopt.
-    function tofcalAdoptPassive() {
-        const pa = tofcalPassive; if (!pa) return;
-        document.getElementById('tofcal-coeff').value = pa.slope.toFixed(3);
-        // The FOV cal's capture temp is the principled anchor (readings stay
-        // true where the calibration was made); the cloud centroid is the
-        // fallback when no cal temp was recorded.
-        const ref = (state.calAmbC > 0) ? state.calAmbC : pa.ref;
-        document.getElementById('tofcal-ref').value   = ref.toFixed(1);
-        tofcalIo('passive fit loaded into the manual fields — press SET to apply');
+        tofcalAutoConsider();
     }
     function tofcalClose() {
         tofcalOpenFlag = false;
@@ -5008,6 +5003,48 @@
         document.getElementById('tofcal-gh-list').style.display = 'none';
         if (_tofcalPoll) { clearInterval(_tofcalPoll); _tofcalPoll = null; }
     }
+    // ── Auto-update: adopt qualifying fits automatically, information-weighted ──
+    // Once a wide-ΔT coefficient is set, its weight W (Σ(T−mean)² of the data
+    // that earned it) makes narrow-range nights nearly powerless to move it;
+    // with compensation live, fits measure the residual and NUDGE the coeff.
+    function tofcalAutoEnabled(){ return localStorage.getItem('afovTcAuto') === '1'; }
+    function tofcalAutoToggle(cb){
+        localStorage.setItem('afovTcAuto', cb.checked ? '1' : '0');
+        tofcalIo(cb.checked ? 'auto-update on — qualifying fits (ΔT≥1.5 °C, r≥0.7, 8 h+) adopt themselves' : 'auto-update off');
+    }
+    function tofcalAutoConsider(){
+        if (!tofcalAutoEnabled()) return;
+        if (state.screen === 'screen-calrun') return;          // never mid-calibration
+        const fit = tofcalFit();
+        if (!fit || fit.span < 1.5 || fit.n < 96) return;      // 8 h of 5-min points
+        const cur = state.tcCoeff || 0, W = state.tcW || 0, wNew = fit.den;
+        let coeff, Wout;
+        if (!cur || !W) {
+            if (fit.r2 < 0.49) return;                         // first adoption needs r ≥ 0.7
+            coeff = fit.slope; Wout = wNew;
+        } else {
+            // residual nudge, inverse-variance weighted; W capped so ~10 good
+            // days of staleness can still be worked off
+            coeff = cur + fit.slope * (wNew / (W + wNew));
+            Wout  = Math.min(W + wNew, wNew * 10);
+        }
+        if (cur && Math.abs(coeff - cur) < 0.02) return;       // nothing meaningful to write
+        const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
+        sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
+                    (fit.span * 10).toFixed(0) + ',' + Wout.toFixed(1));
+        state.tcCoeff = parseFloat(coeff.toFixed(4)); state.tcRef = parseFloat(ref.toFixed(2));
+        state.tcSpan = fit.span; state.tcW = Wout;
+        _tofcalResetData();
+        tofcalIo('auto-update: ' + coeff.toFixed(3) + ' mm/°C adopted (ΔT ' + fit.span.toFixed(1) + ' °C · n ' + fit.n + ')');
+        tofcalRender();
+    }
+    // Background consideration every 30 min even with the dialog closed —
+    // "captured automatically" should not require anyone to open a panel.
+    setInterval(() => { if (tofcalAutoEnabled() && !tofcalOpenFlag) tofcalFetchPassive(); }, 1800000);
+    function tofcalToggleHelp(){ const h=document.getElementById('tofcal-help');
+        h.style.display = h.style.display==='none' ? 'block' : 'none'; }
+    function tofdbgToggleHelp(){ const h=document.getElementById('tofdbg-help');
+        h.style.display = h.style.display==='none' ? 'block' : 'none'; }
     function tofcalTemp() { return (typeof state.ambC === 'number' && state.ambC > 0) ? state.ambC : null; }
     function tofcalDist() { const d = (typeof state._pendingDist === 'number') ? state._pendingDist : state.dist; return (typeof d === 'number' && d > 0) ? d : null; }
     // CAPTURE is a round trip, not a snapshot of the live readout: the device
@@ -5045,10 +5082,13 @@
         tofcalPts.push({ t: s.t, d: s.d, sd: s.sd, n: s.n, ts: Date.now() });
         tofcalSave(); tofcalRender();
     }
-    function tofcalClearPts() {
-        // Persistence makes this the ONLY way to lose a session — confirm past a triviality.
-        if (tofcalPts.length >= 3 && !confirm('Delete all ' + tofcalPts.length + ' captured points?')) return;
-        tofcalPts = []; tofcalSave(); tofcalRender();
+    function tofcalClearAll() {
+        tofcalPts = []; tofcalSave();
+        sendCommand('tofdbgclear', 1);
+        tofcalPassive = null; tofcalPassiveN = 0;
+        tofcalRender();
+        tofcalIo('all points cleared — the passive ring restarts on the device');
+        setTimeout(tofcalFetchPassive, 600);
     }
     function tofcalDelPt(i) { tofcalPts.splice(i, 1); tofcalSave(); tofcalRender(); }
     // Capture time — HH:MM today, M/D for older points, so a stale point from a
@@ -5144,15 +5184,24 @@
         }
     }
     // Least-squares dist = slope·(T) + b; slope is the mm/°C coefficient, ref = mean T.
+    // ONE dataset: the passive 5-min cloud plus the manual 2-s captures, one fit.
+    function tofcalAllPts() {
+        const out = [];
+        if (tofcalPassive) for (const p of tofcalPassive.pts) out.push({ t: p.t, d: p.d });
+        for (const p of tofcalPts) out.push({ t: p.t, d: p.d });
+        return out;
+    }
     function tofcalFit() {
-        const n = tofcalPts.length; if (n < 2) return null;
-        let st = 0, sd = 0; tofcalPts.forEach(p => { st += p.t; sd += p.d; });
+        const pts = tofcalAllPts();
+        const n = pts.length; if (n < 2) return null;
+        let st = 0, sd = 0; pts.forEach(p => { st += p.t; sd += p.d; });
         const mt = st / n, md = sd / n;
         let num = 0, den = 0, sdd = 0;
-        tofcalPts.forEach(p => { num += (p.t - mt) * (p.d - md); den += (p.t - mt) * (p.t - mt); sdd += (p.d - md) * (p.d - md); });
-        const ts = tofcalPts.map(p => p.t), span = Math.max(...ts) - Math.min(...ts);
-        if (den < 1e-9) return { slope: 0, ref: mt, r2: 0, span: span, n: n };
-        return { slope: num / den, ref: mt, r2: sdd > 1e-9 ? (num * num) / (den * sdd) : 0, span: span, n: n };
+        pts.forEach(p => { num += (p.t - mt) * (p.d - md); den += (p.t - mt) * (p.t - mt); sdd += (p.d - md) * (p.d - md); });
+        const ts = pts.map(p => p.t), span = Math.max(...ts) - Math.min(...ts);
+        if (den < 1e-9) return { slope: 0, ref: mt, r2: 0, span: span, n: n, den: den };
+        return { slope: num / den, ref: mt, r2: sdd > 1e-9 ? (num * num) / (den * sdd) : 0,
+                 span: span, n: n, den: den };
     }
 
     // Scatter of the captured points with the fitted line, shown from the 3rd
@@ -5164,7 +5213,7 @@
     function tofcalDrawGraph(fit) {
         const cv = document.getElementById('tofcal-graph');
         if (!cv) return;
-        const haveMan = !!fit && tofcalPts.length >= TOFCAL_GRAPH_MIN_PTS;
+        const haveMan = !!fit && tofcalPts.length >= 1;   // unified fit: even one capture plots with the cloud
         const pa = tofcalPassive, havePas = !!(pa && pa.pts.length >= 8);
         if (!haveMan && !havePas) { cv.classList.remove('show'); return; }
         cv.classList.add('show');                      // must be visible to measure
@@ -5209,27 +5258,21 @@
         if (havePas) {
             g.fillStyle = 'rgba(232,123,164,0.45)';
             pa.pts.forEach(p => g.fillRect(X(p.t) - 1, Y(p.d) - 1, 2, 2));
-            if (pa.span >= 1.0) {
-                g.strokeStyle = 'rgba(232,123,164,0.8)'; g.lineWidth = 1;
-                g.setLineDash([4, 3]);
-                g.beginPath();
-                g.moveTo(X(t0), Y(pa.slope * (t0 - pa.ref) + pa.mean));
-                g.lineTo(X(t1), Y(pa.slope * (t1 - pa.ref) + pa.mean));
-                g.stroke();
-                g.setLineDash([]);
-            }
         }
 
-        if (haveMan) {
-            // Fitted line: d = slope·(T − ref) + mean(d)
-            const ds = tofcalPts.map(p => p.d);
-            const md = ds.reduce((a, b) => a + b, 0) / ds.length;
-            g.strokeStyle = '#00c8b4'; g.lineWidth = 1.5;
+        // THE fit line — one regression over passive + captured together.
+        if (fit && fit.span >= 0.5) {
+            const all = tofcalAllPts();
+            const md = all.reduce((a, p) => a + p.d, 0) / all.length;
+            g.strokeStyle = '#00c8b4'; g.lineWidth = 1.5; g.setLineDash([4, 3]);
             g.beginPath();
             g.moveTo(X(t0), Y(fit.slope * (t0 - fit.ref) + md));
             g.lineTo(X(t1), Y(fit.slope * (t1 - fit.ref) + md));
             g.stroke();
+            g.setLineDash([]);
+        }
 
+        if (haveMan) {
             // ±σ bars — capped, and in a warmer green than the grid so a tall bar
             // reads as a shaky point rather than as another gridline.
             g.strokeStyle = '#3fa98c'; g.lineWidth = 1;
@@ -5282,50 +5325,60 @@
             : '<span style="color:#7a958c">no points yet — capture at a couple of different room temps</span>';
         const fit = tofcalFit(), fEl = document.getElementById('tofcal-fit'), apply = document.getElementById('tofcal-apply');
         tofcalDrawGraph(fit);
-        if (!fit) { fEl.innerHTML = '<span class="warn">capture ≥ 2 points at different temperatures</span>'; apply.disabled = true; }
-        else {
-            let msg = 'slope <b>' + fit.slope.toFixed(3) + '</b> mm/°C · R² ' + fit.r2.toFixed(2) +
-                      ' · span ' + fit.span.toFixed(1) + ' °C · ref ' + fit.ref.toFixed(1) + ' °C';
-            if (fit.span < 1.0) msg += ' <span class="warn">(span &lt; 1 °C — collect more range before trusting it)</span>';
-            else if (fit.r2 < 0.5) msg += ' <span class="warn">(weak fit)</span>';
-            fEl.innerHTML = msg; apply.disabled = false;
+        const nPas = tofcalPassive ? tofcalPassive.pts.length : 0;
+        if (!fit) {
+            fEl.innerHTML = '<span class="warn">no points yet — the passive log collects one every 5 min; CAPTURE adds precise ones</span>';
+            apply.disabled = true;
+        } else {
+            let msg = 'fit over <b>' + fit.n + '</b> pts (' + nPas + ' passive + ' + tofcalPts.length + ' captured): ' +
+                      'slope <b>' + fit.slope.toFixed(3) + '</b> mm/°C · R² ' + fit.r2.toFixed(2) +
+                      ' · ΔT ' + fit.span.toFixed(1) + ' °C';
+            if (state.tcCoeff) msg += ' <span style="color:#7a958c">(residual — compensation is live, expect ≈0)</span>';
+            if (fit.span < 1.0) msg += ' <span class="warn">(ΔT &lt; 1 °C — collect more range before trusting it)</span>';
+            else if (fit.r2 < 0.5 && !state.tcCoeff) msg += ' <span class="warn">(weak fit)</span>';
+            fEl.innerHTML = msg;
+            apply.disabled = !(fit.span >= 1.0);
         }
-        // The auto-logged 5-min points (pink cloud on the graph) get their own
-        // fit line + one-click adopt into the manual fields. Below the plot
-        // threshold, say what's collecting instead of silently showing nothing —
-        // the ring is RAM, so every reboot restarts it at zero.
         if (!tofcalPassive && typeof tofcalPassiveN === 'number') {
             fEl.innerHTML += '<br><span style="color:#7a958c">passive 5-min log: ' + tofcalPassiveN +
-                ' pt' + (tofcalPassiveN === 1 ? '' : 's') + ' since boot — plots at 8+ ' +
-                '(~' + Math.max(0, (8 - tofcalPassiveN) * 5) + ' min to go; the log restarts on reboot)</span>';
-        }
-        if (tofcalPassive) {
-            const pa = tofcalPassive;
-            fEl.innerHTML += '<br><span style="color:#e87ba4">passive 5-min log: <b>' +
-                (pa.slope >= 0 ? '+' : '') + pa.slope.toFixed(3) + '</b> mm/°C · r ' + pa.r.toFixed(2) +
-                ' · ΔT ' + pa.span.toFixed(1) + ' °C · n ' + pa.n + '</span>' +
-                (Math.abs(pa.r) < 0.5 || pa.span < 1.0 ? ' <span class="warn">(weak — needs a bigger swing or a static soak)</span>'
-                 : ' · <span style="cursor:pointer; color:#7fd8c0; text-decoration:underline" onclick="tofcalAdoptPassive()" ' +
-                   'title="Copy the passive slope + reference into the manual fields below — press SET to apply">adopt</span>');
+                ' pt' + (tofcalPassiveN === 1 ? '' : 's') + ' since boot/clear — joins the fit at 8+ ' +
+                '(~' + Math.max(0, (8 - tofcalPassiveN) * 5) + ' min to go)</span>';
         }
         const cf = state.tcCoeff, rf = state.tcRef, act = document.getElementById('tofcal-active');
         act.innerHTML = ((typeof cf === 'number' && cf !== 0)
             ? 'Active: <b style="color:#3ddb7a">' + cf.toFixed(3) + ' mm/°C @ ' + (typeof rf === 'number' ? rf.toFixed(1) : '?') + ' °C</b>'
             : 'Active: <span style="color:#7a958c">off (no compensation)</span>')
             + (state.calAmbC > 0 ? ' <span style="color:#7a958c">· FOV cal captured @ ' +
-               state.calAmbC.toFixed(1) + ' °C — the principled ref</span>' : '');
+               state.calAmbC.toFixed(1) + ' °C — the principled ref</span>' : '')
+            + (state.tcSpan > 0 ? ' <span style="color:#7a958c">· pedigree ΔT ' +
+               state.tcSpan.toFixed(1) + ' °C</span>' : '');
     }
     // Apply/set/off echo the new value into state IMMEDIATELY — tcCoeff rides
     // the 5 s slow telemetry frame, so without the local echo the Active line
     // sits stale for seconds after the click and the button looks dead. The
     // next slow frame overwrites with the device's authoritative value (which
     // also reverts the echo if the command never landed).
+    // Adoption resets the dataset: from now on the log records the COMPENSATED
+    // frame, so pre-adoption points (old frame) would corrupt the next fit —
+    // and future fits measure the RESIDUAL slope (expect ≈0 when the coeff is right).
+    function _tofcalResetData() {
+        tofcalPts = []; tofcalSave();
+        sendCommand('tofdbgclear', 1);
+        tofcalPassive = null; tofcalPassiveN = 0;
+        setTimeout(tofcalFetchPassive, 600);
+    }
     function tofcalApply() {
         const fit = tofcalFit(); if (!fit) return;
-        sendCommand('tofcomp', fit.slope.toFixed(4) + ',' + fit.ref.toFixed(2));
-        state.tcCoeff = parseFloat(fit.slope.toFixed(4));
-        state.tcRef   = parseFloat(fit.ref.toFixed(2));
-        tofcalRender(); tofcalIo('fit applied ✓');
+        const cur = state.tcCoeff || 0;
+        const coeff = cur ? cur + fit.slope : fit.slope;   // residual adds to the live coeff
+        const ref = (state.calAmbC > 0) ? state.calAmbC : ((cur && typeof state.tcRef === 'number') ? state.tcRef : fit.ref);
+        sendCommand('tofcomp', coeff.toFixed(4) + ',' + ref.toFixed(2) + ',' +
+                    (fit.span * 10).toFixed(0) + ',' + fit.den.toFixed(1));
+        state.tcCoeff = parseFloat(coeff.toFixed(4));
+        state.tcRef   = parseFloat(ref.toFixed(2));
+        state.tcSpan  = fit.span; state.tcW = fit.den;
+        _tofcalResetData();
+        tofcalRender(); tofcalIo('fit applied ✓ — dataset reset (now logging the compensated frame)');
     }
     function tofcalManual() {
         const cf = parseFloat(document.getElementById('tofcal-coeff').value);
@@ -5334,7 +5387,9 @@
         sendCommand('tofcomp', cf.toFixed(4) + ',' + (isNaN(rf) ? 21 : rf).toFixed(2));
         state.tcCoeff = cf;
         state.tcRef   = isNaN(rf) ? 21 : rf;
-        tofcalRender(); tofcalIo('manual coefficient set ✓');
+        state.tcSpan  = 0; state.tcW = 0;          // manual = no pedigree
+        _tofcalResetData();
+        tofcalRender(); tofcalIo('manual coefficient set ✓ — dataset reset');
     }
     function tofcalOff() {
         sendCommand('tofcomp', 'off');
@@ -14714,6 +14769,8 @@
         if (data.tofZero !== undefined) tofzeroOnResult(data.tofZero);
         if (data.tofHome !== undefined) { state.tofHome = data.tofHome; tofzeroStatusIdle(); }
         if (data.calAmbC !== undefined) state.calAmbC = data.calAmbC;
+        if (data.tcSpan !== undefined) state.tcSpan = data.tcSpan;
+        if (data.tcW !== undefined) state.tcW = data.tcW;
         if (data.tofOff  !== undefined) { state.tofOff  = data.tofOff;  tofzeroStatusIdle(); }
         if (data.tg !== undefined) tofdbgOnLive(data.tg);
 
