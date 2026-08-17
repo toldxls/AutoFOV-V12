@@ -2651,17 +2651,18 @@ static void handleWifiCommand(const char* key, const char* val) {
     // ── TOF temp-compensation coefficients (V12.6) ───────────────────────────
     //   val "off" disables; val "<coeff_mm_per_C>,<refC>" sets + persists.
     } else if (strcmp(key, "tofcomp") == 0) {
-        if (strcmp(val, "off") == 0) { tofTempCoeff = 0.0f; tofFitSpan10 = 0; tofFitW = 0.0f; saveTofComp(); }
+        if (strcmp(val, "off") == 0) { tofTempCoeff = 0.0f; tofFitSpan10 = 0; tofFitR100 = 0; tofFitN = 0; saveTofComp(); }
         else {
-            // "coeff,ref[,span10,W]" — span/W are the fit's pedigree (auto-update
-            // blending); a plain manual SET sends only coeff,ref and zeroes them.
-            float cf = 0.0f, rf = 21.0f, sp = 0.0f, w = 0.0f;
-            int got = sscanf(val, "%f,%f,%f,%f", &cf, &rf, &sp, &w);
+            // "coeff,ref[,span10,r100,n]" — the fit's pedigree; a plain manual
+            // SET sends only coeff,ref and zeroes it (no quality claim).
+            float cf = 0.0f, rf = 21.0f, sp = 0.0f, rr = 0.0f, nn = 0.0f;
+            int got = sscanf(val, "%f,%f,%f,%f,%f", &cf, &rf, &sp, &rr, &nn);
             if (got >= 1 && cf > -50.0f && cf < 50.0f) {
                 tofTempCoeff = cf;
                 if (got >= 2 && rf > -20.0f && rf < 60.0f) tofTempRef = rf;
-                tofFitSpan10 = (got >= 3 && sp >= 0.0f && sp < 500.0f) ? (uint16_t)sp : 0;
-                tofFitW      = (got >= 4 && w  >= 0.0f && w < 1e7f)   ? w : 0.0f;
+                tofFitSpan10 = (got >= 3 && sp >= 0.0f && sp < 500.0f)  ? (uint16_t)sp : 0;
+                tofFitR100   = (got >= 4 && rr >= 0.0f && rr <= 100.0f) ? (uint16_t)rr : 0;
+                tofFitN      = (got >= 5 && nn >= 0.0f && nn < 65535.0f)? (uint16_t)nn : 0;
                 saveTofComp();
             }
         }
@@ -3406,7 +3407,8 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["tcCoeff"]     = tofTempCoeff;
     doc["tcRef"]       = tofTempRef;
     doc["tcSpan"]      = tofFitSpan10 / 10.0f;
-    doc["tcW"]         = tofFitW;
+    doc["tcR"]         = tofFitR100 / 100.0f;
+    doc["tcN"]         = tofFitN;
     doc["chipInfo"]    = ESP.getChipModel();
     // BUILD_SLOC / BUILD_SKB are computed by tools/embed_html.py across the
     // hand-written .ino + .html + tools sources at build time, so the count

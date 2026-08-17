@@ -1396,13 +1396,14 @@ float tofTempCoeff = 0.0f;                   // TOF offset temp coefficient, mm/
 // for the temp compensation, so the machine records it instead of the user.
 // Lives in "tofcomp" NVS (outside CalibData — no CALIB_MAGIC bump).
 uint16_t calAmbT10 = 0;
-// Pedigree of the applied coefficient (multi-day auto-update): the ΔT span it
-// was fitted over (×10 °C) and its accumulated information weight W ≈ Σ ΔT²·n.
-// The dashboard blends new qualifying passive fits inverse-variance style —
-// a 0.5 °C night carries ~0.5% of a 3 °C day's weight, so a wide-range
-// coefficient is effectively frozen against narrow-range noise.
+// Pedigree of the applied coefficient: the ΔT span (×10 °C), correlation
+// (×100) and point count of the fit that set it. Auto-update writes ONLY when
+// a new fit beats this pedigree (wider range, or comparable range with better
+// r and more points) — no continuous blending; a good coefficient is frozen
+// until strictly better evidence arrives.
 uint16_t tofFitSpan10 = 0;
-float    tofFitW      = 0.0f;
+uint16_t tofFitR100   = 0;
+uint16_t tofFitN      = 0;
 float tofTempRef   = 21.0f;                  // reference temperature, °C (mid of 65–75 °F)
 // Web-triggered temp-cal point capture: a 2 s rolling average of the sub-mm
 // distance, the SAME window and source (sensorDistTenths) the CAL_SAMPLING
@@ -2480,7 +2481,8 @@ void loadTofComp() {
   tofTempRef   = preferences.getFloat("ref",  21.0f);
   calAmbT10    = preferences.getUShort("calT", 0);
   tofFitSpan10 = preferences.getUShort("span", 0);
-  tofFitW      = preferences.getFloat("fitW", 0.0f);
+  tofFitR100   = preferences.getUShort("fitR", 0);
+  tofFitN      = preferences.getUShort("fitN", 0);
   preferences.end();
   if (!(tofTempCoeff > -50.0f && tofTempCoeff < 50.0f)) tofTempCoeff = 0.0f;   // sanity
   if (!(tofTempRef   > -20.0f && tofTempRef   < 60.0f)) tofTempRef   = 21.0f;
@@ -2491,7 +2493,8 @@ void saveTofComp() {
   preferences.putFloat("ref",   tofTempRef);
   preferences.putUShort("calT", calAmbT10);
   preferences.putUShort("span", tofFitSpan10);
-  preferences.putFloat("fitW", tofFitW);
+  preferences.putUShort("fitR", tofFitR100);
+  preferences.putUShort("fitN", tofFitN);
   preferences.end();
 }
 // mm to SUBTRACT from the raw averaged distance (0 when disabled / no temp yet).
