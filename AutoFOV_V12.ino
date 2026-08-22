@@ -742,6 +742,7 @@ Button btnBrightness(20, 172, 200, 35, "BRIGHTNESS",   COLOR_DARKBLUE,  TFT_WHIT
 Button btnSettingsClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true); // X close for settings (steps back to MAIN)
 Button btnSettingsMem(20, 217, 200, 38, "MEMORY", COLOR_BLUEGREEN, TFT_BLACK, 1, true);
 Button btnMemClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);      // X close for mem info
+Button btnMemReboot(128, 2, 70, 33, "REBOOT", COLOR_MAROON, TFT_WHITE, 1, true);   // two-tap (SURE?) warm restart
 
 Button btnStartCal(10, 215, 105, 55, "START CAL", 0x001F, TFT_WHITE, 1, true);
 Button btnResetAll(125, 215, 105, 55, "RESET ALL", 0x7800, TFT_WHITE, 1, true);
@@ -1344,6 +1345,7 @@ const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mod
 // staleness means the shared I²C bus is wedged (any task stuck holding
 // i2cMutex), which a reboot heals via recoverI2CBus() at boot.
 std::atomic<uint32_t> sensorHeartbeatMs{0};
+bool tofStalled = false;   // live: heartbeat >3 s old — MAIN shows "TOF STALL" (8/22/26)
 // Data-silence self-heal (8/16/26): the sensor stopped raising data-ready 46 min
 // after a cold boot and stayed silent 5.8 h with the task alive — invisible to
 // the bus watchdog. sensorTask stamps tofLastFrameMs on every processed frame;
@@ -1658,6 +1660,7 @@ void wifiPushTofSample(float distMm, float sdMm, uint32_t n);  // V12.6: temp-ca
 void wifiPushTofZero(int ok, float offMm, float dMm, const char* msg);  // V12.6: SET HOME / ZERO result
 void redrawCurrentScreen();                // full repaint of currentMode
 void wifiPushSettings();                   // push buildSettingsJson to all WS clients
+bool wifiRequestRestart();                 // 8/22/26: deferred warm restart (refused during OTA)
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2030,7 +2033,7 @@ void drawMemInfoUI() {
     int16_t x1, y1; uint16_t w, h;
     tft.getTextBounds(val, 0, 0, &x1, &y1, &w, &h);
     tft.setTextColor(col); tft.setCursor(225 - (int)w - x1, ly); tft.print(val);
-    ly += 26;
+    ly += 22;                                   // was 26: two more rows fit below (8/22/26)
   };
 
   infoRow("Firmware:", FIRMWARE_VERSION, COLOR_GREENYELLOW);
@@ -2058,9 +2061,50 @@ void drawMemInfoUI() {
                  strncmp(g_bootReasonLine, "EXT-RESET", 9) == 0;
     infoRow("Last:", g_bootReasonLine, clean ? themedText(COLOR_LIGHTGREY) : 0xFD40 /* amber */);
   }
+  {
+    // 8/22/26: uptime + boot count, and the fault counters that used to live
+    // only in /diag. Amber when any fault counter is non-zero.
+    uint32_t up = millis() / 1000;
+    snprintf(buf, sizeof(buf), "%luh %02lum  boot #%lu", (unsigned long)(up / 3600),
+             (unsigned long)((up / 60) % 60), (unsigned long)g_rtc.bootCount);
+    infoRow("Up:", buf, themedText(COLOR_LIGHTGREY));
+    uint32_t af = allocFailCount.load(std::memory_order_relaxed);
+    uint32_t ie = i2cErrCount.load(std::memory_order_relaxed);
+    uint32_t hl = tofSelfHealCount.load(std::memory_order_relaxed);
+    uint32_t st = sensorMaxStallMs.load(std::memory_order_relaxed);
+    snprintf(buf, sizeof(buf), "alloc%lu i2c%lu heal%lu st%lus",   // compact: row is right-aligned at x=225
+             (unsigned long)af, (unsigned long)ie, (unsigned long)hl, (unsigned long)((st + 500) / 1000));
+    infoRow("Faults:", buf, (af || ie || hl) ? 0xFD40 : themedText(COLOR_LIGHTGREY));
+  }
+  btnMemReboot.draw(tft);
+}
+
+// Two-tap REBOOT: first tap arms ("SURE?") for 3 s, second tap restarts via
+// the wifi tab's deferred path (so an open WebSocket flushes first; refused
+// mid-OTA). A warm restart is also the documented cold-start-bias cure.
+unsigned long memRebootArmedMs = 0;
+void memRebootTick() {                    // called from the MEM_INFO touch path + loop
+  if (memRebootArmedMs && millis() - memRebootArmedMs > 3000) {
+    memRebootArmedMs = 0;
+    if (currentMode == MEM_INFO) btnMemReboot.draw(tft);
+  }
 }
 
 void handleMemInfoTouch(TS_Point p) {
+  if (btnMemReboot.contains(p.x, p.y)) {
+    if (!memRebootArmedMs) {
+      memRebootArmedMs = millis(); if (!memRebootArmedMs) memRebootArmedMs = 1;
+      btnMemReboot.draw(tft, "SURE?", COLOR_ORANGE, TFT_WHITE);
+    } else if (wifiRequestRestart()) {
+      btnMemReboot.draw(tft, "BYE...", COLOR_DARKGREY, TFT_WHITE);
+      memRebootArmedMs = 0;
+    } else {
+      btnMemReboot.draw(tft, "OTA BUSY", COLOR_DARKGREY, TFT_WHITE);
+      memRebootArmedMs = 0;
+    }
+    return;
+  }
+  memRebootArmedMs = 0;
   if (btnMemClose.contains(p.x, p.y)) {
     currentMode = APP_SETTINGS; drawAppSettingsUI();
   }
@@ -6338,6 +6382,10 @@ void loop() {
         sensorMaxStallMs.store((uint32_t)stall, std::memory_order_relaxed);
         Serial.printf("[SENSOR] heartbeat stall %d ms (max so far; not rebooting)\n", stall);
       }
+      // Live flag for the MAIN tag — the user at the bench should see a wedged
+      // sensor task, not just a frozen number. Hysteresis: on at 3 s, off once
+      // the heartbeat is fresh again.
+      tofStalled = (stall > 3000) || (tofStalled && stall > 500);
     }
   }
 
@@ -6906,6 +6954,7 @@ void loop() {
   }
   
   stackBannerTick();          // STACK DONE banner expiry + backlight blink (8/22/26)
+  memRebootTick();            // REBOOT "SURE?" arm timeout
   if ((unsigned long)(millis() - lastDisplayUpdate) > 30) {
     updateSensorAverages();   // feeds sensorAvgDist/sensorErrInt on every screen
     if (currentMode == MAIN) {
@@ -7517,12 +7566,17 @@ void finalizeEarly() {
 // by updateDisplay() when tofHot or the sleep state flips.
 bool lastDrawnTofHot   = false;
 bool lastDrawnTofSleep = false;
+bool lastDrawnTofStall = false;
 void drawTofTag() {
   bool slp = sensorSleeping.load(std::memory_order_acquire);
   tft.fillRect(44, 26, 56, 9, THEME_BG);   // clear widest label ("cold TOF")
   tft.setFont(); tft.setTextSize(1);
   tft.setCursor(44, 26);
-  if (slp) {
+  lastDrawnTofStall = tofStalled;
+  if (tofStalled && !slp) {
+    tft.setTextColor(COLOR_RED);
+    tft.print("TOF STALL");
+  } else if (slp) {
     tft.setTextColor(COLOR_DARKGREY);
     tft.print("TOF sleep");
   } else {
@@ -8578,7 +8632,7 @@ void updateDisplay() {
   // Live-flip the COLD/HOT TOF tag the moment a re-lock cures the bias, without
   // waiting for a full main-screen repaint. drawMainScreen already draws it
   // fresh on entry, keeping lastDrawnTofHot in sync across screen changes.
-  if (tofHot != lastDrawnTofHot ||
+  if (tofHot != lastDrawnTofHot || tofStalled != lastDrawnTofStall ||
       sensorSleeping.load(std::memory_order_acquire) != lastDrawnTofSleep) drawTofTag();
 
   uint32_t currentState = sensorState.load(std::memory_order_acquire);

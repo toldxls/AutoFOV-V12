@@ -201,6 +201,13 @@ static uint32_t                otaRestartPendingMs = 0;
 // deadline and let wifiLoop() (Core 1) do the actual restart once the queued
 // HTML/JSON has had time to leave the wire.
 static uint32_t                restartPendingMs = 0;
+// Device-side REBOOT (MEMORY & INFO, 8/22/26) — same deferred path as the web
+// `reboot` command, same OTA refusal. Returns false when refused.
+bool wifiRequestRestart() {
+    if (otaInProgress) return false;
+    restartPendingMs = millis(); if (!restartPendingMs) restartPendingMs = 1;
+    return true;
+}
 // Version string of the firmware in the *inactive* OTA slot — the rollback
 // target.  Read once at boot from NVS (see wifiSetup).  esp_app_desc_t can't
 // supply this: arduino-esp32 ships a precompiled esp_app_desc, so its
