@@ -45,21 +45,19 @@ if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
                | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 fi
 
-# Count only REAL commits — non-firmware bookkeeping commits are excluded from
-# the version formula: release.sh's `build: regenerate web_ui.h` artifact
-# commits plus ci:/chore:/docs: tooling & docs commits. Match the SUBJECT only
-# (git --grep also matches body lines via REG_NEWLINE, which would wrongly drop
-# a firmware commit whose body merely mentions one of these prefixes). Mirrors
-# tools/embed_html.py's EXCLUDED_SUBJECTS; keep the patterns identical.
-total_count=$(git rev-list --count HEAD)
-excluded_count=$(git log --pretty=%s HEAD \
-    | grep -cE '^(build: regenerate web_ui\.h|ci[:(]|chore[:(]|docs[:(])' || true)
-commit_count=$((total_count - excluded_count))
+# Count FIRMWARE commits — those touching any path in tools/embed_html.py's
+# FIRMWARE_PATHS (the inputs that change the binary). Read the list out of that
+# file so the two stay in lockstep; docs/tooling commits and the
+# `build: regenerate web_ui.h` follow-ups (web_ui.h is not listed) never count.
+embed_py="tools/embed_html.py"
+fw_paths=$(sed -n "s/^FIRMWARE_PATHS[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$embed_py")
+: "${fw_paths:=AutoFOV_V12.ino AutoFOV_V12_wifi.ino data/index.html}"
+# shellcheck disable=SC2086  # word-split on purpose
+commit_count=$(git rev-list --count HEAD -- $fw_paths)
 
 # Mirror tools/embed_html.py's version formula. Reading the constants out of
 # that file keeps the two in lockstep — bumping VERSION_MINOR or rebasing
 # VERSION_PATCH_BASE there updates this check automatically.
-embed_py="tools/embed_html.py"
 v_major=$(sed -n 's/^VERSION_MAJOR[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
 v_minor=$(sed -n 's/^VERSION_MINOR[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
 v_base=$(sed -n 's/^VERSION_PATCH_BASE[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$embed_py")
@@ -149,14 +147,13 @@ elif [ "$rel_score" -lt "$cur_score" ]; then
         [ "$CHECK" = 1 ] && exit 1
         exit 0
     fi
-    # The patch counter only advances on real commits (regen commits are
-    # excluded from the formula above), so the version gap IS the real-commit
-    # gap — the old post-release "(+ release-artifact regen)" false positive
-    # can no longer occur.
+    # The patch counter only advances on firmware commits (regen commits
+    # touch only web_ui.h, which is not a firmware path), so the version gap
+    # IS the firmware-commit gap.
     real_commits=$((patch - released_patch))
 
     plural=""; [ "$real_commits" -ne 1 ] && plural="s"
-    echo "${YEL}gh-pages is $real_commits real commit$plural behind main${RST}"
+    echo "${YEL}gh-pages is $real_commits firmware commit$plural behind main${RST}"
     echo "${DIM}  released: v$released${RST}"
     echo "${DIM}  current : v$current${RST}"
     echo "${DIM}  ship:     bash tools/release.sh --yes${RST}"

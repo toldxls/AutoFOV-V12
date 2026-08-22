@@ -10,16 +10,16 @@ import gzip, os, re, shutil, subprocess, tempfile
 VERSION_MAJOR = 12
 VERSION_MINOR = 5   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
-# REAL commit count at the bump commit so patch = real_count - base.  Without
-# this, each new series would inherit the old running count instead of starting
-# at .0.  "Real" excludes non-firmware bookkeeping commits (see EXCLUDED_SUBJECTS
-# below): counting them inflated the patch number, skipped version numbers
-# between releases, and — whenever a test build's regen commit landed before
-# release.sh ran — stamped the release one higher than the hardware-tested
-# build, so devices saw a phantom "update available" for identical source.
-# With them excluded, the test build and the release carry the SAME version
-# (they differ only in BUILD_COMMIT).  JS semver compare orders by minor first,
-# so the OTA update gate sees 12.2.x > 12.1.y regardless of patch.
+# FIRMWARE commit count at the bump commit so patch = firmware_count - base.
+# "Firmware commits" = commits that touch any of FIRMWARE_PATHS (below) — the
+# inputs that change the shipped binary. Counting by PATH, not by commit
+# subject, means: a docs/tooling commit never bumps the version (no phantom
+# "update available" for identical firmware), and a firmware change can never
+# sneak through un-bumped because its subject happened to start with `docs:`
+# (which shipped a changed dashboard under an unchanged version on 8/21/26).
+# release.sh's follow-up `build: regenerate web_ui.h` commits touch only
+# data/web_ui.h, so they are excluded by construction. JS semver compare
+# orders by minor first, so the OTA gate sees 12.2.x > 12.1.y regardless of patch.
 # 12.2: the bug-sweep series — calibration sync, vib inStack latch, OTA reboot
 # overlay, auth reconnect, TOF signal smoothing.
 # 12.3: photo-assisted calibration — measure the pixel count from a micrometer
@@ -27,24 +27,22 @@ VERSION_MINOR = 5   # bump manually for milestone releases
 # 2026-07-05: base rebased 293 -> 166 when the formula switched to real-commit
 # counting (211 real commits at released v12.4.45: 211 - 166 = 45).
 # 2026-07-06: base rebased 166 -> 155 when ci:/chore:/docs: tooling & docs
-# commits were also excluded (they don't change firmware, so they must not bump
-# the patch). 212 real commits at v12.4.57: 212 - 155 = 57.
+# commits were also excluded. 212 real commits at v12.4.57: 212 - 155 = 57.
 # 12.5: deep per-stack vibration history — /vibhist binary endpoint, the web
 # cull report (per-frame blur, timeline strip, threshold flagging, saved-report
 # archive), SNTP stack-start stamp, stackStart/sp telemetry.
 # 2026-07-19: base rebased 155 -> 236 at the 12.5 bump (236 real commits at
 # v12.5.0).
-VERSION_PATCH_BASE = 236
-# Subject prefixes excluded from the version count — commits that don't change
-# firmware behaviour, so they must not bump the patch number:
-#   * release.sh's follow-up `build: regenerate web_ui.h` artifact commits
-#   * ci:/chore:/docs: tooling & documentation commits (conventional-commit
-#     prefix, with or without a "(scope)")
-# drift-check.sh greps this SAME set out; keep the two lists identical.
-EXCLUDED_SUBJECTS = [
-    r'^build: regenerate web_ui\.h',
-    r'^ci[:(]', r'^chore[:(]', r'^docs[:(]',
-]
+# 2026-08-21: base rebased 236 -> 228 when counting switched from subject
+# exclusion to FIRMWARE_PATHS (307 firmware commits at v12.5.79: 307 - 228 = 79).
+VERSION_PATCH_BASE = 228
+# Paths whose commits change the shipped binary — the version counts ONLY
+# these. ONE single-quoted line: drift-check.sh and release.sh sed it out of
+# this file (same trick as VERSION_*), so keep the format.
+# (tools/build.sh is deliberately not listed: a size-gate or message edit must
+# not bump the version; an FQBN change always lands with a source change, and
+# release.sh's same-version guard diffs build.sh as the backstop.)
+FIRMWARE_PATHS = 'AutoFOV_V12.ino AutoFOV_V12_wifi.ino data/index.html data/FreeSans7pt7b.h tools/partitions.csv build_opt.h'
 # ─────────────────────────────────────────────────────────────────────────────
 
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
@@ -58,22 +56,7 @@ def git(cmd):
     except Exception:
         return '?'
 
-# Count only REAL commits toward the patch number. Match EXCLUDED_SUBJECTS
-# against each commit's SUBJECT only: `git rev-list --grep` anchors ^ at every
-# line of the message (REG_NEWLINE), so a firmware commit whose *body* merely
-# mentions one of these prefixes would be wrongly dropped from the count — and a
-# firmware change that doesn't bump the version reintroduces the phantom
-# "no update available" bug this whole scheme exists to prevent. Subjects (%s)
-# are single-line, so matching them is exact.
-_total    = git(['git', 'rev-list', '--count', 'HEAD'])
-_subjects = git(['git', 'log', '--pretty=%s', 'HEAD'])
-try:
-    _pats = [re.compile(p) for p in EXCLUDED_SUBJECTS]
-    _excl = sum(1 for s in _subjects.split('\n')
-                if s and any(p.match(s) for p in _pats))
-    count = int(_total) - _excl
-except (ValueError, TypeError):
-    count = _total   # git unavailable — leave whatever git() returned
+count = git(['git', 'rev-list', '--count', 'HEAD', '--', *FIRMWARE_PATHS.split()])
 commit = git(['git', 'rev-parse', '--short', 'HEAD'])
 try:
     patch = max(0, int(count) - VERSION_PATCH_BASE)
@@ -89,12 +72,12 @@ except ValueError:
 # confused with the release of the same number.
 # release.sh still refuses to PUBLISH a dirty tree (it must stamp a version that
 # corresponds to a real commit); this only makes local test builds honest. Same
-# web_ui.h exclusion release.sh uses — it is this script's own output, and it
-# lands in a "build: regenerate" commit that is excluded from the count anyway.
-_status = git(['git', 'status', '--porcelain'])
+# Only FIRMWARE_PATHS count (same rule as the commit count): a dirty tooling
+# file must not relabel the build, and web_ui.h is not listed — it is this
+# script's own output.
+_status = git(['git', 'status', '--porcelain', '--', *FIRMWARE_PATHS.split()])
 if _status not in ('?', ''):
-    _dirty = [ln for ln in _status.split('\n')
-              if ln.strip() and not ln.endswith(' data/web_ui.h')]
+    _dirty = [ln for ln in _status.split('\n') if ln.strip()]
     if _dirty and isinstance(patch, int):
         patch += 1
         commit = f'{commit}+'
@@ -105,7 +88,7 @@ version = f'{VERSION_MAJOR}.{VERSION_MINOR}.{patch}'
 # About screen reports an accurate, build-fresh figure.  web_ui.h is the
 # generated artifact (would double-count index.html) and is excluded.
 SOURCE_FILES = [
-    'AutoFOV_V12.ino', 'AutoFOV_V12_wifi.ino',
+    'AutoFOV_V12.ino', 'AutoFOV_V12_wifi.ino', 'build_opt.h',
     'data/index.html', 'data/FreeSans7pt7b.h',
     'tools/build.sh', 'tools/drift-check.sh',
     'tools/flash_firmware_only.sh', 'tools/release.sh',

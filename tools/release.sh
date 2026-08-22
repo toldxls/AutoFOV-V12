@@ -57,6 +57,29 @@ echo "=== Step 2: collect artifacts ==="
 VERSION=$(sed -n 's/.*BUILD_VERSION "\([^"]*\)".*/\1/p' data/web_ui.h)
 [ -n "$VERSION" ] || { echo "ERROR: could not read BUILD_VERSION from data/web_ui.h"; exit 1; }
 
+# ── Same-version guard ───────────────────────────────────────────────────────
+# The version is a count of FIRMWARE_PATHS commits (tools/embed_html.py). If
+# gh-pages already carries this exact version, the firmware inputs at HEAD must
+# be IDENTICAL to the ones it was built from — otherwise a changed binary would
+# ship under an unchanged number and the dashboard's update check would say
+# "up to date". manifest.json records the source commit for this comparison
+# (releases before 8/21/26 have no "commit" field → guard skipped).
+fw_paths=$(sed -n "s/^FIRMWARE_PATHS[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" tools/embed_html.py)
+git fetch origin gh-pages --quiet 2>/dev/null || true
+rel_manifest=$(git show origin/gh-pages:manifest.json 2>/dev/null || true)
+rel_ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$rel_manifest")
+rel_commit=$(sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$rel_manifest")
+if [ "$VERSION" = "$rel_ver" ] && [ -n "$rel_commit" ] && git cat-file -e "$rel_commit^{commit}" 2>/dev/null; then
+    # shellcheck disable=SC2086
+    if ! git diff --quiet "$rel_commit" HEAD -- $fw_paths tools/build.sh; then
+        echo "ERROR: v$VERSION is already on gh-pages (built from ${rel_commit:0:7}) but the firmware"
+        echo "       inputs differ at HEAD — a firmware change landed outside FIRMWARE_PATHS?"
+        echo "       git diff --stat $rel_commit HEAD -- $fw_paths tools/build.sh"
+        exit 1
+    fi
+    echo "note: v$VERSION is already on gh-pages with identical firmware inputs — re-publishing the same version"
+fi
+
 APP_BIN="$BUILD_DIR/AutoFOV_V12.ino.bin"
 BOOT_BIN="$BUILD_DIR/AutoFOV_V12.ino.bootloader.bin"
 PART_BIN="$BUILD_DIR/AutoFOV_V12.ino.partitions.bin"
@@ -127,7 +150,7 @@ cp web/recovery.html "$WT/index.html"   # served at the Pages site root
     -exec cp {} "$WT/calibrations/" \;
 
 cat > "$WT/manifest.json" <<EOF
-{ "version": "$VERSION", "sha256": "$SHA", "bin": "firmware.bin" }
+{ "version": "$VERSION", "sha256": "$SHA", "bin": "firmware.bin", "commit": "$(git rev-parse HEAD)" }
 EOF
 
 # ESP Web Tools manifest — multi-part flash that leaves the NVS region (0x9000)
