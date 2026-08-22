@@ -628,13 +628,13 @@ int      vibSigScroll  = 0;
 bool     vibSigPicker  = false;        // name-picker overlay open
 bool     vibSigCapturing = false;      // peak-holding frames for a CAPTURE
 int      vibSigFrames  = 0;
-uint32_t vibSigAccum[VIB_FFT_BINS];    // per-bin peak hold (deci-mg) for capture
+uint32_t* vibSigAccum = nullptr;       // per-bin peak hold (deci-mg) for capture — PSRAM, tofRingsBegin()
 // Per-bin noise-floor snapshot taken at capture arm. Subtracted from each
 // frame before the peak-hold so the stored signature is "max excursion above
 // ambient" rather than "max excursion" — a long-running fan baked into the
 // living-room hum no longer paints a smooth dome across the signature plot,
 // only the source's actual narrowband peaks survive.
-float    vibSigBaseSnap[VIB_FFT_BINS];
+float*   vibSigBaseSnap = nullptr;     // PSRAM, tofRingsBegin()
 char     vibSigCaptureName[16];
 VibSignature vibSigLoaded;             // currently-selected decoded signature
 bool     vibSigLoadedValid = false;
@@ -1202,7 +1202,7 @@ struct TofTgtSnap {
 TofTgtSnap tofTgtSnap[2];
 std::atomic<uint32_t> tofTgtSeq{0};
 constexpr int TOF_EVT_RING = 48;
-TofTgtSnap tofTgtEvt[TOF_EVT_RING];
+TofTgtSnap* tofTgtEvt = nullptr;             // PSRAM — tofRingsBegin()
 std::atomic<uint32_t> tofTgtEvtSlotSeq[TOF_EVT_RING];  // odd = mid-write
 std::atomic<uint32_t> tofTgtEvtCount{0};    // total since boot; head = count % ring
 std::atomic<uint32_t> tofTgtEvtDropped{0};  // rate-limited flap events
@@ -1230,9 +1230,35 @@ constexpr int      TOF_TREND_RING        = 288;      // × 5 min = 24 h
 constexpr uint32_t TOF_TREND_INTERVAL_MS = 300000UL; // 5 min: halves time-to-first-fit
                                                      // after a reboot (ring is RAM);
                                                      // same RAM/JSON as 10 min × 24 h
-TofTrendPt tofTrend[TOF_TREND_RING];
-std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];
+TofTrendPt* tofTrend = nullptr;              // PSRAM — tofRingsBegin()
+std::atomic<uint32_t> tofTrendSlotSeq[TOF_TREND_RING];   // seqlocks stay in DRAM (atomics)
 std::atomic<uint32_t> tofTrendCount{0};
+
+// Cold rings → PSRAM. These are written by background tasks or rare UI paths
+// and only READ by HTTP handlers, yet as static arrays they sat in internal
+// .bss (tofTrend 5.8 KB, tofTgtEvt 2.1 KB, the two vib-signature arrays 2 KB).
+// Same ps_malloc-with-DRAM-fallback pattern as PSRAMCanvas16::begin() /
+// vibBegin(). Must run in setup() BEFORE wifiSetup() (the /tofdbg reader) and
+// before sensorTask is created (the ring writers) — a null here would be a
+// boot-time bug, not a runtime condition, so it aborts loudly.
+static void* ringAlloc(size_t bytes, const char* what) {
+  void* p = ps_malloc(bytes);
+  if (!p) p = malloc(bytes);
+  if (!p) {
+    Serial.printf("[rings] FATAL: cannot allocate %u B for %s\n", (unsigned)bytes, what);
+    allocFailCount.fetch_add(1, std::memory_order_relaxed);
+    delay(100);
+    abort();                       // panic → reset → the diag ring records it
+  }
+  memset(p, 0, bytes);
+  return p;
+}
+void tofRingsBegin() {
+  tofTgtEvt      = (TofTgtSnap*)ringAlloc(sizeof(TofTgtSnap) * TOF_EVT_RING,   "tofTgtEvt");
+  tofTrend       = (TofTrendPt*)ringAlloc(sizeof(TofTrendPt) * TOF_TREND_RING, "tofTrend");
+  vibSigAccum    = (uint32_t*)  ringAlloc(sizeof(uint32_t)   * VIB_FFT_BINS,   "vibSigAccum");
+  vibSigBaseSnap = (float*)     ringAlloc(sizeof(float)      * VIB_FFT_BINS,   "vibSigBaseSnap");
+}
 
 // ── TOF session zero (V12.6, Option B+) ─────────────────────────────────────
 // Endgame of the 8/11-13 stability campaign. After eliminating every
@@ -5678,6 +5704,11 @@ void setup() {
   tft.fillScreen(THEME_BG);
   Serial.println("[BOOT] TFT init OK"); Serial.flush();
 
+  // Cold rings (TOF event/trend, vib signature accumulators, interval-test
+  // shots) → PSRAM. Before wifiSetup() (HTTP readers) and sensorTask (writers).
+  tofRingsBegin();
+  vibTestBegin();
+
   Serial.printf("[BOOT] WiFi init — free heap before: %u\n", ESP.getFreeHeap());
   Serial.flush();
   wifiSetup();
@@ -6034,7 +6065,10 @@ struct VibTestShot {          // 12 B — RAM only, for the life of a run
   uint16_t peakMg10;          // ring-down envelope peak (accel proxy) × 10
   uint16_t dominantHz10;
 };
-static VibTestShot vibTestShots[VIBTEST_MAX_SHOTS];
+static VibTestShot* vibTestShots = nullptr;   // PSRAM — vibTestBegin() (3.6 KB of cold DRAM otherwise)
+void vibTestBegin() {
+  vibTestShots = (VibTestShot*)ringAlloc(sizeof(VibTestShot) * VIBTEST_MAX_SHOTS, "vibTestShots");
+}
 std::atomic<uint32_t> vibTestShotCount{0};   // release on append; endpoint acquire-reads
 std::atomic<uint32_t> vibTestSeq{0};         // any state/result change (cheap poll check)
 static bool     vibTestActive     = false;
