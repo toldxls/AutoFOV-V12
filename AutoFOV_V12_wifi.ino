@@ -1843,23 +1843,40 @@ static void startFullServer() {
     // task; same gates as /diag.
     httpServer.on("/tofdbg", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        // One PSRAM buffer, snprintf'd, streamed with the /vibhist chunk-filler
+        // pattern. The previous build (16 KB ArduinoJson pool + a 26 KB String
+        // + beginResponse's copy of that String) peaked at ~55 KB of INTERNAL
+        // heap on the AsyncTCP task for every 60 s dashboard poll, against an
+        // ~80 KB floor. Worst-case size is bounded by the ring depths: every
+        // field at its widest decimal form —
+        //   header   {"now":4294967295,"heals":…,"count":…,"dropped":…,"events":[   ≤ 128
+        //   event    {"ms":4294967295,"p":65535,"e":65535,"w":255,"a":65535,
+        //             "sc":65535,"i":255,"t":[[-32768,255,65535]×4]},           ≤ 160
+        //   trend    [4294967295,65535,65535,65535,255,65535,-32768,-32768],     ≤ 56
+        // so 128 + 48×160 + 288×56 = 23,936 B. The seqlock reads are the same
+        // as before (plain RAM, no I²C, no FreeRTOS objects — AsyncTCP-safe).
+        constexpr size_t CAP = 128 + (size_t)TOF_EVT_RING * 160 + (size_t)TOF_TREND_RING * 56;
+        char* buf = (char*)ps_malloc(CAP);
+        if (!buf) buf = (char*)malloc(CAP);
+        if (!buf) { req->send(503, "text/plain", "low heap - retry"); return; }
+        size_t pos = 0; bool overflow = false;
+        auto put = [&](const char* fmt, ...) {
+            if (overflow) return;
+            va_list ap; va_start(ap, fmt);
+            int n = vsnprintf(buf + pos, CAP - pos, fmt, ap);
+            va_end(ap);
+            if (n < 0 || (size_t)n >= CAP - pos) { overflow = true; return; }
+            pos += (size_t)n;
+        };
+
         uint32_t cnt = tofTgtEvtCount.load(std::memory_order_acquire);
-        // 32 KB: 48 events (~10 KB of pool) + 144 five-int trend rows (~14 KB).
-        // Transient heap; freed before the response streams.
-        // Events only — the trend is appended as hand-built text below, so the
-        // pool no longer scales with the ring (288 rows would have needed a
-        // ~60 KB doc; as text they are ~13 KB of String).
-        DynamicJsonDocument doc(16384);
-        if (doc.capacity() == 0) {       // alloc failed (low/fragmented heap) —
-            req->send(503, "text/plain", "low heap - retry");   // honest 503, not garbage JSON
-            return;
-        }
-        doc["now"]     = millis();            // dashboard renders event ages
-        doc["heals"]   = tofSelfHealCount.load(std::memory_order_relaxed);
-        doc["count"]   = cnt;
-        doc["dropped"] = tofTgtEvtDropped.load(std::memory_order_relaxed);
-        JsonArray evs = doc.createNestedArray("events");
+        put("{\"now\":%lu,\"heals\":%lu,\"count\":%lu,\"dropped\":%lu,\"events\":[",
+            (unsigned long)millis(),
+            (unsigned long)tofSelfHealCount.load(std::memory_order_relaxed),
+            (unsigned long)cnt,
+            (unsigned long)tofTgtEvtDropped.load(std::memory_order_relaxed));
         uint32_t n = min(cnt, (uint32_t)TOF_EVT_RING);
+        bool first = true;
         for (uint32_t k = 0; k < n; k++) {    // oldest → newest
             int idx = (int)((cnt - n + k) % TOF_EVT_RING);
             TofTgtSnap e; uint32_t s1, s2; int tries = 0;
@@ -1869,35 +1886,25 @@ static void startFullServer() {
                 s2 = tofTgtEvtSlotSeq[idx].load(std::memory_order_acquire);
             } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
             if (s1 != s2 || (s1 & 1)) continue;   // slot mid-write, skip it
-            JsonObject o = evs.createNestedObject();
-            o["ms"] = e.ms;
-            o["p"]  = e.pubT;
-            o["e"]  = e.emaT;
-            o["w"]  = e.why;      // bit0 topology change, bit1 level step
-            o["a"]  = e.amb100;
-            o["sc"] = e.spads;    // effective SPADs, 8.8 fixed
-            o["i"]  = e.incMask;
-            JsonArray ta = o.createNestedArray("t");
-            for (int i = 0; i < e.n; i++) {
-                JsonArray row = ta.createNestedArray();
-                row.add(e.t[i].mm); row.add(e.t[i].st); row.add(e.t[i].cps100);
-            }
+            put("%s{\"ms\":%lu,\"p\":%u,\"e\":%u,\"w\":%u,\"a\":%u,\"sc\":%u,\"i\":%u,\"t\":[",
+                first ? "" : ",", (unsigned long)e.ms, (unsigned)e.pubT, (unsigned)e.emaT,
+                (unsigned)e.why, (unsigned)e.amb100, (unsigned)e.spads, (unsigned)e.incMask);
+            first = false;
+            int tn = e.n; if (tn > VL53L4CX_MAX_RANGE_RESULTS) tn = VL53L4CX_MAX_RANGE_RESULTS;
+            for (int i = 0; i < tn; i++)
+                put("%s[%d,%u,%u]", i ? "," : "", (int)e.t[i].mm, (unsigned)e.t[i].st, (unsigned)e.t[i].cps100);
+            put("]}");
         }
-        String out;
-        out.reserve(12288 + (size_t)TOF_TREND_RING * 48);
-        serializeJson(doc, out);
-        // 5-min level/signal trend, oldest → newest, appended as text:
+        // 5-min level/signal trend, oldest → newest:
         // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10, imuT10] — both temps
         // ×10 logged per point so an overnight soak yields (temp, level) pairs
         // for the mm/°C correlation with zero manual captures. imuT10 (LSM6DSOX,
         // low self-heat, near the sensor) is the preferred axis; dieT10 (SoC)
         // separates load-driven heating. imuT10 = -32768 until first IMU read.
-        out.remove(out.length() - 1);              // strip the closing '}'
-        out += ",\"trend\":[";
+        put("],\"trend\":[");
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
-        bool firstRow = true;
-        char rowBuf[80];
+        first = true;
         for (uint32_t k = 0; k < tn; k++) {
             int idx = (int)((tcnt - tn + k) % TOF_TREND_RING);
             TofTrendPt tp; uint32_t s1, s2; int tries = 0;
@@ -1907,15 +1914,30 @@ static void startFullServer() {
                 s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
             } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
             if (s1 != s2 || (s1 & 1)) continue;
-            snprintf(rowBuf, sizeof(rowBuf), "%s[%lu,%u,%u,%u,%u,%u,%d,%d]",
-                     firstRow ? "" : ",", (unsigned long)tp.ms,
-                     tp.emaT, tp.cps100, tp.amb100, tp.n, tp.spads,
-                     (int)tp.dieT10, (int)tp.imuT10);
-            out += rowBuf;
-            firstRow = false;
+            put("%s[%lu,%u,%u,%u,%u,%u,%d,%d]", first ? "" : ",", (unsigned long)tp.ms,
+                (unsigned)tp.emaT, (unsigned)tp.cps100, (unsigned)tp.amb100, (unsigned)tp.n,
+                (unsigned)tp.spads, (int)tp.dieT10, (int)tp.imuT10);
+            first = false;
         }
-        out += "]}";
-        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
+        put("]}");
+        if (overflow) {                      // cannot happen within CAP; never ship a torn document
+            free(buf);
+            req->send(500, "text/plain", "tofdbg overflow");
+            return;
+        }
+        // The shared_ptr rides in the filler's capture — freed when AsyncWebServer
+        // destroys the response (complete OR client disconnect mid-transfer).
+        std::shared_ptr<char> sp(buf, [](char* p) { free(p); });
+        const size_t total = pos;
+        AsyncWebServerResponse* r = req->beginResponse(
+            "application/json", total,
+            [sp, total](uint8_t* out, size_t maxLen, size_t index) -> size_t {
+                if (index >= total) return 0;
+                size_t m = total - index;
+                if (m > maxLen) m = maxLen;
+                memcpy(out, sp.get() + index, m);
+                return m;
+            });
         r->addHeader("Cache-Control", "no-store");
         req->send(r);
     });
