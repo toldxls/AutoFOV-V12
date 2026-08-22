@@ -217,12 +217,11 @@
         /* Normalized menu-button palette — a saturated jewel-tone fill + a vivid
            same-hue border over the shared .gfx-btn bevel. Reused across menus so
            per-button inline colors drop away. Semantic, not per-screen:
-           .btn-go = primary/confirm, .btn-danger = destructive, .btn-nav =
-           navigation / neutral. (background shorthand drops the gloss gradient
+           .btn-go = primary/confirm, .btn-danger = destructive.
+           (background shorthand drops the gloss gradient
            but keeps the bevel — matches the look these replaced.) */
         .gfx-btn.btn-go     { background: #0a7350; border: 1px solid #40f5a8; }
         .gfx-btn.btn-danger { background: #9c2636; border: 1px solid #ff6272; }
-        .gfx-btn.btn-nav    { background: #0c6577; border: 1px solid #33cce6; }
         /* Hue variants — same jewel-tone recipe, for menus that want their
            entries colour-coded rather than uniform. */
         .gfx-btn.btn-purple    { background: #6e2a88; border: 1px solid #c46ef0; }
@@ -321,13 +320,6 @@
            LEFT of the icon rather than under it. */
         .btn-tof    { left: 12px; width: 216px; height: 42px; font-size: 13px;
                       padding-left: 34px; padding-right: 10px; }
-        .btn-tof.has-badge { padding-right: 44px; }
-        /* ON/OFF chip for toggles whose name is too long to carry its state
-           inline — the label stays a name, the chip carries the state. */
-        .tof-badge { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-                     font-size: 9px; font-weight: bold; letter-spacing: 0.06em;
-                     padding: 2px 6px; border-radius: 3px; border: 1px solid;
-                     background: rgba(0,0,0,0.28); }
         /* Live readouts as a three-up stat strip. They were three floating
            label/value pairs eating 90 px of height with nothing tying them
            together; this groups them and buys that space back for the buttons. */
@@ -519,8 +511,6 @@
             #calib-block.update-avail { animation: none;
                 box-shadow: 0 0 5px rgba(57,255,20,0.35); }
         }
-        /* --- BT INFO EXTRA ROWS --- */
-        .bt-row { position: absolute; width: 240px; height: 30px; }
 
         /* --- RESPONSIVE MOBILE SCALING --- */
         @media (max-width: 850px) {
@@ -3907,7 +3897,6 @@
         ledDuty: 32,          // 0-127
         trigger: false,       // patched3: shutter active (mirrors firmware shutterActive)
         sensorSleeping: false,
-        highReflMode: false,
         // Cold-start bias cured? From telemetry. V12.6: defaults FALSE (was true
         // "to avoid a COLD flash on load"). The page does not reload across an
         // OTA, so a stale/assumed true made the UI claim HOT for the whole
@@ -3949,7 +3938,6 @@
         sourceLines: null, sourceKB: null, chipInfo: 'ESP32-S3',
         // WiFi info
         wifiSSID: null, wifiRSSI: null, latency: null, ntfyTopic: '',
-        hasCustomPw: 0,
         // isCustomCalib flag (false = factory defaults shown)
         isCustomCalib: false,
     };
@@ -6877,13 +6865,6 @@
         }
     }
 
-    // Per-bin color for one waterfall pixel given the active normalisation
-    // reference + user gain. Centralised so the live row and the bulk repaint
-    // share one mapping.
-    function vibWfTint(val) {
-        const denom = Math.max(30, vibWfRefMax);
-        return vibHeatWf((val || 0) / denom * vibWfSensitivity);
-    }
 
     // Capture one spectrum frame as a waterfall row. Called from the WS message
     // handler so rows accumulate even while the tab is backgrounded (the rAF
@@ -11549,7 +11530,6 @@
         cv.naturalWidth=W; cv.naturalHeight=H;   // Image-compatible for drawImage consumers
         return cv;
     }
-    function mtfHandleFile(file){ mtfHandleFiles([file]); }   // single-file compat
     function _mtfLoadOne(file){                  // -> Promise<Image | canvas(TIFF)>
         if(file.type==='image/tiff' || /\.tiff?$/i.test(file.name))
             return file.arrayBuffer().then(buf=>_mtfDecodeTiff(buf));
@@ -14587,7 +14567,6 @@
         }
         // V12.6: live frames-shot counter (0 = no active sequence).
         if (data.sp !== undefined) {
-            state.stackPulses = data.sp;
             if (vibRepRecording && vibRepOpenFlag && data.sp > 0) {
                 const meta = document.getElementById('vibrep-meta');
                 if (meta) meta.innerText = 'RECORDING · frame ' + data.sp +
@@ -14772,7 +14751,6 @@
 
         // ── Sensor state & live readings ──
         if (data.sensorSleeping !== undefined) { state.sensorSleeping = !!data.sensorSleeping; updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
-        if (data.highReflMode   !== undefined) { state.highReflMode   = !!data.highReflMode;   if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.tofHot         !== undefined) { state.tofHot         = !!data.tofHot;         updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.tofRelocking   !== undefined) { state.tofRelocking   = !!data.tofRelocking;   updateTofLabel(); if (state.screen === 'screen-sensorinfo') refreshSensorInfoUI(); }
         if (data.sensorSignal !== undefined) {
@@ -15003,7 +14981,6 @@
             state.wifiSSID = data.wifiSSID;
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
         }
-        if (data.hasCustomPw !== undefined) state.hasCustomPw = data.hasCustomPw;
         if (data.ntfyTopic !== undefined) {
             state.ntfyTopic = data.ntfyTopic;
             if (state.screen === 'screen-autoremote') ntfyScreenInit();
