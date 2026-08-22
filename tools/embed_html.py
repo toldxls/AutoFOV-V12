@@ -124,68 +124,114 @@ for rel in SOURCE_FILES:
         pass
 skb = (sbytes + 512) // 1024     # round to nearest KB
 
-def minify_inline(html):
-    """Shrink the inline <script>/<style> blocks before gzip — comment and
-    whitespace removal only (rjsmin/rcssmin are non-destructive: they never
-    rename identifiers, so semantics are preserved). Fully fail-safe: on a
-    missing library, an exception, or minified JS that does not pass
-    `node --check`, the ORIGINAL html is returned untouched. The worst case is
-    a slightly larger binary — never a broken build or a broken dashboard.
-    data/index.html stays the human-readable source; only the embedded copy is
-    minified. Returns (html, note)."""
+def node_check(node, js):
+    """`node --check` a script body. Returns (rc, stderr_text). node refuses
+    files without a .js extension, hence the named temp file."""
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as fp:
+        fp.write(js)
+        path = fp.name
     try:
-        import rjsmin, rcssmin
-    except ImportError:
-        return html, 'min off — pip3 install rjsmin rcssmin to enable'
+        r = subprocess.run([node, '--check', path], capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+    return r.returncode, r.stderr
 
+
+def minify_inline(html):
+    """Shrink the inline <script>/<style> blocks before gzip.
+
+    Gate FIRST, minify SECOND: the ORIGINAL <script> bodies must pass
+    `node --check`, or this script exits 1 and build.sh (set -e) stops before
+    compiling — a dashboard with a syntax error must never reach the binary.
+    (Previously only the MINIFIED copy was checked and a failure fell back to
+    embedding the original — which was the broken source itself, unminified,
+    with exit 0: a broken dashboard shipped ~100 KB larger than usual.)
+
+    Minifying is comment/whitespace removal only (rjsmin/rcssmin never rename
+    identifiers). It stays fail-safe: a missing library, an exception, or a
+    minified body that fails node --check when the original passed (minifier
+    bug) falls back to the original body with a LOUD stderr warning — the
+    worst case is a larger binary, never a broken dashboard. data/index.html
+    stays the human-readable source; only the embedded copy is minified.
+    Returns (html, note)."""
+    import sys
+    node = shutil.which('node')
+    if not node:
+        sys.stderr.write('WARNING: node not found — dashboard JS is UNVERIFIED '
+                         '(install node to gate builds on `node --check`)\n')
+
+    # Stash each <script> body (replace with a sentinel) so the CSS/comment
+    # passes can never touch a "<style>" or "<!--" that is really a JS string.
+    scripts = []
+    def stash(m):
+        attrs, body = m.group(1), m.group(2)
+        t = re.search(r'type\s*=\s*["\']([^"\']+)["\']', attrs or '', re.I)
+        if t and t.group(1).lower() not in (
+                'text/javascript', 'application/javascript', 'module'):
+            return m.group(0)          # leave JSON / template scripts alone
+        scripts.append((attrs, body))
+        return f'\x00S{len(scripts) - 1}\x00'
+    tmp = re.sub(r'<script\b([^>]*)>(.*?)</script>', stash, html,
+                 flags=re.S | re.I)
+
+    # 1. Gate the ORIGINAL source. A failure here is a build error, full stop.
+    if node:
+        for i, (_, body) in enumerate(scripts):
+            rc, err = node_check(node, body)
+            if rc != 0:
+                sys.stderr.write(
+                    f'ERROR: data/index.html <script> #{i + 1} fails node --check '
+                    f'— fix the source before building:\n{err}\n')
+                sys.exit(1)
+
+    # 2. Minify JS (fail-safe per block).
     try:
-        # Stash each <script> body first (replace with a sentinel) so the CSS
-        # pass can never touch a "<style>" that is really a JS string literal.
-        scripts = []
-        def stash(m):
-            attrs, body = m.group(1), m.group(2)
-            t = re.search(r'type\s*=\s*["\']([^"\']+)["\']', attrs or '', re.I)
-            if t and t.group(1).lower() not in (
-                    'text/javascript', 'application/javascript', 'module'):
-                return m.group(0)          # leave JSON / template scripts alone
-            scripts.append((attrs, rjsmin.jsmin(body)))
-            return f'\x00S{len(scripts) - 1}\x00'
-        tmp = re.sub(r'<script\b([^>]*)>(.*?)</script>', stash, html,
-                     flags=re.S | re.I)
+        import rjsmin
+    except ImportError:
+        rjsmin = None
+    note = 'min on' if node else 'min on (unverified — node not found)'
+    if rjsmin is None:
+        note = 'min off — pip3 install rjsmin rcssmin to enable'
+    minified = []
+    for i, (attrs, body) in enumerate(scripts):
+        out = body
+        if rjsmin is not None:
+            try:
+                cand = rjsmin.jsmin(body)
+                if node:
+                    rc, err = node_check(node, cand)
+                    if rc != 0:
+                        sys.stderr.write(
+                            f'WARNING: minified <script> #{i + 1} fails node --check '
+                            f'but the ORIGINAL passes (minifier bug?) — embedding the '
+                            f'original, UN-minified:\n{err}\n')
+                        note = 'min off — minified JS failed node --check (original embedded)'
+                    else:
+                        out = cand
+                else:
+                    out = cand
+            except Exception as e:
+                sys.stderr.write(f'WARNING: JS minify failed ({e}) — embedding original\n')
+                note = f'min off — {e} (original embedded)'
+        minified.append((attrs, out))
+
+    # 3. CSS (comment/whitespace only) and HTML structural comments — both run
+    #    while scripts are still sentinels, so JS is untouched.
+    try:
+        import rcssmin
         tmp = re.sub(
             r'<style\b([^>]*)>(.*?)</style>',
             lambda m: f'<style{m.group(1)}>{rcssmin.cssmin(m.group(2))}</style>',
             tmp, flags=re.S | re.I)
-        # Drop HTML structural comments (<!-- ... -->) — inert on the device.
-        # Runs while scripts are still stashed as sentinels, so JS is untouched;
-        # CSS uses /* */ so it has none of these either.
-        tmp = re.sub(r'<!--.*?-->', '', tmp, flags=re.S)
-
-        # Parse-gate every minified script. node is the developer-machine
-        # default; if it is absent we still minify (rjsmin is safe) but say so.
-        node = shutil.which('node')
-        if node:
-            for _, js in scripts:
-                with tempfile.NamedTemporaryFile(
-                        'w', suffix='.js', delete=False) as fp:
-                    fp.write(js)
-                    path = fp.name
-                try:
-                    rc = subprocess.run([node, '--check', path],
-                                        capture_output=True).returncode
-                finally:
-                    os.unlink(path)
-                if rc != 0:
-                    return html, 'min off — node --check failed (using original)'
-
-        out = re.sub(
-            r'\x00S(\d+)\x00',
-            lambda m: '<script{0}>{1}</script>'.format(*scripts[int(m.group(1))]),
-            tmp)
-        return out, ('min on' if node else 'min on (unverified — node not found)')
     except Exception as e:
-        return html, f'min off — {e} (using original)'
+        sys.stderr.write(f'WARNING: CSS minify skipped ({e})\n')
+    tmp = re.sub(r'<!--.*?-->', '', tmp, flags=re.S)
 
+    out = re.sub(
+        r'\x00S(\d+)\x00',
+        lambda m: '<script{0}>{1}</script>'.format(*minified[int(m.group(1))]),
+        tmp)
+    return out, note
 
 with open(src, 'rb') as f:
     raw = f.read()

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Pre-commit safety net — version-controlled. Activated by
+#     git config core.hooksPath tools/hooks
+# (tools/install-hooks.sh does this and chmods tools/hooks/*).
+#
+# The dashboard's inline JS must pass `node --check` BEFORE it can be
+# committed. Checks data/index.html AS STAGED (the index, not the working
+# tree), and only when it is part of this commit. tools/embed_html.py refuses
+# to build a broken script too — this just catches it one step earlier, at
+# the commit, where the fix is a quick amend instead of a failed build or a
+# blocked push. Fail-open when node is missing (same policy as pre-push).
+git diff --cached --quiet -- data/index.html && exit 0
+command -v node >/dev/null 2>&1 || exit 0
+
+. "$(dirname "$0")/jscheck.sh"
+tmpd=$(mktemp -d -t autofov_pc.XXXXXX) || exit 0
+page="$tmpd/page.html"
+git show :data/index.html >"$page" 2>/dev/null || { rm -rf "$tmpd"; exit 0; }
+if ! jscheck_html "$page"; then
+    echo "pre-commit: staged data/index.html fails node --check — commit blocked (see above)." >&2
+    echo "  fix the <script>, re-stage, and commit again — or override with: git commit --no-verify" >&2
+    rm -rf "$tmpd"
+    exit 1
+fi
+rm -rf "$tmpd"
+exit 0

@@ -21,6 +21,7 @@
 # from) are skipped entirely, so it never blocks a release's firmware.bin.
 # Override in a pinch with:  git push --no-verify
 
+. "$(dirname "$0")/jscheck.sh"
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$root" || exit 0
 
@@ -73,26 +74,15 @@ for line in "${refs[@]}"; do
         exit 1
     fi
 
-    # (2) Dashboard inline JS must parse. Syntax-only — node --check ignores the
-    #     undefined browser globals (document, WebSocket, …), just the grammar.
-    #     Checks the file AS COMMITTED at the ref tip, not the working tree.
+    # (2) Dashboard inline JS must parse — shared extractor + node --check in
+    #     tools/hooks/jscheck.sh (pre-commit uses the same). Checks the file
+    #     AS COMMITTED at the ref tip, not the working tree.
     if [ "$have_node" = 1 ]; then
-        # Temp DIR with a .js file inside — node --check rejects files whose
-        # extension it doesn't recognise, and mktemp can't guarantee a .js suffix.
-        tmpd=$(mktemp -d -t autofov_js.XXXXXX) || exit 0
-        js="$tmpd/check.js"; err="$tmpd/err.txt"; page="$tmpd/page.html"
-        # Two steps, file argument — piping into `python3 - <<PY` makes the
-        # pipe and the heredoc fight over stdin (shell-dependent who wins).
+        tmpd=$(mktemp -d -t autofov_pp.XXXXXX) || exit 0
+        page="$tmpd/page.html"
         git show "$local_sha:data/index.html" >"$page"
-        python3 - "$page" >"$js" <<'PY'
-import re, sys
-html = open(sys.argv[1], encoding='utf-8').read()
-blocks = re.findall(r'<script\b[^>]*>(.*?)</script>', html, flags=re.S | re.I)
-sys.stdout.write('\n;\n'.join(blocks))
-PY
-        if ! node --check "$js" 2>"$err"; then
-            echo "pre-push: dashboard JS in pushed commit ${local_sha:0:8} failed node --check — push blocked:" >&2
-            sed 's/^/  /' "$err" >&2
+        if ! jscheck_html "$page"; then
+            echo "pre-push: dashboard JS in pushed commit ${local_sha:0:8} failed node --check — push blocked (see above)." >&2
             echo "  fix data/index.html <script> and amend/commit, or override with: git push --no-verify" >&2
             rm -rf "$tmpd"
             exit 1
