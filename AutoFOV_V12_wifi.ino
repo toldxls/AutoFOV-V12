@@ -563,7 +563,7 @@ static void startStaMode(const String& ssid, const String& pass,
 static void startFullServer();
 static void handleWifiCommand(const char* key, const char* val);
 static void buildFullStateJson(String& out, bool includeCalGraph = true);
-static void buildFastTelemJson(String& out);
+static size_t buildFastTelemFrame(char* buf, size_t cap);   // 0 = truncated, drop the frame
 static void pushVibSpectrumBinary();             // V12 — binary WS frame
 static void buildSlowTelemJson(String& out);
 static void buildSettingsJson(String& out);
@@ -1027,11 +1027,23 @@ void wifiLoop() {
     uint32_t now = millis();
     if (now - lastFastTelemMs >= FAST_TELEM_MS) {
         lastFastTelemMs = now;
-        String out; bool built = false;
+        // One shared buffer for every ready client: AsyncWebSocket's text(String)
+        // used to make_shared + memcpy a private copy PER client, on top of the
+        // ArduinoJson pool and the String's 32-byte growth steps — ~10 internal-
+        // heap allocations per 30 Hz frame, forever (the fragmentation source
+        // MEM INFO's minMaxAllocKB watches). Now: one stack snprintf, one
+        // shared vector, zero copies per extra client. Server→client frames
+        // are unmasked, so the shared bytes are never mutated in the queue.
+        AsyncWebSocketSharedBuffer sb;
         for (auto& c : wsServer.getClients()) {
             if (!wsClientReady(c, now)) continue;
-            if (!built) { buildFastTelemJson(out); built = true; }
-            c.text(out);
+            if (!sb) {
+                char frame[512];
+                size_t n = buildFastTelemFrame(frame, sizeof frame);
+                if (!n) break;                                   // truncated — drop this frame
+                sb = std::make_shared<std::vector<uint8_t>>(frame, frame + n);
+            }
+            c.text(sb);
         }
     }
     if (now - lastSlowTelemMs >= SLOW_TELEM_MS) {
@@ -3484,7 +3496,29 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
 }
 
 // Fast telemetry — ~30 Hz live sensor values + WiFi/BT signal levels
-static void buildFastTelemJson(String& out) {
+// Float → shortest text, matching what ArduinoJson 7 emitted for these
+// pre-rounded values ("19.1", "12", "0" — trailing zeros and a bare '.'
+// stripped, "-0" folded to "0"), so the frames stay byte-identical to the
+// previous builder (the dashboard JSON.parses them, so numeric equality is
+// what matters; byte equality keeps diffs clean).
+static void fmtF(char* d, size_t n, float v, int places) {
+    if (v == 0.0f) { snprintf(d, n, "0"); return; }
+    snprintf(d, n, "%.*f", places, (double)v);
+    char* dot = strchr(d, '.');
+    if (dot) {
+        char* e = d + strlen(d) - 1;
+        while (e > dot && *e == '0') *e-- = '\0';
+        if (*e == '.') *e = '\0';
+    }
+    if (strcmp(d, "-0") == 0) strcpy(d, "0");
+}
+
+// The ~30 Hz fast frame, snprintf'd into the caller's stack buffer — no heap
+// at all (the ArduinoJson "StaticJsonDocument" it replaces is a heap pool in
+// v7). Keys/order/format are unchanged: short keys save ~30 bytes/frame at
+// 30 Hz; HTML applyFullState() unpacks them back to long names. Returns the
+// byte count, or 0 if the frame did not fit (caller drops it).
+static size_t buildFastTelemFrame(char* buf, size_t cap) {
     uint32_t st  = sensorState.load(std::memory_order_acquire);
     uint32_t hst = sensorHealth.load(std::memory_order_acquire);
     uint32_t amb = sensorAmbient.load(std::memory_order_acquire);
@@ -3498,30 +3532,34 @@ static void buildFastTelemJson(String& out) {
     float mult = (currentobj == 1) ? mul_5x : (currentobj == 2) ? mul_10x : mul_20x;
     float fov  = valid ? (mult * fovAt(avgDist)) : 0.0f;
 
-    // Short keys save ~30 bytes/frame at 30 Hz.  HTML applyFullState() unpacks
-    // them back to long names at the top of the function.
-    // 1024: the base frame fit in 448; the V12.6 "tg" nested object (4 targets
-    // × 3-int rows) needs ~350 B of pool on top.
-    StaticJsonDocument<1024> doc;
-    doc["d"]  = valid ? roundf(dist_mm * 10.0f) / 10.0f : 0;   // dist
-    doc["f"]  = roundf(fov * 1000.0f) / 1000.0f;                // fov
-    doc["e"]  = (int)sensorErrInt.load(std::memory_order_acquire); // fovErr (2σ × 100, centimm)
-    doc["sg"] = roundf(signal * 10.0f) / 10.0f;                 // signal
-    doc["a"]  = roundf(ambient * 100.0f) / 100.0f;              // sensorAmbient
-    doc["ss"] = status;                                          // sensorStatus
-    doc["t"]  = shutterActive ? 1 : 0;                          // trigger
-    doc["wr"] = (int)WiFi.RSSI();                                // wifiRSSI
+    size_t pos = 0; bool overflow = false;
+    auto put = [&](const char* fmt, ...) {
+        if (overflow) return;
+        va_list ap; va_start(ap, fmt);
+        int n = vsnprintf(buf + pos, cap - pos, fmt, ap);
+        va_end(ap);
+        if (n < 0 || (size_t)n >= cap - pos) { overflow = true; return; }
+        pos += (size_t)n;
+    };
+    char f1[24], f2[24], f3[24];
+
+    fmtF(f1, sizeof f1, valid ? roundf(dist_mm * 10.0f) / 10.0f : 0.0f, 1);   // dist
+    fmtF(f2, sizeof f2, roundf(fov * 1000.0f) / 1000.0f, 3);                    // fov
+    put("{\"d\":%s,\"f\":%s,\"e\":%d", f1, f2, (int)sensorErrInt.load(std::memory_order_acquire)); // fovErr (2σ × 100, centimm)
+    fmtF(f1, sizeof f1, roundf(signal * 10.0f) / 10.0f, 1);                     // signal
+    fmtF(f2, sizeof f2, roundf(ambient * 100.0f) / 100.0f, 2);                  // sensorAmbient
+    put(",\"sg\":%s,\"a\":%s,\"ss\":%u,\"t\":%d,\"wr\":%d", f1, f2, (unsigned)status,
+        shutterActive ? 1 : 0, (int)WiFi.RSSI());                               // sensorStatus, trigger, wifiRSSI
     // V12: vibration monitor — dominant Hz, vertical + horizontal RMS mg,
     // suggested wait ms, state.
-    doc["vd"]  = roundf(vibDominant.load() / 10.0f * 10.0f) / 10.0f;
-    doc["vr"]  = roundf((float)vibBandRms.load() / 100.0f * 10.0f) / 10.0f;
-    doc["vh"]  = roundf((float)vibHorizRms.load() / 100.0f * 10.0f) / 10.0f;
-    doc["vw"]  = (int)vibSuggestedWait.load();
-    doc["vst"] = (int)vibState.load();
-    doc["vcw"] = vibCurrentWaitMs;                               // controller WAIT setting
-    doc["vsh"] = (int)vibShutterDenom;                           // analyzer/PNG-card shutter 1/N s
-    // V12.6: live frames-shot counter — 0 when no sequence is active.
-    doc["sp"]  = isSequenceActive ? (int)stackPulseCount : 0;
+    fmtF(f1, sizeof f1, roundf(vibDominant.load() / 10.0f * 10.0f) / 10.0f, 1);
+    fmtF(f2, sizeof f2, roundf((float)vibBandRms.load()   / 100.0f * 10.0f) / 10.0f, 1);
+    fmtF(f3, sizeof f3, roundf((float)vibHorizRms.load()  / 100.0f * 10.0f) / 10.0f, 1);
+    put(",\"vd\":%s,\"vr\":%s,\"vh\":%s,\"vw\":%d,\"vst\":%d,\"vcw\":%d,\"vsh\":%d,\"sp\":%d",
+        f1, f2, f3, (int)vibSuggestedWait.load(), (int)vibState.load(),
+        (int)vibCurrentWaitMs,                       // controller WAIT setting
+        (int)vibShutterDenom,                        // analyzer/PNG-card shutter 1/N s
+        isSequenceActive ? (int)stackPulseCount : 0); // V12.6: live frames-shot counter — 0 when idle
 
     // V12.6: raw TOF target list for the TARGETS debug view. Every 5th frame
     // (~6 Hz — plenty for eyes) plus immediately on a topology change, so a
@@ -3540,25 +3578,20 @@ static void buildFastTelemJson(String& out) {
         bool topoChanged = (snap.sig != tgLastSig);
         if (topoChanged || (++tgFrameCtr % 5) == 0) {
             tgLastSig = snap.sig;
-            JsonObject tg = doc.createNestedObject("tg");
-            tg["ms"] = snap.ms;          // device time of the FRAME — the staleness
-                                         // lamp must age the data, not the transport
-            tg["p"] = snap.pubT;         // published weighted dist, tenths mm
-            tg["e"] = snap.emaT;         // EMA level, tenths mm
-            tg["sc"] = snap.spads;       // effective SPADs, 8.8 fixed (÷256)
-            tg["i"] = snap.incMask;      // bit i = target i in the average
-            tg["n"] = snap.n;
-            JsonArray ta = tg.createNestedArray("t");
-            for (int i = 0; i < snap.n; i++) {
-                JsonArray row = ta.createNestedArray();
-                row.add(snap.t[i].mm);
-                row.add(snap.t[i].st);
-                row.add(snap.t[i].cps100);
-            }
+            // ms = device time of the FRAME — the staleness lamp must age the
+            // data, not the transport. p/e tenths mm, sc = SPADs 8.8 fixed,
+            // i = bit mask of targets in the average.
+            put(",\"tg\":{\"ms\":%lu,\"p\":%u,\"e\":%u,\"sc\":%u,\"i\":%u,\"n\":%u,\"t\":[",
+                (unsigned long)snap.ms, (unsigned)snap.pubT, (unsigned)snap.emaT,
+                (unsigned)snap.spads, (unsigned)snap.incMask, (unsigned)snap.n);
+            int tn = snap.n; if (tn > VL53L4CX_MAX_RANGE_RESULTS) tn = VL53L4CX_MAX_RANGE_RESULTS;
+            for (int i = 0; i < tn; i++)
+                put("%s[%d,%u,%u]", i ? "," : "", (int)snap.t[i].mm, (unsigned)snap.t[i].st, (unsigned)snap.t[i].cps100);
+            put("]}");
         }
     }
-
-    serializeJson(doc, out);
+    put("}");
+    return overflow ? 0 : pos;
 }
 
 // V12: vibration spectrum frame — 256 magnitude bins (deci-mg) per channel,
@@ -3610,10 +3643,14 @@ static void pushVibSpectrumBinary() {
 
     // Per client, not binaryAll: a stalled client must not gate (or bloat the
     // queue of) the others — same policy as the JSON telemetry in wifiLoop().
+    // One shared 1 KB vector for all ready clients (binary(ptr,len) would
+    // copy per client).
     const uint32_t now = millis();
+    AsyncWebSocketSharedBuffer sb;
     for (auto& c : wsServer.getClients()) {
         if (!wsClientReady(c, now)) continue;
-        c.binary(buf, FRAME);
+        if (!sb) sb = std::make_shared<std::vector<uint8_t>>(buf, buf + FRAME);
+        c.binary(sb);
     }
 }
 
