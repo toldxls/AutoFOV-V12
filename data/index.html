@@ -3884,6 +3884,15 @@
     // ─────────────────────────────────────────────────────────────────────────
     // STATE
     // ─────────────────────────────────────────────────────────────────────────
+    // localStorage can throw (Safari "block all cookies", private mode, quota)
+    // — every access goes through here so a blocked store degrades to defaults
+    // instead of taking the caller down with it.
+    const ls = {
+        get:  (k, d = null) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+        set:  (k, v)        => { try { localStorage.setItem(k, String(v)); return true; } catch (e) { return false; } },
+        del:  (k)           => { try { localStorage.removeItem(k); } catch (e) {} },
+        json: (k, d = null) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    };
     let state = {
         screen: 'screen-main',
         obj: 3,               // 1=5x 2=10x 3=20x
@@ -3984,6 +3993,7 @@
 
     function switchScreen(id) {
         screenHistory.push(state.screen);
+        if (screenHistory.length > 32) screenHistory.shift();   // only goBack pops; cap the trail
         _showScreen(id);
         sendCommand('nav', id);   // mirror the navigation onto the device TFT
     }
@@ -4067,6 +4077,7 @@
     // VIBRATION MONITOR (V12)
     // ─────────────────────────────────────────────────────────────────────────
     let vibSpec = null;     // last 256-bin spectrum frame from the device
+    let _vibReadoutLastMs = 0;   // 4 Hz cap on the text readouts (applyFullState)
     let vibSigs = [];       // saved-signature filenames
 
     function vibToggleHelp(){ const h=document.getElementById('vibmenu-help');
@@ -4515,9 +4526,22 @@
     let       vibBlurEmaT     = 0;
     const VIB_SPEC_LOG_MIN = 0.01;           // µm log-scale floor
     let vibUnitsUm = false;
+    // Memo: the inputs only change when a spectrum frame lands (5 Hz, bumps
+    // vibSpecGen) or the shutter speed changes, but the readouts call this
+    // 4-8× per 30 Hz telemetry frame. Keyed on the spec array's identity.
+    let vibSpecGen = 0;
+    const _vibDispMemo = new Map();
     function vibDispStats(spec, base) {
         if (!spec || !spec.length)
             return { peakUm: 0, peakHz: 0, rmsUm: 0, blurNbUm: 0, blurBbUm: 0 };
+        const memo = _vibDispMemo.get(spec);
+        if (memo && memo.gen === vibSpecGen && memo.denom === vibShutterDenom) return memo.res;
+        const res = _vibDispStatsCalc(spec, base);
+        if (_vibDispMemo.size > 8) _vibDispMemo.clear();
+        _vibDispMemo.set(spec, { gen: vibSpecGen, denom: vibShutterDenom, res });
+        return res;
+    }
+    function _vibDispStatsCalc(spec, base) {
         let peakUm = 0, peakBin = 0, sumSq = 0, blurSq = 0;
         const T = 1 / vibShutterDenom;
         for (let k = VIB_DISP_MIN_BIN; k < spec.length; k++) {
@@ -5027,9 +5051,9 @@
     // coefficient is frozen until a new fit strictly beats its pedigree
     // (wider ΔT, or comparable ΔT with strictly higher r AND more points —
     // strict, so a dataset can never re-qualify against itself).
-    function tofcalAutoEnabled(){ return localStorage.getItem('afovTcAuto') === '1'; }
+    function tofcalAutoEnabled(){ return ls.get('afovTcAuto') === '1'; }
     function tofcalAutoToggle(cb){
-        localStorage.setItem('afovTcAuto', cb.checked ? '1' : '0');
+        ls.set('afovTcAuto', cb.checked ? '1' : '0');
         tofcalIo(cb.checked ? 'auto-update on — the coefficient only changes when a strictly better fit appears' : 'auto-update off');
     }
     function _tofcalAdopt(coeff, ref, fit, why){
@@ -5481,9 +5505,11 @@
         sendCommand('reboot', 1);
         document.getElementById('tofdbg-io').innerText = 'rebooting…';
     }
+    let _tofdbgSweepMaxMm = 0;   // read once per open — tofdbgDraw runs per live frame
     function tofdbgOpen() {
         tofzeroStatusIdle();
         tofdbgOpenFlag = true;
+        _tofdbgSweepMaxMm = parseFloat(ls.get('afovSweepMaxMm', '0')) || 0;
         document.getElementById('tofdbg-overlay').classList.add('open');
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
         tofdbgFetchLog();
@@ -5519,7 +5545,7 @@
         // A completed LOG SWEEP defines the rack's real span (persisted);
         // otherwise 160 mm covers the bellows. y is a grow-only high-water
         // so the log decades hold still too.
-        const sweepMax = parseFloat(localStorage.getItem('afovSweepMaxMm') || '0');
+        const sweepMax = _tofdbgSweepMaxMm;
         const maxMm = (sweepMax > 20 ? Math.ceil(sweepMax * 1.08 / 10) * 10 : 160);
         _tofdbgCpsHi = Math.max(_tofdbgCpsHi, 0.5, ...t.map(r => r[2] / 100));
         const maxCps = _tofdbgCpsHi;                 // AXIS scale only (stable)
@@ -5765,7 +5791,7 @@
             if (_tofSweep.pts.length > 20) {
                 const ds = _tofSweep.pts.map(p => p[0]).sort((a2, b2) => a2 - b2);
                 const mx = ds[Math.floor(ds.length * 0.99)];
-                if (mx > 20 && mx < 300) localStorage.setItem('afovSweepMaxMm', mx.toFixed(1));
+                if (mx > 20 && mx < 300) { ls.set('afovSweepMaxMm', mx.toFixed(1)); _tofdbgSweepMaxMm = mx; }
             }
         } else {
             _tofSweep = { pts: [], done: false, _last: 0 };
@@ -7750,8 +7776,9 @@
                     vibLinkedCursorAge = performance.now() - row.t;
                     vibCursorPane      = 'wf';
                 }
-                vibDrawWaterfall();   // redraw axis + cursor only
-                vibDrawTrend();            // mirror the cursor on the trend
+                // No synchronous repaint: the panel's rAF loop (vibStartRafLoop)
+                // already paints both panes every display frame — a 120-240 Hz
+                // mouse would otherwise add 2-4 full waterfall passes per frame.
             });
             wc.addEventListener('mouseleave', () => {
                 vibWfCursorX = -1; vibWfCursorY = -1;
@@ -7775,8 +7802,7 @@
                 if (pw < 10 || cx < mL || cx > mL + pw) return;
                 vibLinkedCursorAge = (1 - (cx - mL) / pw) * span;
                 vibCursorPane      = 'trend';
-                vibDrawTrend();
-                vibDrawWaterfall();
+                // Painted by the rAF loop — see the waterfall handler above.
             });
             tc.addEventListener('mouseleave', () => {
                 if (vibCursorPane === 'trend') {
@@ -8988,6 +9014,11 @@
         const onMain   = (state.screen === 'screen-main');
         const enabled  = !!state.ledEnabled;
         const firing   = !!state.trigger;
+        // Called per 30 Hz frame; the trigger is idle 99.9 % of the time, so
+        // skip rebuilding the gradient/box-shadow strings when nothing changed.
+        const key = (firing ? 1 : 0) + '|' + (enabled ? 1 : 0) + '|' + (state.ledDuty | 0) + '|' + (onMain ? 1 : 0);
+        if (key === applyTriggerVisuals._last) return;
+        applyTriggerVisuals._last = key;
         // ledDuty range matches the firmware: 0..127.  Normalize to 0..1.
         const dutyPct  = Math.max(0, Math.min(1, (state.ledDuty || 0) / 127));
 
@@ -9965,7 +9996,7 @@
             // modal (or, via autofill, an unprompted biometric sheet). The
             // next user-initiated call re-authenticates normally.
             if (opts.silent) return r;
-            csrfToken = ''; localStorage.removeItem('afovToken');
+            csrfToken = ''; ls.del('afovToken');
             if (await doLogin()) {
                 opts.headers['X-AutoFOV-Token'] = csrfToken;
                 r = await fetch(wifiBase + path, opts);
@@ -13605,7 +13636,7 @@
     let ghPhase    = 'idle';   // idle | checking | current | available | error | busy
     let ghManifest = null;     // {version, sha256, bin} from the last good check
     let ghAutoChecked = false;  // one-shot: auto-check GitHub once buildVersion is known
-    const GH_AUTOCHECK_MS = 60 * 1000;  // then re-check this often so a fresh release lights the glow within ~1 min
+    const GH_AUTOCHECK_MS = 15 * 60 * 1000;   // then re-check this often so a fresh release lights the glow (was 60 s — 1,440 uncached GitHub hits/day per open tab)
 
     function ghSetStatus(msg, color) {
         const el = document.getElementById('gh-status');
@@ -13707,6 +13738,7 @@
     // open lights the About-button glow without a manual reload. Skips when the
     // running version isn't known yet or a check/flash is already in flight.
     function maybeAutoCheckGithub() {
+        if (document.hidden) return;               // nobody is looking; the next visible tick will
         if (!state.buildVersion || state.buildVersion === '—') return;
         if (otaUploadActive || ghPhase === 'busy' || ghPhase === 'checking') return;
         checkGithubUpdate();
@@ -13990,7 +14022,7 @@
             // Reuse a remembered token (from a prior "keep me signed in") before
             // prompting. If the device rebooted it'll be rejected below and we
             // fall back to the login overlay.
-            if (!csrfToken) csrfToken = localStorage.getItem('afovToken') || '';
+            if (!csrfToken) csrfToken = ls.get('afovToken', '') || '';
             // Log in to obtain the session token (cached across WS reconnects;
             // only re-requested here on a full connectWifi() cycle or a 403).
             if (!csrfToken && !(await doLogin())) {
@@ -14006,7 +14038,7 @@
                 // Token rejected (device rebooted / rotated it, or signed out) —
                 // drop the stale cached token and re-login once.
                 csrfToken = '';
-                localStorage.removeItem('afovToken');
+                ls.del('afovToken');
                 if (!(await doLogin())) {
                     status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
                     updateWifiZone(false);
@@ -14118,7 +14150,7 @@
         const err = document.getElementById('login-err');
         pw.value = '';
         err.textContent = '';
-        cb.checked = localStorage.getItem('afovRemember') === '1';
+        cb.checked = ls.get('afovRemember') === '1';
         // One-tap biometric flow. Detection must not rely on keydown contents:
         // Android/IME keyboards report key='Unidentified' for every character,
         // so "zero printable keydowns" false-fires on normally-typed passwords
@@ -14182,11 +14214,11 @@
                 if (tok) {
                     csrfToken = tok;
                     if (cb.checked) {
-                        localStorage.setItem('afovToken', tok);
-                        localStorage.setItem('afovRemember', '1');
+                        ls.set('afovToken', tok);
+                        ls.set('afovRemember', '1');
                     } else {
-                        localStorage.removeItem('afovToken');
-                        localStorage.removeItem('afovRemember');
+                        ls.del('afovToken');
+                        ls.del('afovRemember');
                     }
                     pw.value = '';
                     document.getElementById('login-overlay').classList.remove('open');
@@ -14217,8 +14249,8 @@
     // re-show the login overlay. Reachable from the WiFi Info screen.
     function signOut() {
         wsGen++;                       // orphan any in-flight reconnect probe
-        localStorage.removeItem('afovToken');
-        localStorage.removeItem('afovRemember');
+        ls.del('afovToken');
+        ls.del('afovRemember');
         csrfToken = '';
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
         connectWifi();
@@ -14295,7 +14327,7 @@
                     if (myGen !== wsGen) return;     // disconnected while probing
                     if (r.status === 401 || r.status === 403) {
                         csrfToken = '';
-                        localStorage.removeItem('afovToken');
+                        ls.del('afovToken');
                         connectWifi();      // re-login + fresh state + socket
                         return;
                     }
@@ -14481,12 +14513,17 @@
         return [255,68,0];
     }
     function setTofBar(pct) {
+        // Called per 30 Hz frame; the bar can't resolve sub-percent moves, so
+        // quantize and skip the six SVG attribute writes when nothing changed.
+        pct = Math.round(pct);
+        if (pct === setTofBar._last) return;
+        setTofBar._last = pct;
         const top = document.getElementById('tof-fill-top');
         const fr  = document.getElementById('tof-fill-front');
         const end = document.getElementById('tof-fill-end');
         if (!top || !fr || !end) return;
         const X0 = 1, W = 36, D = 6, yT = 9, yB = 17;   // geometry mirrors the svg
-        if (pct <= 0.5) { top.setAttribute('d',''); fr.setAttribute('d',''); end.setAttribute('d',''); return; }
+        if (pct < 1) { top.setAttribute('d',''); fr.setAttribute('d',''); end.setAttribute('d',''); return; }
         const xL = X0 + Math.min(100, pct) / 100 * W;
         const [r,g,b] = tofRGB(pct);
         const sh = (m) => `rgb(${Math.round(Math.min(255,r*m))},${Math.round(Math.min(255,g*m))},${Math.round(Math.min(255,b*m))})`;
@@ -14557,6 +14594,7 @@
                     ' · report opens when the stack completes';
             }
         }
+        if (data.vs !== undefined || data.hs !== undefined) vibSpecGen++;   // invalidates the vibDispStats memo
         if (data.vs  !== undefined) {
             vibSpec = data.vs;
             if (state.screen === 'screen-vibration') vibSchedulePaint(VP_SPEC_BASIC);
@@ -14608,16 +14646,25 @@
                 vibCaptureDone();
             }
         }
-        if (state.screen === 'screen-vibration' &&
-            (data.vd !== undefined || data.vr !== undefined || data.vh !== undefined ||
-             data.vw !== undefined || data.vrh !== undefined || data.vcw !== undefined ||
-             data.vst !== undefined))
-            vibSchedulePaint(VP_READOUT);
-        if (vibPanelOpen &&
-            (data.vd !== undefined || data.vr !== undefined ||
-             data.vh !== undefined || data.vst !== undefined ||
-             data.vs !== undefined || data.hs !== undefined)) {
-            vibSchedulePaint(VP_READ_PANEL);
+        // Text readouts (basic screen + analyzer panel): 1-decimal numbers
+        // nobody can read at 30 Hz, and each repaint is a handful of
+        // innerHTML parses — cap them at ~4 Hz (the spectrum's own cadence).
+        const roNow = performance.now();
+        if (roNow - _vibReadoutLastMs >= 250) {
+            let scheduled = false;
+            if (state.screen === 'screen-vibration' &&
+                (data.vd !== undefined || data.vr !== undefined || data.vh !== undefined ||
+                 data.vw !== undefined || data.vrh !== undefined || data.vcw !== undefined ||
+                 data.vst !== undefined)) {
+                vibSchedulePaint(VP_READOUT); scheduled = true;
+            }
+            if (vibPanelOpen &&
+                (data.vd !== undefined || data.vr !== undefined ||
+                 data.vh !== undefined || data.vst !== undefined ||
+                 data.vs !== undefined || data.hs !== undefined)) {
+                vibSchedulePaint(VP_READ_PANEL); scheduled = true;
+            }
+            if (scheduled) _vibReadoutLastMs = roNow;
         }
         // Trend sampling runs regardless of panel visibility so the 90 s
         // history stays continuous across screen navigation (and across a
@@ -14961,13 +15008,14 @@
             state.ntfyTopic = data.ntfyTopic;
             if (state.screen === 'screen-autoremote') ntfyScreenInit();
         }
-        if (data.wifiRSSI !== undefined) {
+        if (data.wifiRSSI !== undefined && data.wifiRSSI !== state.wifiRSSI) {
+            // Diffed: this arrives on every 30 Hz frame but changes a few times
+            // a minute. The bezel bars are repainted by the 1 s pps timer
+            // (updateWifiZone), so no per-frame SVG churn here either.
             state.wifiRSSI = data.wifiRSSI;
             const col = data.wifiRSSI > -55 ? '#00FF00' : data.wifiRSSI > -65 ? '#ADFF2F' : data.wifiRSSI > -75 ? '#FFA500' : '#FF4400';
             const el = document.getElementById('wi-rssi');
-            el.innerText = data.wifiRSSI + ' dBm'; el.style.color = col;
-            // refresh bar indicator on main screen
-            if (ws && ws.readyState === WebSocket.OPEN) updateWifiZone(true);
+            if (el) { el.innerText = data.wifiRSSI + ' dBm'; el.style.color = col; }
         }
         // ── Latency: pong answers our {"ping":1} probe (see the 1 s interval) ──
         // The pong rides home inside the same WebSocket as the 30 Hz telemetry,
