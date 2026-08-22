@@ -22,7 +22,11 @@ ARDUINO_CLI="$HOME/bin/arduino-cli"
 #   upload.maximum_size=<app0>   the real app0/app1 slot, so the build-time size
 #                                guard reads e.g. "80% / 1900544" instead of
 #                                `default`'s 1.2 MB.
-FQBN="esp32:esp32:adafruit_feather_esp32s3:PSRAM=enabled,PartitionScheme=default,LoopCore=1,EventsCore=1"
+# USBMode=hwcdc: Serial on the hardware USB-Serial/JTAG peripheral instead of
+# TinyUSB CDC (the board default) — drops ~45 KB flash + ~31 KB internal RAM
+# of unused USB-class buffers. Same D+/D- pins; the ROM download mode the USB
+# recovery flasher relies on is independent of this setting.
+FQBN="esp32:esp32:adafruit_feather_esp32s3:PSRAM=enabled,PartitionScheme=default,LoopCore=1,EventsCore=1,USBMode=hwcdc"
 BUILD_DIR="build/esp32.esp32.adafruit_feather_esp32s3"
 
 # Derive the app-slot size from partitions.csv (field 5 of the app0 row) so the

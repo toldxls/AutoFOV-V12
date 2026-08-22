@@ -86,6 +86,7 @@ FQBN automatically; if building from the Arduino IDE instead, match:
 | Partition Scheme | Custom — `partitions.csv` at the sketch root (dual-OTA) |
 | Arduino Runs On | Core 1 |
 | Events Run On | Core 1 |
+| USB Mode | Hardware CDC and JTAG (not USB-OTG/TinyUSB — the sketch uses no USB classes; saves ~45 KB flash / ~31 KB RAM) |
 
 ### Building and flashing
 

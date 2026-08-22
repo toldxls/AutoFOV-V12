@@ -5522,8 +5522,19 @@ void vibTask(void *pvParameters) {
 }
 
 void setup() {
+  // Serial is the ESP32-S3's hardware USB-Serial/JTAG peripheral (build.sh
+  // FQBN USBMode=hwcdc) — the board default routed it through TinyUSB's CDC,
+  // which linked ~45 KB of flash + ~31 KB of internal RAM of NCM/MSC/HID
+  // endpoint buffers the sketch never used.
   Serial.begin(115200);
-  delay(3000);
+  // Never let a print block a task: with a host holding the port open but not
+  // reading, CDC writes stall up to the TX timeout per call — and we print
+  // from the AsyncTCP task (Serial.flush in onWsEvent) and from sensorTask
+  // under i2cMutex. Unread bytes are simply dropped.
+  Serial.setTxTimeoutMs(0);
+  // Give a connected Serial Monitor up to 3 s to catch the boot log; an
+  // unattended boot (no host has the port open) doesn't wait at all.
+  { uint32_t t0 = millis(); while (!Serial && millis() - t0 < 3000) delay(10); }
 
   // ─── V12.5: field-resilience early block (boot-loop rollback + diagnostics) ──
   // Runs FIRST, before wifiSetup()/peripherals, so a rollback restart wastes no
