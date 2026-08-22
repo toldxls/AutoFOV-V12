@@ -1,10 +1,13 @@
 #!/bin/bash
 # One-command build: regenerates web_ui.h then compiles the sketch.
 # Run after committing all changes; OTA flash the resulting .bin.
-# Usage: bash tools/build.sh
+# Usage: bash tools/build.sh [--force]
+#   --force   build even when the .bin is at/over 97 % of the OTA slot
 
 set -e
 cd "$(dirname "$0")/.."
+FORCE=0
+for a in "$@"; do [ "$a" = "--force" ] && FORCE=1; done
 
 ARDUINO_CLI="$HOME/bin/arduino-cli"
 # esp32 core 3.3.x dropped the `PartitionScheme=custom` menu option for the
@@ -68,6 +71,23 @@ echo "=== Step 2: compile ==="
 echo ""
 echo "=== Done ==="
 BIN="$BUILD_DIR/AutoFOV_V12.ino.bin"
+# Flash-usage gate. arduino-cli only errors at 100 % of the slot and
+# drift-check only warns at push time; a build that quietly creeps to the
+# ceiling (e.g. an un-minified embed) would then fail every OTA on-device.
+if [ -f "$BIN" ]; then
+    BIN_SIZE=$(wc -c < "$BIN" | tr -d ' ')
+    PCT=$(( BIN_SIZE * 100 / APP_MAX_SIZE ))
+    FREE_KB=$(( (APP_MAX_SIZE - BIN_SIZE) / 1024 ))
+    if [ -t 1 ]; then RED=$'\033[31m'; YEL=$'\033[33m'; RST=$'\033[0m'; else RED=""; YEL=""; RST=""; fi
+    echo "flash: ${PCT}% of OTA slot (${BIN_SIZE} / ${APP_MAX_SIZE} B, ${FREE_KB} KB free)"
+    if [ "$PCT" -ge 97 ] && [ "$FORCE" != 1 ]; then
+        echo "${RED}ERROR: binary is at ${PCT}% of the OTA slot — refusing to produce a near-full image.${RST}"
+        echo "       Trim (check the embed line for [js off]) or rerun with: bash tools/build.sh --force"
+        exit 1
+    elif [ "$PCT" -ge 90 ]; then
+        echo "${YEL}WARNING: binary is at ${PCT}% of the OTA slot — headroom is getting thin.${RST}"
+    fi
+fi
 if [ -n "$VERSION" ] && [ -f "$BIN" ]; then
     VERSIONED="$BUILD_DIR/AutoFOV_V12_${VERSION}.bin"
     rm -f "$BUILD_DIR"/AutoFOV_V12_v*.bin   # only the current build's versioned copy is kept
