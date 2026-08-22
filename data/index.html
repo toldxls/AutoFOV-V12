@@ -2565,10 +2565,11 @@
         <div id="tofdbg-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
           The published distance is the signal-weighted average of the <b>solid</b> stems &mdash; status
           0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). Log codes: <b>[T]</b> a stem
-          appeared, vanished, changed status, or crossed the 20% line; <b>[L]</b> the published distance
-          stepped &ge;1.5&nbsp;mm between frames with no topology change. At a steady level the raw
-          whole-mm targets dither across the boundary, so a stream of [L] events with no scene change
-          is normal. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
+          appeared, vanished, changed status, or crossed the 20% line; <b>[L]</b> the smoothed level moved
+          &ge;1.5&nbsp;mm from where it was at the last [L] and held there for 5 frames &mdash; a sudden,
+          sustained shift (re-lock, bump, re-reference). Whole-mm dither and single-frame noise don't
+          qualify; slow drift shows up as an [L] every 1.5&nbsp;mm of travel, and the 5-min trend graph
+          carries the level itself. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
           gauge (reported MCps is pinned at the servo setpoint on bright scenes); it hops between
           quantized maps (e.g. 57&nbsp;&harr;&nbsp;36) on a static scene, which adds noise but not bias.
           The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
@@ -5683,7 +5684,7 @@
             if (!j.events || !j.events.length) { el.innerText = 'no topology changes logged yet'; return; }
             el.innerHTML = j.events.slice().reverse().map(e =>
                 tofdbgWhen(e.ms, j.now) +
-                // [T] topology change, [L] ≥1.5 mm level step, [R] trim
+                // [T] topology change, [L] ≥1.5 mm sustained EMA level step, [R] trim
                 // re-reference (the DSS servo abandoned the reference trim
                 // and the filter adopted the new dominant one).
                 ' <b style="color:' + ((e.w & 4) ? '#e78a8a' : (e.w & 2) ? '#e7c35a' : '#7ab4a2') + '">[' +

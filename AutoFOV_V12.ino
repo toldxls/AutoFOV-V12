@@ -4585,31 +4585,41 @@ void sensorTask(void *pvParameters) {
 
           // Two independent event triggers:
           //  bit0 — topology changed (count / status set / inclusion mask).
-          //  bit1 — level step: published distance moved ≥1.5 mm between
-          //         consecutive VALID frames with no topology change required.
+          //  bit1 — level step: the EMA level has moved ≥1.5 mm from the level
+          //         at the LAST logged step and HELD there for 5 consecutive
+          //         frames (~170 ms); the anchor then re-seats on the new level.
           //         The 8/10/26 logs proved a re-lock steps the SAME single
           //         target's reported range (18.0→19.0, identical topology) —
           //         a spontaneous internal step would be invisible to the
-          //         topology trigger alone. 1.5 mm clears the ±1 mm integer
-          //         dither of the driver's RangeMilliMeter.
+          //         topology trigger alone.
+          //         (Until 8/22/26 this compared consecutive PUBLISHED values,
+          //         which whole-mm raw readings trip on every frame — 40 [L]/min
+          //         of dither at a steady 119.4 mm level flushed the 48-deep
+          //         ring in ~70 s. The level itself is already captured by the
+          //         5-min trend; [L] is only for sudden, sustained shifts.)
           // (The v12.5.52 trim-reference filter lived here and was REMOVED:
           // the 8/13 soak showed +2.7 mm drift on a constant trim — the bias
           // drifts WITHIN a state, so single-state filtering earns nothing.)
 
-          static uint32_t prevSig  = 0xFFFFFFFF;
-          static uint16_t lastPubT = 0;
+          static uint32_t prevSig   = 0xFFFFFFFF;
+          static uint16_t stepRefT  = 0;     // EMA level (tenths) at the last logged [L]
+          static uint8_t  stepHold  = 0;     // consecutive frames beyond the threshold
           const bool logCleared = tofTgtEvtClearReq.exchange(false, std::memory_order_acq_rel);
           if (logCleared) {
             tofTgtEvtCount.store(0, std::memory_order_release);
             tofTgtEvtDropped.store(0, std::memory_order_relaxed);
             prevSig  = sig;        // the clear itself must not log an edge
-            lastPubT = snap.pubT;
+            stepRefT = snap.emaT;
+            stepHold = 0;
           }
           snap.why = 0;
           if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
-          if (snap.pubT && lastPubT &&
-              abs((int)snap.pubT - (int)lastPubT) >= 15) snap.why |= 2;
-          if (snap.pubT) lastPubT = snap.pubT;
+          if (snap.emaT) {
+            if (!stepRefT) stepRefT = snap.emaT;                  // first valid level = anchor
+            else if (abs((int)snap.emaT - (int)stepRefT) >= 15) {
+              if (++stepHold >= 5) { snap.why |= 2; stepRefT = snap.emaT; stepHold = 0; }
+            } else stepHold = 0;
+          }
 
           uint32_t s = tofTgtSeq.load(std::memory_order_relaxed);
           tofTgtSnap[(s + 1) & 1] = snap;
