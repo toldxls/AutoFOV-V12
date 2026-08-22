@@ -2578,7 +2578,8 @@
           carries the level itself. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
           gauge (reported MCps is pinned at the servo setpoint on bright scenes); it hops between
           quantized maps (e.g. 57&nbsp;&harr;&nbsp;36) on a static scene, which adds noise but not bias.
-          The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
+          Figures here are the sensor's own frame (zeroed, <i>not</i> temperature-compensated); the live line
+          shows the temp term added to reach the main screen's DISTANCE. The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
           age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
           below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
           IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.
@@ -2620,10 +2621,10 @@
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
         <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
-          5-min trend · <b style="color:#9fe6cf;">level mm</b> ·
+          5-min trend · <b style="color:#9fe6cf;">level mm</b> (sensor frame: zeroed, <i>no</i> temp comp — the fit needs the raw drift) ·
           <b style="color:#eda100;">signal MCps (faint)</b> ·
           <b style="color:#e87ba4;">temp °C (right scale)</b></div>
-        <canvas id="tofdbg-trend" title="EMA level + signal + temperature, one sample / 5 min, up to 24 h"></canvas>
+        <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h"></canvas>
         <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         <canvas id="tofdbg-sweep" style="display:none; width:100%; height:96px; background:#061512;
                 border:1px solid #14302a; border-radius:4px; margin-top:4px;"
@@ -5652,7 +5653,14 @@
             ctx.lineTo(px + 5, H - padB); ctx.closePath(); ctx.fill();
         }
         document.getElementById('tofdbg-live').innerHTML =
-            (tg.p ? 'published <b>' + (tg.p / 10).toFixed(1) + ' mm</b>' : 'no valid blend') +
+            // p/e are the sensor's own frame (zero-corrected, temp-RAW — the
+            // trend feeds the temperature fit); c is the temp term the device
+            // adds to reach the DISTANCE on the main screen. Show both so the
+            // 121-vs-125 question answers itself.
+            (tg.p ? 'published <b>' + (tg.p / 10).toFixed(1) + ' mm</b>' +
+                    (tg.c ? ' &rarr; <b>' + ((tg.p + tg.c) / 10).toFixed(1) + '</b> shown (' +
+                            (tg.c > 0 ? '+' : '') + (tg.c / 10).toFixed(1) + ' temp)' : '')
+                  : 'no valid blend') +
             (tg.e ? ' &middot; ema ' + (tg.e / 10).toFixed(1) : '') +
             // Effective SPADs = the DSS servo's control variable. Reported Mcps
             // pins at the servo setpoint on a bright scene; THIS number shows

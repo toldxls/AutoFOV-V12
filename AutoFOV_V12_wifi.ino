@@ -3619,8 +3619,13 @@ static size_t buildFastTelemFrame(char* buf, size_t cap) {
             // ms = device time of the FRAME — the staleness lamp must age the
             // data, not the transport. p/e tenths mm, sc = SPADs 8.8 fixed,
             // i = bit mask of targets in the average.
-            put(",\"tg\":{\"ms\":%lu,\"p\":%u,\"e\":%u,\"sc\":%u,\"i\":%u,\"n\":%u,\"t\":[",
+            // c = temperature term in tenths, the mm ADDED to p/e to get the
+            // shown distance (p/e are zero-corrected but temp-RAW by design —
+            // the trend feeds the temp fit). Lets TOF TARGETS explain why its
+            // figure differs from the main screen's.
+            put(",\"tg\":{\"ms\":%lu,\"p\":%u,\"e\":%u,\"c\":%d,\"sc\":%u,\"i\":%u,\"n\":%u,\"t\":[",
                 (unsigned long)snap.ms, (unsigned)snap.pubT, (unsigned)snap.emaT,
+                (int)lroundf(-tofTempCorrMm() * 10.0f),
                 (unsigned)snap.spads, (unsigned)snap.incMask, (unsigned)snap.n);
             int tn = snap.n; if (tn > VL53L4CX_MAX_RANGE_RESULTS) tn = VL53L4CX_MAX_RANGE_RESULTS;
             for (int i = 0; i < tn; i++)
