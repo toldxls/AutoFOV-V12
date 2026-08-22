@@ -969,7 +969,13 @@
                     <div style="color:#c7bcff; font-weight:bold; font-size:11px;">RE-LOCK TOF</div>
                     Cycles the sensor through the opposite ROI/timing config and back while ranging
                     &mdash; the only sequence that clears the cold-start bias. Any re-lock re-references
-                    the range, so <b>ZERO @ MAX RACK</b> afterwards (TOF TARGETS).<br><br>
+                    the range, so <b>ZERO @ MAX RACK</b> afterwards.<br><br>
+                    <div style="color:#3ddb7a; font-weight:bold; font-size:11px;">ZERO @ MAX RACK</div>
+                    The zero point shifts whenever the sensor restarts (power cycle, reboot, RE-LOCK,
+                    sleep/wake). Zero <b>once per session</b> after the tag says <i>hot TOF</i>
+                    (~5&nbsp;min after power-up) and after any of those events &mdash; it is refused while
+                    cold, because a cold bias would be baked into the offset. Not needed otherwise:
+                    temperature drift is compensated. The device's TOF SENSOR screen has the same button.<br><br>
                     <div style="color:#35e0d8; font-weight:bold; font-size:11px;">TEMP CAL</div>
                     The range drifts <b>~1.3&nbsp;mm/&deg;C</b> with room temperature (the chip's own
                     compensation leaves this residual). TEMP CAL fits and applies the coefficient from
@@ -2576,8 +2582,11 @@
           age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
           below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
           IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.
-          SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file is the temperature
-          dataset.</div>
+          <b>ZERO @ MAX RACK</b>: the sensor's zero point shifts every time it restarts (power cycle,
+          reboot, RE-LOCK, sleep/wake) &mdash; zero once per session after the main screen says
+          <i>hot TOF</i>, and after any of those; it is refused while cold. <b>SET HOME</b> once after an
+          FOV calibration. SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file
+          is the temperature dataset.</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -2604,8 +2613,8 @@
              calibration, then ZERO at the start of each session — the measured
              drift is subtracted from every reading until the next zero. -->
         <div class="tofcal-row" style="border-top:1px solid #14302a; padding-top:8px;">
-          <button onclick="tofzeroGo()" title="Rack the bellows to MAX first. Measures 2 s and cancels the drift since SET HOME.">ZERO @ MAX RACK</button>
-          <button onclick="tofzeroSetHome()" title="Rack the bellows to MAX first. Captures the home reference — do this ONCE, right after FOV calibration."
+          <button onclick="tofzeroGo()" title="WHEN: at the start of each session once the main screen says hot TOF (~5 min after power-up), and again after any RE-LOCK, reboot, power cycle or sleep/wake — each of those re-references the sensor. Not needed otherwise (temperature is compensated). Refused while cold. HOW: rack the bellows to MAX, tap; 2 s measure cancels the shift since SET HOME.">ZERO @ MAX RACK</button>
+          <button onclick="tofzeroSetHome()" title="ONCE, right after an FOV calibration, with the sensor hot: rack the bellows to MAX and capture the home reference every later ZERO is compared against. Redo only after recalibrating."
                   style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
         </div>

@@ -2760,7 +2760,13 @@ static void handleWifiCommand(const char* key, const char* val) {
     //   "tofzero" measures the drift since then and folds it into the
     //   published-reading offset. Result arrives as {"tofZero":{…}}.
     } else if (strcmp(key, "tofhome") == 0 || strcmp(key, "tofzero") == 0) {
-        if (!tofSampleActive) {
+        // ZERO refuses while cold/warming/asleep/no-home — same rule as the TFT
+        // button (tofZeroBlockedReason); the reason goes straight back to the
+        // panel instead of a 2 s sample that would bake a cold bias in.
+        const char* why = (key[3] == 'z') ? tofZeroBlockedReason() : nullptr;
+        if (why) {
+            wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f, 0.0f, why);
+        } else if (!tofSampleActive) {
             tofSampleMode = (key[3] == 'h') ? 1 : 2;
             tofSampleSum = tofSampleSumSq = 0.0;
             tofSampleCount   = 0;

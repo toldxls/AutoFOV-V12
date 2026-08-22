@@ -3789,6 +3789,21 @@ void drawRelockButton(bool force) {
 //   result    "ZEROED  off -1.5 mm" (green) or the refusal reason (red), 4 s
 // tofZeroUiMsg/Ms are written by the sampler completion in loop() (Core 1,
 // same task as the TFT) — no cross-core traffic.
+// Why a ZERO would be wrong right now, or nullptr when it's fine. Shared by
+// the TFT button and the web `tofzero` command so both refuse the same way:
+//   • before the cold-start re-lock has run (cold TOF) the range carries the
+//     5-10 mm cold bias — zeroing against it bakes that bias into the offset,
+//     and the reading then goes wrong the OTHER way as the sensor warms;
+//   • for 5 min after a cold power-up the silicon is still settling.
+const char* tofZeroBlockedReason() {
+  if (sensorSleeping.load(std::memory_order_acquire)) return "sensor asleep - wake it first";
+  if (!tofHot) return "TOF cold - wait for hot TOF tag";
+  esp_reset_reason_t rr = esp_reset_reason();
+  if ((rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT) && millis() < 300000UL)
+    return "warming up - wait 5 min after power-up";
+  if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) return "no home - SET HOME on the web";
+  return nullptr;
+}
 char          tofZeroUiMsg[40] = "";
 bool          tofZeroUiOk      = false;
 unsigned long tofZeroUiMsgMs   = 0;
@@ -3874,11 +3889,9 @@ void handleSensorInfoTouch(TS_Point p) {
   // (those reads range in the opposite config). No home yet → the web's SET
   // HOME (confirm-guarded) is the only way to establish one, by design.
   if (btnSensorZero.contains(p.x, p.y)) {
-    if (sensorSleeping) {
-      snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "sensor asleep - wake it first");
-      tofZeroUiOk = false; tofZeroUiMsgMs = millis();
-    } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
-      snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "no home - SET HOME on the web");
+    const char* why = tofZeroBlockedReason();
+    if (why) {
+      snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "%s", why);
       tofZeroUiOk = false; tofZeroUiMsgMs = millis();
     } else if (!tofSampleActive && tofRelockPhase == TOF_RELOCK_IDLE) {
       tofSampleMode = 2;
