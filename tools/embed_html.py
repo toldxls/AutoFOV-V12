@@ -4,7 +4,7 @@ Run once after any change to index.html (or to bump VERSION_MINOR),
 then recompile and OTA-flash the firmware.
 Usage: python3 tools/embed_html.py
 """
-import gzip, os, re, shutil, subprocess, tempfile
+import gzip, hashlib, os, re, shutil, subprocess, tempfile
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
@@ -167,39 +167,61 @@ def minify_inline(html):
                     f'— fix the source before building:\n{err}\n')
                 sys.exit(1)
 
-    # 2. Minify JS (fail-safe per block).
+    # 2. Minify JS (fail-safe per block). Preference: terser (real compressor
+    #    + local-identifier mangling; measured −9 KB gz over rjsmin) → rjsmin
+    #    (comment/whitespace only) → off. terser runs WITHOUT --toplevel and
+    #    WITHOUT --mangle-props: the markup's onclick="fn()" attributes reach
+    #    top-level functions by name, and device JSON keys / DOM properties must
+    #    survive — so only function-local names are renamed. Install once with
+    #    `cd tools && npm install` (tools/package.json).
+    terser = os.path.join(root, 'tools', 'node_modules', 'terser', 'bin', 'terser')
+    if not (node and os.path.exists(terser)):
+        terser = shutil.which('terser') if node else None
     try:
         import rjsmin
     except ImportError:
         rjsmin = None
-    note = 'min on' if node else 'min on (unverified — node not found)'
-    if rjsmin is None:
-        note = 'min off — pip3 install rjsmin rcssmin to enable'
+
+    def js_minify(body):
+        """Returns (minified, tool) or (body, 'off')."""
+        if terser:
+            r = subprocess.run([node, terser, '-c', '-m'] if not os.access(terser, os.X_OK)
+                               else [terser, '-c', '-m'],
+                               input=body, capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout, 'terser'
+            sys.stderr.write(f'WARNING: terser failed ({r.stderr.strip()[:300]}) — trying rjsmin\n')
+        if rjsmin is not None:
+            return rjsmin.jsmin(body), 'rjsmin'
+        return body, 'off'
+
+    jsnote = 'off (install: cd tools && npm install, or pip3 install rjsmin)'
     minified = []
     for i, (attrs, body) in enumerate(scripts):
-        out = body
-        if rjsmin is not None:
-            try:
-                cand = rjsmin.jsmin(body)
+        out, tool = body, 'off'
+        try:
+            cand, tool = js_minify(body)
+            if tool != 'off':
                 if node:
                     rc, err = node_check(node, cand)
                     if rc != 0:
                         sys.stderr.write(
-                            f'WARNING: minified <script> #{i + 1} fails node --check '
+                            f'WARNING: {tool} output for <script> #{i + 1} fails node --check '
                             f'but the ORIGINAL passes (minifier bug?) — embedding the '
                             f'original, UN-minified:\n{err}\n')
-                        note = 'min off — minified JS failed node --check (original embedded)'
+                        tool = 'off (minified failed node --check)'
                     else:
                         out = cand
                 else:
                     out = cand
-            except Exception as e:
-                sys.stderr.write(f'WARNING: JS minify failed ({e}) — embedding original\n')
-                note = f'min off — {e} (original embedded)'
+        except Exception as e:
+            sys.stderr.write(f'WARNING: JS minify failed ({e}) — embedding original\n')
+            tool = f'off ({e})'
         minified.append((attrs, out))
+        jsnote = tool if node else f'{tool}, unverified — node not found'
 
-    # 3. CSS (comment/whitespace only) and HTML structural comments — both run
-    #    while scripts are still sentinels, so JS is untouched.
+    # 3. CSS (comment/whitespace only), HTML structural comments, and markup
+    #    indentation — all while scripts are still sentinels, so JS is untouched.
     try:
         import rcssmin
         tmp = re.sub(
@@ -209,11 +231,20 @@ def minify_inline(html):
     except Exception as e:
         sys.stderr.write(f'WARNING: CSS minify skipped ({e})\n')
     tmp = re.sub(r'<!--.*?-->', '', tmp, flags=re.S)
+    # Conservative whitespace collapse: drop leading indentation on every line
+    # and squeeze inter-tag runs to ONE space (never zero — a space between
+    # inline elements is significant, a run of them is not). Safe here because
+    # the markup has no <pre>/<textarea> content; the one white-space:pre
+    # element is created by JS. Measured −2.2 KB gz.
+    tmp = re.sub(r'\n[ \t]+', '\n', tmp)
+    tmp = re.sub(r'>\s+<', '> <', tmp)
+    wsnote = 'on'
 
     out = re.sub(
         r'\x00S(\d+)\x00',
         lambda m: '<script{0}>{1}</script>'.format(*minified[int(m.group(1))]),
         tmp)
+    note = f'js {jsnote}] [ws {wsnote}'
     return out, note
 
 with open(src, 'rb') as f:
@@ -221,7 +252,20 @@ with open(src, 'rb') as f:
 
 payload, mnote = minify_inline(raw.decode('utf-8'))
 payload = payload.encode('utf-8')
-compressed = gzip.compress(payload, compresslevel=9)
+# zopfli emits gzip-compatible streams a few % smaller than gzip -9 (the
+# browser side is unchanged — still Content-Encoding: gzip). Optional:
+# pip3 install zopfli. Slower (seconds), which only the build pays.
+try:
+    import zopfli.gzip
+    compressed = zopfli.gzip.compress(payload)
+    gznote = 'zopfli'
+except Exception:
+    compressed = gzip.compress(payload, compresslevel=9)
+    gznote = 'gzip'
+# Content tag of the embedded blob — the ETag for GET /. A hash, not the commit:
+# two dirty dev builds from one HEAD share BUILD_COMMIT ("abc1234+") but may
+# serve different dashboards, and the browser must not keep the stale one.
+gz_tag = hashlib.sha1(compressed).hexdigest()[:8]
 
 out = []
 out.append('// Auto-generated by tools/embed_html.py — do not edit manually.')
@@ -233,6 +277,7 @@ out.append(f'#define BUILD_VERSION "{version}"')
 out.append(f'#define BUILD_COMMIT  "{commit}"')
 out.append(f'#define BUILD_SLOC    {sloc}')
 out.append(f'#define BUILD_SKB     {skb}')
+out.append(f'#define WEB_UI_HTML_GZ_TAG "{gz_tag}"   // sha1 of the gzip blob — ETag for GET /')
 out.append('')
 out.append(f'// {len(raw)} bytes raw  ->  {len(payload)} bytes minified  ->  {len(compressed)} bytes gzip')
 out.append('static const uint8_t WEB_UI_HTML_GZ[] PROGMEM = {')
@@ -245,4 +290,4 @@ out.append(f'static const size_t WEB_UI_HTML_GZ_LEN = {len(compressed)};')
 with open(dst, 'w') as f:
     f.write('\n'.join(out) + '\n')
 
-print(f'v{version} ({commit})  |  html: {len(raw):,} -> {len(payload):,} min -> {len(compressed):,} gz [{mnote}]  |  sloc: {sloc:,} ({skb} KB)')
+print(f'v{version} ({commit})  |  html: {len(raw):,} -> {len(payload):,} min -> {len(compressed):,} gz [{mnote}] [gz {gznote}]  |  sloc: {sloc:,} ({skb} KB)')

@@ -1,12 +1,14 @@
 # Optional build-time dependencies for tools/embed_html.py.
 #
-# Non-destructive minifiers (comment + whitespace only — they never rename
-# identifiers) that shrink the embedded dashboard before gzip, taking ~46 KB
-# off the firmware binary. embed_html.py falls back to un-minified HTML if they
-# are absent, so these are optional — but without them every build silently
-# ships a larger image. Install once with:
+# The dashboard is minified before it is gzip-embedded into the firmware.
+# JS: terser (preferred — `cd tools && npm install`, see tools/package.json),
+# falling back to rjsmin (comment/whitespace only). CSS: rcssmin. Compression:
+# zopfli emits a gzip-compatible stream a few % smaller than gzip -9.
+# embed_html.py reports what it used on its status line; without ANY JS
+# minifier the embed is ~100 KB gz larger (≈5 % of the OTA slot). Install:
 #
 #   pip3 install -r tools/requirements.txt
 #
 rjsmin==1.2.5
 rcssmin==1.2.2
+zopfli

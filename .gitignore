@@ -16,3 +16,6 @@ build/
 # Calibration photo sets (large JPEG folders) — keep the JSON library, not the shots
 calibrations/*/
 calibrations/tofdbg-*.json
+
+# npm dev deps for tools/embed_html.py (terser) — tools/package.json is tracked
+tools/node_modules/

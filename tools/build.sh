@@ -33,16 +33,22 @@ if [ "$APP_MAX_SIZE" -le 0 ]; then
     echo "WARNING: couldn't read app0 size from tools/partitions.csv — using fallback $APP_MAX_SIZE"
 fi
 
-# Optional minify deps — warn (non-fatal) if absent so the ~46 KB JS/CSS/HTML
-# minify in embed_html.py doesn't silently fall back to an un-minified embed.
-if ! python3 -c "import rjsmin, rcssmin" 2>/dev/null; then
-    echo "WARNING: rjsmin/rcssmin missing — HTML will embed un-minified (~46 KB larger)."
-    echo "         install with: pip3 install -r tools/requirements.txt"
+# Minify deps are optional — embed_html.py reports which it used on its status
+# line ([js terser|rjsmin|off] [ws on] [gz zopfli|gzip]); an un-minified embed
+# is ~100 KB gz LARGER (≈5 % of the OTA slot). Install once with:
+#   cd tools && npm install          (terser — the real JS minifier)
+#   pip3 install -r tools/requirements.txt   (rjsmin fallback, rcssmin, zopfli)
+if [ ! -x tools/node_modules/terser/bin/terser ] && ! python3 -c "import rjsmin" 2>/dev/null; then
+    echo "WARNING: no JS minifier found (terser or rjsmin) — HTML will embed un-minified (~100 KB gz larger)."
 fi
 
 echo "=== Step 1: embed HTML ==="
 EMBED_OUT="$(python3 tools/embed_html.py)"
 echo "$EMBED_OUT"
+case "$EMBED_OUT" in *"[js off"*)
+    if [ -t 1 ]; then printf '\033[31m%s\033[0m\n' "WARNING: dashboard JS embedded UN-minified — see the embed line above"
+    else echo "WARNING: dashboard JS embedded UN-minified — see the embed line above"; fi;;
+esac
 # Pull the "vMAJOR.MINOR.PATCH" embed_html.py just stamped so we can name the
 # output .bin after it — the OTA picker shows the filename, so a versioned copy
 # makes it obvious which build is being uploaded. (|| true: grep miss must not

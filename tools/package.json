@@ -1,0 +1,8 @@
+{
+  "name": "autofov-tools",
+  "private": true,
+  "description": "Dev-only deps for tools/embed_html.py (terser minifies the dashboard JS before gzip-embedding). Install once: cd tools && npm install",
+  "devDependencies": {
+    "terser": "^5"
+  }
+}
