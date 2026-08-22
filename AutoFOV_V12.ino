@@ -43,7 +43,6 @@
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
 #include <Fonts/FreeSans24pt7b.h>
-#include <Fonts/TomThumb.h>        // 3x5 — the main-screen Z/T correction line
 #include "data/FreeSans7pt7b.h"   // local — used for the main-screen CALIBRATE button
 // V12.5: pulled in here (main) as well as the wifi tab so BUILD_VERSION is
 // defined for setup()'s early diag block. #pragma once makes the wifi tab's
@@ -7645,7 +7644,7 @@ bool lastDrawnTofStall = false;
 void drawTofTag() {
   bool slp = sensorSleeping.load(std::memory_order_acquire);
   // Header strip layout (8/22/26): tag (y 3..11) ABOVE the signal bar (14..26,
-  // centred on the VIBE wave), Z/T corrections in 3x5 TomThumb below (29..34).
+  // centred on the VIBE wave), net 'adj ±x.x' correction below (28..36).
   tft.fillRect(44, 3, 56, 9, THEME_BG);    // clear widest label ("TOF STALL")
   tft.setFont(); tft.setTextSize(1);
   tft.setCursor(44, 3);
@@ -7728,35 +7727,28 @@ void stackBannerTick() {                 // loop(), Core 1
   if (stackBannerMs && now - stackBannerMs >= bannerHoldMs) dismissStackBanner();
 }
 
-// Main-screen correction line (8/22/26), in the 3x5 TomThumb font under the
-// signal bar so it fits the strip without crowding the header:
-//   Z+0.5   mm the session zero is ADDING to the raw range (hidden when 0)
-//   T+3.5   mm the temperature compensation is adding right now (hidden when
-//           comp is off; shown at 0.0 so "comp on" is visible)
-// TomThumb advances 4 px/char: "Z+0.5 T+3.5" = 44 px, x 44..88 — clear of
-// VIBE CHECK (x≥105). The same numbers, with the temperature, are on the
-// TOF SENSOR screen's Comp: row.
+// Main-screen correction line (8/22/26) under the signal bar: ONE net figure,
+//   adj +4.0   = mm being ADDED to the raw range right now (session zero +
+//                temperature compensation combined); hidden when both are 0.
+// Built-in 6x8 font (a 3x5 TomThumb version was unreadable): "adj -12.3" is
+// 9 chars = 54 px, x 44..98 — clear of VIBE CHECK (x≥105). The split Z / T
+// figures, with the temperature, are on the TOF SENSOR screen's Comp: row
+// and the ZERO button.
 char lastCorrTags[24] = "\x01";
 void drawCorrectionTags() {
-  char buf[24] = ""; size_t n = 0;
+  char buf[24] = "";
   int32_t offT = tofZeroOffsetT.load(std::memory_order_relaxed);
-  if (offT != 0) n += snprintf(buf + n, sizeof buf - n, "Z%+.1f", -offT / 10.0f);
-  if (tofTempCoeff != 0.0f) {
-    float tc = -tofTempCorrMm(); if (fabsf(tc) < 0.05f) tc = 0.0f;   // never "T-0.0"
-    n += snprintf(buf + n, sizeof buf - n, "%sT%+.1f", n ? " " : "", tc);
-  }
+  float adj = -offT / 10.0f;                                   // zero term
+  if (tofTempCoeff != 0.0f) adj -= tofTempCorrMm();            // + temperature term
+  if (fabsf(adj) >= 0.05f) snprintf(buf, sizeof buf, "adj %+.1f", adj);
   if (strcmp(buf, lastCorrTags) == 0) return;
   strncpy(lastCorrTags, buf, sizeof lastCorrTags);
-  tft.fillRect(44, 28, 56, 8, THEME_BG);
-  if (!buf[0]) { tft.setFont(); return; }
-  tft.setFont(&TomThumb); tft.setTextSize(1);
-  tft.setCursor(44, 34);                       // GFX fonts draw from the baseline
-  char* sp = strchr(buf, ' ');
-  if (sp) *sp = '\0';
-  tft.setTextColor(buf[0] == 'Z' ? COLOR_LIGHTBLUE : COLOR_YELLOW);
+  tft.fillRect(44, 28, 56, 9, THEME_BG);
+  if (!buf[0]) return;
+  tft.setFont(); tft.setTextSize(1);
+  tft.setCursor(44, 28);
+  tft.setTextColor(COLOR_LIGHTBLUE);
   tft.print(buf);
-  if (sp) { tft.print(" "); tft.setTextColor(COLOR_YELLOW); tft.print(sp + 1); }
-  tft.setFont();                               // back to the built-in font
 }
 
 void drawMainScreen() {
