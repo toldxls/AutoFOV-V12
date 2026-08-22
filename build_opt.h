@@ -1,0 +1,2 @@
+-D_IR_ENABLE_DEFAULT_=false
+-DSEND_NEC=true

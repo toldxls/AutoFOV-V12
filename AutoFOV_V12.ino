@@ -33,7 +33,8 @@
 #include <ArduinoJson.h>
 
 #include <IRremoteESP8266.h>   // patched3: IR LED transmit for the MJKZZ remote
-#include <IRsend.h>
+#include <IRsend.h>   // build_opt.h (sketch root) sets -D_IR_ENABLE_DEFAULT_=false -DSEND_NEC=true:
+                      // only NEC send is compiled in (~29 KB of A/C protocol tables otherwise)
 
 #include <Adafruit_LSM6DSOX.h>  // V12: LSM6DSOX 6-axis IMU — bench-vibration monitor
 #include <arduinoFFT.h>         // V12: 512-pt FFT for the vibration spectrum (v2.x API)
