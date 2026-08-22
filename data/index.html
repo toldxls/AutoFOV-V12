@@ -969,26 +969,21 @@
                             border-radius:6px; padding:9px 10px; font-size:10px; line-height:1.5;
                             color:#cfe7df; cursor:pointer;">
                     <div style="color:#ff6fa3; font-weight:bold; font-size:11px;">SLEEP SENSOR</div>
-                    Pauses the ToF ranging: the live <b>distance &amp; FOV freeze</b>, and the sensor
-                    stops drawing power, self-heating, and emitting its 940&nbsp;nm IR laser &mdash; handy
-                    during long stacks/exposures where you don&rsquo;t need a live reading, or near an
+                    Pauses ranging: the live <b>distance &amp; FOV freeze</b> and the sensor stops
+                    drawing power and emitting its 940&nbsp;nm IR laser &mdash; for long stacks or an
                     IR-sensitive subject. Tap <b>WAKE SENSOR</b> to resume.<br>
-                    <span style="color:#e7c35a;">Costs accuracy:</span> a woken sensor is cold and reads
-                    <b>~4&ndash;5&nbsp;mm long</b>, settling over several minutes as it warms. It stays
-                    tagged <b>COLD</b> through the warm-up and auto-cures at <b>45&nbsp;s</b>, since the
-                    re-lock only sticks once the sensor is genuinely warm &mdash; RE-LOCK forces it
-                    sooner. Prefer leaving it ranging &mdash; it no longer auto-sleeps, and a
-                    thermally-settled sensor is the only one the temperature compensation can
-                    correct.<br><br>
-                    <div style="color:#ffab3d; font-weight:bold; font-size:11px;">HIGH REFLECTIVITY</div>
-                    For <b>bright / shiny / specular</b> subjects &mdash; polished metal, mirror-coated,
-                    or very close &mdash; that under-read or drop out. It reads only the <b>center
-                    8&times;8</b> of the SPAD array &mdash; sampling a cleaner slice of the specular
-                    hotspot, which is what actually tames these targets &mdash; with a shorter
-                    8&nbsp;ms integration. Leave it <b>OFF</b> for normal matte subjects: fewer
-                    collected photons means noisier readings. The Signal figure is <b>not
-                    comparable</b> across the two modes &mdash; the driver normalises Mcps
-                    differently in each, so it can even read <i>higher</i> with this on.
+                    <span style="color:#e7c35a;">Costs accuracy:</span> a restarted sensor re-references
+                    cold and reads <b>~5&ndash;10&nbsp;mm long</b> at max rack. It is tagged <b>COLD</b>
+                    until the auto re-lock at <b>45&nbsp;s</b> (RE-LOCK forces it sooner). Prefer leaving
+                    it ranging &mdash; it never auto-sleeps.<br><br>
+                    <div style="color:#c7bcff; font-weight:bold; font-size:11px;">RE-LOCK TOF</div>
+                    Cycles the sensor through the opposite ROI/timing config and back while ranging
+                    &mdash; the only sequence that clears the cold-start bias. Any re-lock re-references
+                    the range, so <b>ZERO @ MAX RACK</b> afterwards (TOF TARGETS).<br><br>
+                    <div style="color:#35e0d8; font-weight:bold; font-size:11px;">TEMP CAL</div>
+                    The range drifts <b>~1.3&nbsp;mm/&deg;C</b> with room temperature (the chip's own
+                    compensation leaves this residual). TEMP CAL fits and applies the coefficient from
+                    the passive 24&nbsp;h log; ZERO @ MAX RACK absorbs whatever is left each session.
                     <span style="color:#7a958c;">(tap anywhere to close)</span>
                 </div>
                 <!-- Live readouts — grouped stat strip (see .tof-stats). -->
@@ -1037,7 +1032,7 @@
                 </div>
 
                 <div class="gfx-btn btn-tof btn-aqua" style="top: 210px;"
-                     onclick="tofcalOpen()" title="Temperature-compensate the TOF range over the room's 65–75°F swing">
+                     onclick="tofcalOpen()" title="Fit and apply the TOF's ~1.3 mm/°C room-temperature drift from the passive 24 h log">
                     <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
                         <path d="M8.6 11.4V4.2a1.9 1.9 0 0 1 3.8 0v7.2a4 4 0 1 1-3.8 0z"
                               fill="#07333a" stroke="#35e0d8" stroke-width="1.3"/>
@@ -1371,7 +1366,7 @@
             <!-- ===================== MEMORY & INFO ===================== -->
             <div id="screen-memory" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 115px; background-color: #006400;">MEMORY &amp; INFO</div>
-                <!-- V12.5: web-only diagnostics (reset history) — the friend in a
+                <!-- V12.5: web-only diagnostics (reset history) — a user in a
                      browser is exactly who needs it; the device has no such screen. -->
                 <div class="gfx-btn" style="left: 93px; top: 290px; width: 54px; height: 22px;
                      background-color: #5a3a00; font-size: 10px;" onclick="switchScreen('screen-diag')">DIAG</div>
@@ -1474,7 +1469,7 @@
             </div>
 
             <!-- ===================== DIAGNOSTICS (V12.5, web-only) =====================
-                 Reset/crash history from GET /diag. A friend copies this blob into a
+                 Reset/crash history from GET /diag. Copy this blob into a
                  message when something misbehaves — brownout vs panic vs WiFi drop
                  vs an auto-rollback, without a serial cable. -->
             <div id="screen-diag" class="screen">
@@ -2479,26 +2474,24 @@
     <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
       <div id="tofcal-box">
         <h3>TOF TEMPERATURE CAL <span class="help-btn" onclick="tofcalToggleHelp()" title="How this works">?</span></h3>
-        <div class="tc-sub">The range drifts with room temperature (~1.5 mm/&deg;C measured 8/17/26,
-          r&nbsp;0.93 overnight). Points collect <b>automatically</b> every 5 min while the device is on;
+        <div class="tc-sub">The range drifts with room temperature (~1.3 mm/&deg;C, r&nbsp;0.97 over a
+          6&nbsp;&deg;C night, 8/21/26). Points collect <b>automatically</b> every 5 min while the device is on;
           CAPTURE adds a precise 2-s point to the same set. One good wide-&Delta;T fit is all it takes.</div>
         <div id="tofcal-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
-          The correction subtracts <i>coeff &times; (T &minus; ref)</i> from the range before FOV,
-          zeroing, and capture. Temperature is the LSM6DSOX (outside the enclosure, tracks room air;
-          the TOF chip exposes no thermometer). The pink cloud is the passive 5-min log from the
-          device's 24 h ring (RAM &mdash; restarts on reboot); green dots are your CAPTURE points
-          (2-s device-side averages, kept in this browser). Both feed <b>one</b> fit. <b>ref</b> is
-          where the correction is zero &mdash; use the FOV cal's capture temperature (recorded
-          automatically from your next recal on) so absolute readings stay anchored to the state the
-          system was calibrated in; any ref error is a constant that ZERO @ MAX RACK absorbs.
-          The logged points are deliberately <b>raw</b> (compensation never touches them), so every
-          fit measures the full coefficient and applying one <b>replaces</b> the old &mdash; nothing
-          accumulates. <b>auto-update</b> is strictly quality-gated: the applied coefficient is
-          FROZEN until a new fit <i>beats its pedigree</i> &mdash; significantly wider &Delta;T
-          (&ge;1.25&times;), or comparable range with strictly higher r and more points. A re-zero
-          steps the logged frame &mdash; clear the points after zeroing if a fit spans one. Fits are only meaningful over periods
-          with a static scene; slow overnight legs beat fast morning warm-ups (thermal lag).
-          SAVE/LOAD moves capture points between machines or the gh-pages library.</div>
+          Subtracts <i>coeff &times; (T &minus; ref)</i> from the range before FOV, zeroing, and capture.
+          T is the LSM6DSOX (outside the enclosure, tracks room air; the TOF chip has no thermometer).
+          Pink cloud = the device's passive 5-min / 24&nbsp;h log (RAM, restarts on reboot); green dots
+          = your CAPTURE points (2-s averages, kept in this browser). Both feed <b>one</b> fit.
+          <b>ref</b> is where the correction is zero &mdash; the FOV cal's capture temperature (recorded
+          automatically at recal) keeps absolute readings anchored to the calibrated state; any ref
+          error is a constant that ZERO @ MAX RACK absorbs. Logged points are <b>raw</b> (never
+          compensated), so every fit measures the full coefficient and applying one <b>replaces</b> the
+          old. <b>auto-update</b> adopts a fit only when it beats the active one's pedigree: &Delta;T
+          &ge;1.25&times; wider, or comparable &Delta;T with higher r and more points (and never below
+          &Delta;T&nbsp;1.5&nbsp;&deg;C, r&nbsp;0.7, 96 points). Fits need a static scene; slow
+          overnight legs beat fast warm-ups (thermal lag). A re-zero steps the logged frame &mdash;
+          clear the points after zeroing if a fit spans one. <b>SAVE FILE</b> exports the CAPTURE
+          points only; the passive cloud is in TOF TARGETS &rarr; SAVE LOG.</div>
         <div id="tofcal-live">
           <span>Ambient: <b id="tofcal-temp">--</b></span>
           <span>Distance: <b id="tofcal-dist">--</b></span>
@@ -2545,15 +2538,20 @@
           blend, hollow are excluded. <span class="help-btn" onclick="tofdbgToggleHelp()"
           title="What the stems, log codes, and graphs mean">?</span></div>
         <div id="tofdbg-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
-          The published distance is the signal-weighted average of the <b>solid</b> stems — status
-          0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). The log records <b>[T]</b>
-          topology changes (a stem appearing, vanishing, changing status, or crossing the 20% line)
-          and <b>[L]</b> level steps — the published distance moving &ge;1.5&nbsp;mm between frames
-          with no topology change (an internal re-reference). The liveness line above the readout
-          shows data AGE — a silent sensor freezes every number on screen including the status, so
-          age is the only honest signal; a 10 s stall triggers an automatic measurement restart
-          (counted below). The trend graph is the 5-min ring: level (green), signal (faint orange),
-          die + IMU temp (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.</div>
+          The published distance is the signal-weighted average of the <b>solid</b> stems &mdash; status
+          0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). Log codes: <b>[T]</b> a stem
+          appeared, vanished, changed status, or crossed the 20% line; <b>[L]</b> the published distance
+          stepped &ge;1.5&nbsp;mm between frames with no topology change. At a steady level the raw
+          whole-mm targets dither across the boundary, so a stream of [L] events with no scene change
+          is normal. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
+          gauge (reported MCps is pinned at the servo setpoint on bright scenes); it hops between
+          quantized maps (e.g. 57&nbsp;&harr;&nbsp;36) on a static scene, which adds noise but not bias.
+          The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
+          age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
+          below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
+          IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.
+          SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file is the temperature
+          dataset.</div>
         <canvas id="tofdbg-canvas"></canvas>
         <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
@@ -2573,8 +2571,9 @@
                   title="Warm-restart the device (rails stay up, so the TOF re-references warm — the cold-start-bias cure and the wedge recovery lever). Trend ring and event log restart.">REBOOT</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
         </div>
-        <!-- Session zero (V12.6 B+): the sensor's absolute reading random-walks
-             ~0.2-0.9 mm/h (intrinsic silicon drift). Rack the bellows to MAX
+        <!-- Session zero (V12.6 B+): the sensor's absolute reading drifts with
+             room temperature (~1.3 mm/°C, TEMP CAL compensates the bulk) plus a
+             ~±0.5 mm residual wander. Rack the bellows to MAX
              (the repeatable reference), SET HOME once right after FOV
              calibration, then ZERO at the start of each session — the measured
              drift is subtracted from every reading until the next zero. -->
@@ -5280,7 +5279,7 @@
         }
         g.stroke();
 
-        // Passive layer UNDERNEATH: faint pink cloud (the auto-logged 10-min
+        // Passive layer UNDERNEATH: faint pink cloud (the auto-logged 5-min
         // points, static cluster only) + its dashed fit when the span is real.
         if (havePas) {
             g.fillStyle = 'rgba(232,123,164,0.45)';
@@ -9295,7 +9294,7 @@
     // ─────────────────────────────────────────────────────────────────────────
     let diagLast = null;   // last /diag payload, for copyDiagnostics()
     // Reset reasons that mean the device did NOT shut down cleanly — highlighted
-    // amber/red so a friend (and you) spot a real fault vs a normal power cycle.
+    // amber/red so you spot a real fault vs a normal power cycle.
     const DIAG_BAD = { 'PANIC':1, 'INT-WDT':1, 'TASK-WDT':1, 'OTHER-WDT':1,
                        'SENSOR-STALL WDT':1, 'BROWNOUT':1, 'AUTO-ROLLBACK':1,
                        'CPU-LOCKUP':1, 'PWR-GLITCH':1 };
