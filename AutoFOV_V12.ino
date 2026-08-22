@@ -1504,6 +1504,13 @@ unsigned long lastPulseTime = 0;
 // the measured value auto-replaces it so Sec/Step rarely needs hand-tuning.
 // Advisory feedback only — this never gates or delays capture.
 uint32_t stackPulseCount = 0;            // shutter edges in the active sequence
+// STACK DONE banner + backlight blink state (drawn by drawStackBanner /
+// stackBannerTick near drawMainScreen). Declared here because the trigger
+// watcher in loop() references them before those functions' definitions.
+unsigned long stackBannerMs     = 0;     // 0 = no banner; else millis() it went up
+uint32_t      stackBannerFrames = 0;
+uint32_t      stackBannerSec    = 0;
+unsigned long blinkUntilMs      = 0;     // backlight blink window end (0 = idle)
 float    measuredPerStep = 0.0f;         // last measured sec/step (0 = none yet)
 uint32_t measuredTotalSec = 0;           // last measured total stack duration, s
 uint32_t measuredPulses = 0;             // shots counted in the last measured stack
@@ -6595,10 +6602,12 @@ void loop() {
       // before the start seq is.
       vibStackStartSeq.fetch_add(1, std::memory_order_release);
       wifiNotifyStackStart();
+      dismissStackBanner();              // a new stack replaces a lingering banner
     } else {
       // V12.3: count each shot after the first (seeded to 1 above).
       stackPulseCount++;
     }
+    if (currentMode == MAIN) drawStackShotCount();
     // V12: note the shutter-pulse edge for passive settle-time analysis.
     // Passive only — nothing here delays or gates the trigger path.
     // V12.6: frame payload rides ahead of the release bump like ringPos.
@@ -6628,6 +6637,12 @@ void loop() {
     unsigned long totalActiveTime = (unsigned long)(lastPulseTime - firstPulseTime);
     if (totalActiveTime >= MIN_ACTIVE_DURATION) {
       wifiNotifyStackComplete();
+      // TFT: banner (MAIN) + 3 backlight blinks (any screen). registerActivity()
+      // already woke/undimmed the screen on the last pulse.
+      stackBannerFrames = stackPulseCount;
+      stackBannerSec    = (totalActiveTime + 500) / 1000;
+      stackBannerMs     = millis(); if (!stackBannerMs) stackBannerMs = 1;
+      blinkUntilMs      = millis() + 900;
       // V12: ask vibTask to compute the aggregate suggested wait, then persist.
       vibStackDoneSeq.fetch_add(1, std::memory_order_relaxed);
       vibPrefsDirty = true; lastVibEditMs = millis();
@@ -6656,6 +6671,10 @@ void loop() {
       wifiNotifyStackAbort();   // V12.6: dashboard clears its live progress
     }
     isSequenceActive = false;
+    if (currentMode == MAIN) {
+      drawStackShotCount();          // isSequenceActive is false → clears the count
+      if (stackBannerMs) drawStackBanner();
+    }
   }
 
   static bool activelyTouching = false;
@@ -6886,6 +6905,7 @@ void loop() {
     }
   }
   
+  stackBannerTick();          // STACK DONE banner expiry + backlight blink (8/22/26)
   if ((unsigned long)(millis() - lastDisplayUpdate) > 30) {
     updateSensorAverages();   // feeds sensorAvgDist/sensorErrInt on every screen
     if (currentMode == MAIN) {
@@ -6903,6 +6923,7 @@ void loop() {
 // handleBrightnessSlider removed — handled in handleBrightnessSettingsTouch
 
 void handleMainTouch(TS_Point p) {
+  if (stackBannerMs) { dismissStackBanner(); return; }   // any tap clears STACK DONE
   // Top-strip tappable zones (y=0..42):
   // WiFi badge:   x=0..32   → WIFI_INFO screen
   // Signal bar:   x=33..90  → SENSOR_INFO screen
@@ -7512,6 +7533,61 @@ void drawTofTag() {
   lastDrawnTofSleep = slp;
 }
 
+// ── Stack progress + STACK DONE banner on the TFT (8/22/26) ────────────────
+// Until now the device did nothing visible when a stack ended (no buzzer in
+// the hardware, no message; only the phone push and the browser knew). Now:
+//   • during a sequence the shot count sits just above the trigger sphere;
+//   • on completion a banner takes the DISTANCE area for 10 s (or until
+//     tapped) with frames + duration, and the backlight blinks 3× — visible
+//     from across the bench on any screen.
+const int STACK_BANNER_Y = 142, STACK_BANNER_H = 50;   // state globals live by stackPulseCount
+
+void drawStackShotCount() {              // MAIN only; caller checks the mode
+  tft.fillRect(101, 280, 37, 9, THEME_BG);
+  if (!isSequenceActive) return;
+  char b[8]; snprintf(b, sizeof b, "%lu", (unsigned long)stackPulseCount);
+  tft.setFont(); tft.setTextSize(1);
+  tft.setTextColor(COLOR_PUREGREEN);
+  int w = (int)strlen(b) * 6;
+  tft.setCursor(113 - w / 2, 280);
+  tft.print(b);
+}
+
+void drawStackBanner() {                 // MAIN only
+  tft.fillRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, COLOR_DARKGREEN);
+  tft.drawRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, COLOR_PUREGREEN);
+  tft.setFont(); tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(120 - (10 * 12) / 2, STACK_BANNER_Y + 8); tft.print("STACK DONE");
+  char b[40];
+  snprintf(b, sizeof b, "%lu frames  %lu:%02lu", (unsigned long)stackBannerFrames,
+           (unsigned long)(stackBannerSec / 60), (unsigned long)(stackBannerSec % 60));
+  tft.setTextSize(1);
+  tft.setCursor(120 - (int)strlen(b) * 3, STACK_BANNER_Y + 32); tft.print(b);
+}
+
+void dismissStackBanner() {              // repaint what the banner covered
+  if (!stackBannerMs) return;
+  stackBannerMs = 0;
+  if (currentMode == MAIN) {
+    tft.fillRect(0, STACK_BANNER_Y, 240, STACK_BANNER_H, THEME_BG);
+    lastDistance = 0xFFFF;               // force the DISTANCE sprite to repaint
+  }
+}
+
+void stackBannerTick() {                 // loop(), Core 1
+  unsigned long now = millis();
+  if (blinkUntilMs) {
+    if ((long)(now - blinkUntilMs) >= 0) {
+      blinkUntilMs = 0;
+      if (!isScreenSleep) analogWrite(LITE_PIN, isScreenDim ? DIM_BRIGHTNESS : currentBrightness);
+    } else if (!isScreenSleep) {
+      analogWrite(LITE_PIN, ((now / 150) & 1) ? currentBrightness : DIM_BRIGHTNESS);
+    }
+  }
+  if (stackBannerMs && now - stackBannerMs >= 10000) dismissStackBanner();
+}
+
 // Main-screen correction tags (8/22/26), one line under the cold/hot tag:
 //   Z-1.5   session-zero offset in mm currently subtracted (hidden when 0)
 //   T-0.8   temperature compensation in mm currently subtracted (hidden when
@@ -7551,6 +7627,8 @@ void drawMainScreen() {
   drawTofTag();   // top-left "cold TOF" / "hot TOF" thermal-state tag
   lastCorrTags[0] = '\x01'; lastCorrTags[1] = 0;   // fresh screen — force the tag paint
   drawCorrectionTags();
+  if (isSequenceActive) drawStackShotCount();
+  if (stackBannerMs)    drawStackBanner();
 
   // Calib + version block — now a tappable region that opens the ABOUT screen.
   // Subtle dark-grey rectangle hints it's interactive without dominating the
@@ -8565,7 +8643,7 @@ void updateDisplay() {
         lastAvgFov = fov; lastErrInt = errInt;
       }
       
-      if (currentRange != lastDistance) {
+      if (currentRange != lastDistance && !stackBannerMs) {   // banner owns this area
         distSprite.fillScreen(THEME_BG); 
         
         char distNum[16];
