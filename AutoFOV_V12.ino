@@ -7710,34 +7710,25 @@ void stackBannerTick() {                 // loop(), Core 1
   if (stackBannerMs && now - stackBannerMs >= bannerHoldMs) dismissStackBanner();
 }
 
-// Main-screen correction tags (8/22/26), one line under the cold/hot tag:
-//   Z-1.5   session-zero offset in mm currently subtracted (hidden when 0)
-//   T-0.8   temperature compensation in mm currently subtracted (hidden when
-//           comp is off; shown even at 0.0 so "comp is on" is visible)
-// The screen must never apply a correction silently — these are the two that
-// move the number. x=34..~100 stays clear of the VIBE CHECK glyph (x≥105);
-// y=37..45 sits between the tag line (26..34) and the AVG FOV label (52).
+// Main-screen zero tag (8/22/26), one line under the cold/hot tag:
+//   Z+0.5   session-zero offset in mm currently subtracted (hidden when 0).
+// The temperature term was shown here too and dropped the same day — it
+// crowded the header and is visible on the web TEMP CAL panel anyway.
+// x=34.. stays clear of the VIBE CHECK glyph (x≥105); y=37..45 sits between
+// the tag line (26..34) and the AVG FOV label (52).
 char lastCorrTags[24] = "\x01";
 void drawCorrectionTags() {
-  char buf[24] = ""; size_t n = 0;
+  char buf[24] = "";
   int32_t offT = tofZeroOffsetT.load(std::memory_order_relaxed);
-  if (offT != 0) n += snprintf(buf + n, sizeof buf - n, "Z%+.1f", -offT / 10.0f);
-  if (tofTempCoeff != 0.0f) {
-    float tc = -tofTempCorrMm(); if (fabsf(tc) < 0.05f) tc = 0.0f;   // never "T-0.0"
-    n += snprintf(buf + n, sizeof buf - n, "%sT%+.1f", n ? " " : "", tc);
-  }
+  if (offT != 0) snprintf(buf, sizeof buf, "Z%+.1f", -offT / 10.0f);
   if (strcmp(buf, lastCorrTags) == 0) return;
   strncpy(lastCorrTags, buf, sizeof lastCorrTags);
   tft.fillRect(34, 37, 70, 9, THEME_BG);
   if (!buf[0]) return;
   tft.setFont(); tft.setTextSize(1);
   tft.setCursor(34, 37);
-  // Z in the zero-blue, T in the temp-amber — same hues as the web panel.
-  char* sp = strchr(buf, ' ');
-  if (sp) *sp = '\0';
-  tft.setTextColor(buf[0] == 'Z' ? COLOR_LIGHTBLUE : COLOR_YELLOW);
+  tft.setTextColor(COLOR_LIGHTBLUE);
   tft.print(buf);
-  if (sp) { tft.print(" "); tft.setTextColor(COLOR_YELLOW); tft.print(sp + 1); }
 }
 
 void drawMainScreen() {
