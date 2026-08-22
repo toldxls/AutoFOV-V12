@@ -1356,6 +1356,41 @@
             <!-- ===================== MEMORY & INFO ===================== -->
             <div id="screen-memory" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 115px; background-color: #006400;">MEMORY &amp; INFO</div>
+                <div id="memory-info" class="help-btn" onclick="memoryToggleHelp()"
+                     title="What these numbers mean"
+                     style="position:absolute; left: 150px; top: 8px;">?</div>
+                <!-- Metric glossary. Tap anywhere on it to close. -->
+                <div id="memory-help" onclick="memoryToggleHelp()"
+                     style="display:none; position:absolute; top:40px; left:6px; right:6px; bottom:6px;
+                            z-index:5; overflow-y:auto; background:#0a1f1a; border:1px solid #2a7a6a;
+                            border-radius:6px; padding:9px 10px; font-size:10px; line-height:1.5;
+                            color:#cfe7df; cursor:pointer;">
+                    <div style="color:#f5b400; font-weight:bold; font-size:11px;">HEAP &mdash; the ESP32's internal RAM</div>
+                    The fast on-chip memory the WiFi stack, web server, and every task allocate from.
+                    <b>used</b> = taken right now; <b>free</b> = available now / total. <b>low</b> (the
+                    white tick) is the <b>lowest free ever seen since boot</b> &mdash; the number that
+                    matters. If it ever nears ~40K, big requests (a dashboard load, an OTA) start
+                    failing; above ~100K is comfortable. It only ratchets down; a reboot resets it.<br><br>
+                    <div style="color:#b77cff; font-weight:bold; font-size:11px;">PSRAM &mdash; external 2 MB RAM</div>
+                    Slower add-on memory for bulky buffers. <b>spr</b> = the seven off-screen sprite
+                    framebuffers the TFT is drawn through (flicker-free rendering). The thin blue slice
+                    is everything else parked here: vibration history, TOF logs, the OTA receive
+                    buffer while an upload is in flight. <b>free</b> = available / total. Running low
+                    here is harmless to WiFi &mdash; only the features that use it would be affected.<br><br>
+                    <div style="color:#4a90c4; font-weight:bold; font-size:11px;">PARTITION &mdash; the two firmware slots</div>
+                    Flash holds two equal copies of the firmware area. The bar marked <b>run</b> is the
+                    one executing now and shows how much of its 1856K the firmware fills. <b>standby</b>
+                    is empty space an OTA writes into; the bootloader then flips to it, and the old
+                    slot becomes the rollback image. <b>Flash</b> below repeats the running slot's
+                    used / capacity &mdash; the headroom left for new features.<br><br>
+                    <div style="color:#aaa; font-weight:bold; font-size:11px;">THE REST</div>
+                    <b>CPU</b> clock and <b>SDK</b> (the ESP-IDF the firmware is built on).
+                    <b>Source</b> = size of the hand-written firmware + dashboard code at build time.
+                    <b>Die temp</b> is the ESP32 chip itself &mdash; it tracks CPU/WiFi load (idle
+                    ~45&nbsp;&deg;C, busy dashboard ~50+), turns amber past 70 and red past 85. It is NOT
+                    room temperature: the TOF's ambient comes from the IMU (TEMP CAL).
+                    <span style="color:#7a958c;">(tap anywhere to close)</span>
+                </div>
                 <!-- V12.5: web-only diagnostics (reset history) — a user in a
                      browser is exactly who needs it; the device has no such screen. -->
                 <div class="gfx-btn" style="left: 93px; top: 290px; width: 54px; height: 22px;
@@ -9168,6 +9203,8 @@
     }
 
     function sensorInfoToggleHelp(){ const h=document.getElementById('sensorinfo-help');
+        h.style.display=(h.style.display==='block')?'none':'block'; }
+    function memoryToggleHelp(){ const h=document.getElementById('memory-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
 
     // ─────────────────────────────────────────────────────────────────────────
