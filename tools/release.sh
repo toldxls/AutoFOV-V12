@@ -241,11 +241,28 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
     # version-pinned manual flashing (dashboard → FIRMWARE UPDATE file-picker, or
     # USB recovery). The dashboard's auto-update still fetches from Pages — release
     # assets don't send CORS headers, so they can't be browser-fetched. Additive,
-    # best-effort. Tags main's current tip (the firmware's source commit).
-    if command -v gh >/dev/null 2>&1; then
+    # best-effort.
+    #
+    # Push main FIRST, then tag HEAD by SHA. `--target main` used to resolve to
+    # origin/main's OLD tip because this script never pushed main — every tag
+    # through v12.5.79 pointed at the PREVIOUS release's commit. The regen
+    # commit still lands after the release (documented); the tag must point at
+    # the firmware's source commit, which is HEAD right now.
+    MAIN_PUSHED=0
+    if [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ]; then
+        if git push origin main; then
+            MAIN_PUSHED=1
+        else
+            echo "  !! git push origin main failed — GitHub Release skipped (its tag would point at a stale commit)."
+            echo "  !!   push main, then: gh release create v$VERSION <firmware.bin> --target $(git rev-parse HEAD)"
+        fi
+    else
+        echo "  !! not on main — GitHub Release skipped (tag would not match the released source)."
+    fi
+    if [ "$MAIN_PUSHED" = 1 ] && command -v gh >/dev/null 2>&1; then
         if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "GitHub Release v$VERSION already exists — skipping."
-        elif gh release create "v$VERSION" "$WT/firmware.bin" --target main \
+        elif gh release create "v$VERSION" "$WT/firmware.bin" --target "$(git rev-parse HEAD)" \
                 --title "AutoFOV v$VERSION" \
                 --notes "Firmware $VERSION — sha256 \`$SHA\`
 
