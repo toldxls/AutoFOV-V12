@@ -3540,7 +3540,10 @@ static size_t buildFastTelemFrame(char* buf, size_t cap) {
     uint32_t hst = sensorHealth.load(std::memory_order_acquire);
     uint32_t amb = sensorAmbient.load(std::memory_order_acquire);
     bool    valid   = (st >> 31) & 1;
-    int     dist_mm = st & 0x7FFFFFFF;                              // raw EMA — matches TFT DISTANCE display
+    // Temp-corrected like the TFT DISTANCE readout and the FOV — sensorState
+    // itself stays raw w.r.t. temperature (see updateDisplay()).
+    int     dist_mm = (int)lroundf((float)(st & 0x7FFFFFFF) - tofTempCorrMm());
+    if (dist_mm < 0) dist_mm = 0;
     float   avgDist = sensorAvgDist.load(std::memory_order_acquire) / 10.0f; // 5-sample avg — matches TFT AVG FOV
     uint8_t status  = (hst >> 24) & 0xFF;
     float   signal  = (hst & 0xFFFFFF) / 1000.0f;

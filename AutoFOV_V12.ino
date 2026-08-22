@@ -826,7 +826,11 @@ Button btnTheme3(180, 235, 50, 35, "");
 
 // --- SENSOR_INFO screen ---
 Button btnSensorToggle(10, 162, 220, 40, "SLEEP SENSOR",          COLOR_MAROON,     TFT_WHITE, 1, true);
-Button btnSensorHiRef (10, 210, 220, 38, "HIGH REFLECTIVITY: OFF", COLOR_DARKGREY,   TFT_WHITE, 1, false);
+// 8/22/26: the HIGH REFLECTIVITY toggle that lived here is gone (never useful
+// as an operating mode; the re-lock cure still uses the config internally).
+// Its slot is the session-zero button — the one bench ritual (rack to max,
+// zero) that used to require the laptop.
+Button btnSensorZero  (10, 210, 220, 38, "ZERO @ MAX RACK",        COLOR_DARKGREEN,  TFT_WHITE, 1, true);
 Button btnSensorRelock(10, 254, 220, 38, "RE-LOCK TOF",           COLOR_DARKBLUE,   TFT_WHITE, 1, true);
 // patched3: X close (was the "GO BACK" button) — steps back to MAIN.
 Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
@@ -3724,6 +3728,42 @@ void drawRelockButton(bool force) {
   btnSensorRelock.draw(tft, lbl, col, TFT_WHITE);
 }
 
+// Session-zero button (TOF SENSOR screen). Label carries the state so the
+// 2 s sample and its verdict are visible right where you pressed:
+//   idle      "ZERO @ MAX RACK  (off -1.5)"  — current offset, green
+//             "ZERO  -  SET HOME ON WEB FIRST" — grey, no home reference yet
+//   sampling  "ZEROING... hold still"         — blue
+//   result    "ZEROED  off -1.5 mm" (green) or the refusal reason (red), 4 s
+// tofZeroUiMsg/Ms are written by the sampler completion in loop() (Core 1,
+// same task as the TFT) — no cross-core traffic.
+char          tofZeroUiMsg[40] = "";
+bool          tofZeroUiOk      = false;
+unsigned long tofZeroUiMsgMs   = 0;
+int           lastZeroUiState  = -1;
+void drawZeroButton(bool force) {
+  char lbl[40]; uint16_t col;
+  int st;
+  if (tofSampleActive && tofSampleMode == 2) {
+    st = 1; col = COLOR_DARKBLUE; snprintf(lbl, sizeof lbl, "ZEROING... hold still");
+  } else if (tofZeroUiMsg[0] && millis() - tofZeroUiMsgMs < 4000) {
+    st = tofZeroUiOk ? 2 : 3; col = tofZeroUiOk ? COLOR_DARKGREEN : COLOR_MAROON;
+    snprintf(lbl, sizeof lbl, "%s", tofZeroUiMsg);
+  } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
+    st = 4; col = COLOR_DARKGREY; snprintf(lbl, sizeof lbl, "ZERO - SET HOME ON WEB FIRST");
+  } else {
+    st = 0; col = COLOR_DARKGREEN;
+    float off = tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f;
+    snprintf(lbl, sizeof lbl, "ZERO @ MAX RACK  (off %+.1f)", off);
+  }
+  // Repaint on a state change, on force, and every 500 ms while the idle
+  // offset could have moved (web ZERO) — the refresh tick calls with force=false.
+  static int32_t lastOffT = INT32_MIN;
+  int32_t offT = tofZeroOffsetT.load(std::memory_order_relaxed);
+  if (!force && st == lastZeroUiState && offT == lastOffT) return;
+  lastZeroUiState = st; lastOffT = offT;
+  btnSensorZero.draw(tft, lbl, col, TFT_WHITE);
+}
+
 void drawSensorInfoUI() {
   tft.fillScreen(THEME_BG);
   drawLeftBoxedText("TOF SENSOR", 5, 5, COLOR_DARKBLUE);
@@ -3731,10 +3771,7 @@ void drawSensorInfoUI() {
   btnSensorToggle.draw(tft,
     sensorSleeping ? "WAKE SENSOR" : "SLEEP SENSOR",
     sensorSleeping ? COLOR_DARKGREEN : COLOR_MAROON, TFT_WHITE);
-  btnSensorHiRef.draw(tft,
-    highReflMode ? "HIGH REFLECTIVITY: ON" : "HIGH REFLECTIVITY: OFF",
-    highReflMode ? 0x0340 : COLOR_DARKGREY,   // dark teal when active
-    TFT_WHITE);
+  drawZeroButton(true);        // session zero — state-labelled
   drawRelockButton(true);      // one-press cold-start cure, colored by state
   btnSensorBack.draw(tft);
 }
@@ -3778,22 +3815,26 @@ void handleSensorInfoTouch(TS_Point p) {
     drawSensorInfoUI(); // full redraw to update toggle label
     return;
   }
-  if (btnSensorHiRef.contains(p.x, p.y)) {
-    if (!sensorSleeping) {
-      // Restart with the new timing budget + ROI. Flip the mode only when the
-      // stop/reconfig/restart actually ran.
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500))) {
-        sensor.VL53L4CX_StopMeasurement();
-        highReflMode = !highReflMode;
-        applyHighReflConfig();   // 8 ms + 8×8 ROI  OR  33 ms + full ROI
-        sensor.VL53L4CX_StartMeasurement();
-        xSemaphoreGive(i2cMutex);
-        sensorEmaReset.store(true, std::memory_order_release);
-      }
-    } else {
-      highReflMode = !highReflMode;   // asleep: config is applied on wake
+  // ZERO @ MAX RACK — same 2 s sampler the web button drives (tofSampleMode 2;
+  // completion in loop() computes the offset, persists it, and pushes the
+  // result to the browser too). Refused while asleep, mid-sample, or mid-re-lock
+  // (those reads range in the opposite config). No home yet → the web's SET
+  // HOME (confirm-guarded) is the only way to establish one, by design.
+  if (btnSensorZero.contains(p.x, p.y)) {
+    if (sensorSleeping) {
+      snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "sensor asleep - wake it first");
+      tofZeroUiOk = false; tofZeroUiMsgMs = millis();
+    } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
+      snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "no home - SET HOME on the web");
+      tofZeroUiOk = false; tofZeroUiMsgMs = millis();
+    } else if (!tofSampleActive && tofRelockPhase == TOF_RELOCK_IDLE) {
+      tofSampleMode = 2;
+      tofSampleSum = tofSampleSumSq = 0.0;
+      tofSampleCount   = 0;
+      tofSampleStartMs = millis();
+      tofSampleActive  = true;
     }
-    drawSensorInfoUI();
+    drawZeroButton(true);
     return;
   }
   // RE-LOCK: one-press cure for the cold-start long-bias. Kicks the config-cycle
@@ -6467,28 +6508,40 @@ void loop() {
         uint8_t mode = tofSampleMode;
         tofSampleMode = 0;
         uint32_t meanT = (uint32_t)lround(meanMm * 10.0f);
+        auto tftVerdict = [&](bool ok, const char* msg) {   // TOF SENSOR screen echo
+          snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "%s", msg);
+          tofZeroUiOk = ok; tofZeroUiMsgMs = millis();
+          if (currentMode == SENSOR_INFO) drawZeroButton(true);
+        };
         if (tofSampleCount == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           0.0f, "no valid range in the 2 s window");
+          tftVerdict(false, "no valid range - aimed at nothing?");
         } else if (mode == 1) {
           tofZeroHomeT.store(meanT, std::memory_order_relaxed);
           tofZeroOffsetT.store(0, std::memory_order_relaxed);
           saveTofZeroPrefs();
           wifiPushTofZero(1, 0.0f, meanMm, "home set");
+          tftVerdict(true, "HOME SET");
         } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "no home reference — SET HOME first");
+          tftVerdict(false, "no home - SET HOME on the web");
         } else if (labs((long)meanT - (long)tofZeroHomeT.load(std::memory_order_relaxed)) > 100) {
           // >10 mm from home: almost certainly not racked to max — refuse
           // rather than silently absorb a huge phantom offset.
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "reading is >10 mm from home — bellows racked to max?");
+          tftVerdict(false, ">10 mm from home - racked to max?");
         } else {
           int32_t newOff = tofZeroOffsetT.load(std::memory_order_relaxed)
                          + ((int32_t)meanT - (int32_t)tofZeroHomeT.load(std::memory_order_relaxed));
           tofZeroOffsetT.store(newOff, std::memory_order_relaxed);
           saveTofZeroPrefs();
           wifiPushTofZero(1, newOff / 10.0f, meanMm, "zeroed");
+          char m[40]; snprintf(m, sizeof m, "ZEROED  off %+.1f mm", newOff / 10.0f);
+          tftVerdict(true, m);
+          if (currentMode == MAIN) drawCorrectionTags();   // Z tag tracks the new offset
         }
       }
     }
@@ -6763,6 +6816,7 @@ void loop() {
   if (currentMode == SENSOR_INFO && ((unsigned long)(millis() - lastSensorInfoUpdate) > 500)) {
     refreshSensorInfoValues();
     drawRelockButton(false);   // live COLD → RE-LOCKING → HOT on the button
+    drawZeroButton(false);     // ZEROING… → verdict → idle (offset) on the button
     lastSensorInfoUpdate = millis();
   }
 
@@ -7458,6 +7512,34 @@ void drawTofTag() {
   lastDrawnTofSleep = slp;
 }
 
+// Main-screen correction tags (8/22/26), one line under the cold/hot tag:
+//   Z-1.5   session-zero offset in mm currently subtracted (hidden when 0)
+//   T-0.8   temperature compensation in mm currently subtracted (hidden when
+//           comp is off; shown even at 0.0 so "comp is on" is visible)
+// The screen must never apply a correction silently — these are the two that
+// move the number. x=34..~100 stays clear of the VIBE CHECK glyph (x≥105);
+// y=37..45 sits between the tag line (26..34) and the AVG FOV label (52).
+char lastCorrTags[24] = "\x01";
+void drawCorrectionTags() {
+  char buf[24] = ""; size_t n = 0;
+  int32_t offT = tofZeroOffsetT.load(std::memory_order_relaxed);
+  if (offT != 0) n += snprintf(buf + n, sizeof buf - n, "Z%+.1f", -offT / 10.0f);
+  if (tofTempCoeff != 0.0f)
+    n += snprintf(buf + n, sizeof buf - n, "%sT%+.1f", n ? " " : "", -tofTempCorrMm());
+  if (strcmp(buf, lastCorrTags) == 0) return;
+  strncpy(lastCorrTags, buf, sizeof lastCorrTags);
+  tft.fillRect(34, 37, 70, 9, THEME_BG);
+  if (!buf[0]) return;
+  tft.setFont(); tft.setTextSize(1);
+  tft.setCursor(34, 37);
+  // Z in the zero-blue, T in the temp-amber — same hues as the web panel.
+  char* sp = strchr(buf, ' ');
+  if (sp) *sp = '\0';
+  tft.setTextColor(buf[0] == 'Z' ? COLOR_LIGHTBLUE : COLOR_YELLOW);
+  tft.print(buf);
+  if (sp) { tft.print(" "); tft.setTextColor(COLOR_YELLOW); tft.print(sp + 1); }
+}
+
 void drawMainScreen() {
   tft.fillScreen(THEME_BG);
   updateObjectiveButtons();
@@ -7467,6 +7549,8 @@ void drawMainScreen() {
   centerStaticText("DISTANCE:", distanceLabelY, 1); 
 
   drawTofTag();   // top-left "cold TOF" / "hot TOF" thermal-state tag
+  lastCorrTags[0] = '\x01'; lastCorrTags[1] = 0;   // fresh screen — force the tag paint
+  drawCorrectionTags();
 
   // Calib + version block — now a tappable region that opens the ABOUT screen.
   // Subtle dark-grey rectangle hints it's interactive without dominating the
@@ -8421,7 +8505,14 @@ void updateDisplay() {
 
   uint32_t currentState = sensorState.load(std::memory_order_acquire);
   bool rangeValid = (currentState >> 31) & 0x1;
-  int currentRange = currentState & 0x7FFFFFFF;
+  // DISTANCE is shown in the SAME frame the FOV is computed from: sensorState
+  // is zero-corrected but deliberately raw w.r.t. temperature (the passive
+  // temp log and the cal sampler share that frame), and averageDist applies
+  // tofTempCorrMm() on the way to fovAt(). Until 8/22/26 the readout skipped
+  // that step, so on a warm day the distance on screen was not the distance
+  // the FOV beside it came from.
+  int currentRange = (int)lroundf((float)(currentState & 0x7FFFFFFF) - tofTempCorrMm());
+  if (currentRange < 0) currentRange = 0;
 
   if (rangeValid) {
     float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
@@ -8432,6 +8523,7 @@ void updateDisplay() {
     static unsigned long lastTextUpdate = 0;
 
     if (millis() - lastTextUpdate > 600 || lastDistance == 0xFFFF) {
+      drawCorrectionTags();            // cheap: repaints only when the text changes
       if (fabs(fov - lastAvgFov) > 0.01 || errInt != lastErrInt) {
         fovSprite.fillScreen(THEME_BG); 
         
