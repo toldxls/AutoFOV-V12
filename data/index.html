@@ -3996,8 +3996,12 @@
 
     function _showScreen(id) {
         const prevScreen = state.screen;
+        // Guard BEFORE deactivating anything: an unknown id (firmware/dashboard
+        // version skew) must leave the current screen up, not blank every one.
+        const target = document.getElementById(id);
+        if (!target) { console.warn('unknown screen', id); return; }
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        document.getElementById(id).classList.add('active');
+        target.classList.add('active');
         state.screen = id;
         // patched3: re-evaluate the sphere visibility (it only shows on MAIN).
         if (typeof applyTriggerVisuals === 'function') applyTriggerVisuals();
@@ -4984,6 +4988,8 @@
             const r = await calioAuthedFetch('/tofdbg', { cache: 'no-store', silent: !tofcalOpenFlag });
             if (!r.ok) return;
             const j = await r.json();
+            if (myGen !== _tofcalDataGen) return;   // CLEAR ALL landed while this was in flight —
+                                                     // never write the pre-clear cloud back
             const tval = row => (row.length > 7 && row[7] !== -32768 && isFinite(row[7])) ? row[7] / 10
                               : (row.length > 6 && isFinite(row[6])) ? row[6] / 10 : null;
             let pts = (j.trend || []).filter(row => row[1] > 0 && tval(row) !== null)
@@ -5411,11 +5417,17 @@
     }
     function tofcalManual() {
         const cf = parseFloat(document.getElementById('tofcal-coeff').value);
-        const rf = parseFloat(document.getElementById('tofcal-ref').value);
+        let rf = parseFloat(document.getElementById('tofcal-ref').value);
         if (isNaN(cf)) return;
-        sendCommand('tofcomp', cf.toFixed(4) + ',' + (isNaN(rf) ? 21 : rf).toFixed(2));
+        // Firmware accepts only |coeff| < 50 and -20 < ref < 60 (strict) and
+        // silently ignores the rest — reject here instead of echoing a value
+        // the device never applied.
+        if (!(Math.abs(cf) < 50)) { tofcalIo('coefficient out of range — must be within ±50 mm/°C', true); return; }
+        if (isNaN(rf)) rf = 21;
+        if (!(rf > -20 && rf < 60)) { tofcalIo('ref temperature out of range — must be between -20 and 60 °C', true); return; }
+        sendCommand('tofcomp', cf.toFixed(4) + ',' + rf.toFixed(2));
         state.tcCoeff = cf;
-        state.tcRef   = isNaN(rf) ? 21 : rf;
+        state.tcRef   = rf;
         state.tcSpan  = 0; state.tcR = 0; state.tcN = 0;   // manual = no pedigree
         tofcalRender(); tofcalIo('manual coefficient set ✓');
     }
@@ -12997,8 +13009,10 @@
                 list.appendChild(row);
             });
         } catch (e) {
-            list.innerHTML = '<div style="color:#ff6a6a;padding:6px;font-size:10px;">Library unavailable: ' +
-                e.message + '</div>';
+            const div = document.createElement('div');
+            div.style.cssText = 'color:#ff6a6a;padding:6px;font-size:10px;';
+            div.textContent = 'Library unavailable: ' + e.message;   // never innerHTML a message
+            list.replaceChildren(div);
         }
     }
     async function calioLoadGithubItem(file, name) {
@@ -13055,6 +13069,15 @@
     // TRANSPORT — WIFI (HTTP + WebSocket)
     // ─────────────────────────────────────────────────────────────────────────
     let ws = null;
+    // True from otaLockControls() until otaUnlockControls(): an upload is in
+    // flight. Every GitHub check/update entry point bails on it — the 60 s
+    // auto-check used to re-enable the UPDATE button mid-flash, inviting a
+    // second concurrent /ota POST onto the first upload's live buffer.
+    let otaUploadActive = false;
+    // Bumped by disconnectWifi()/signOut(): the reconnect callback re-checks it
+    // after its /state probe so a DISCONNECT pressed mid-probe can't be undone
+    // by the socket reopening a few seconds later.
+    let wsGen = 0;
     let wifiBase = '';
     let wifiIP = '';
     let reconnectAttempts = 0;
@@ -13172,8 +13195,14 @@
     function ntfySave() {
         const inp = document.getElementById('ntfy-topic-input');
         const topic = inp ? inp.value.trim() : '';
-        sendCommand('ntfyTopic', topic);
         const st = document.getElementById('ntfy-status');
+        // Mirror the firmware's rule (it silently drops anything else and the
+        // next slow frame would quietly revert the field): [A-Za-z0-9_-]{1,64}.
+        if (topic && !/^[A-Za-z0-9_-]{1,64}$/.test(topic)) {
+            if (st) { st.textContent = 'Invalid topic — letters, digits, - and _ only (max 64).'; st.style.color = '#ff6a6a'; }
+            return;
+        }
+        sendCommand('ntfyTopic', topic);
         if (st) { st.textContent = topic ? 'Saved.' : 'Cleared.'; st.style.color = '#6abf6a'; }
         state.ntfyTopic = topic;
     }
@@ -13214,7 +13243,7 @@
         updateOtaRollbackUI();
         // Re-check GitHub on every entry to this screen, unless an update is
         // already running or a check is in flight.
-        if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
+        if (!otaUploadActive && ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
     }
     function updateOtaRollbackUI() {
         const row   = document.getElementById('ota-rollback-row');
@@ -13317,6 +13346,7 @@
     }
     // Disable every OTA action control while a flash is in flight.
     function otaLockControls() {
+        otaUploadActive = true;
         ['gh-update-btn', 'ota-flash-btn', 'ota-choose-btn'].forEach(id => {
             const b = document.getElementById(id);
             if (b) { b.style.opacity = '0.35'; b.style.pointerEvents = 'none'; }
@@ -13325,6 +13355,7 @@
     // Restore the manual-flash controls after a failed/aborted flash.  The
     // GitHub button is restored separately, by ghRestoreButton().
     function otaUnlockControls() {
+        otaUploadActive = false;
         const choose = document.getElementById('ota-choose-btn');
         if (choose) { choose.style.opacity = ''; choose.style.pointerEvents = ''; }
         const flash = document.getElementById('ota-flash-btn');
@@ -13336,6 +13367,7 @@
     }
 
     async function otaFlash() {
+        if (otaUploadActive) return;
         const input = document.getElementById('ota-file-input');
         if (!input.files.length) return;
         const otaPw = await otaPasswordPrompt('Re-enter the device password to flash the selected firmware file.');
@@ -13624,7 +13656,7 @@
     }
 
     function githubAction() {
-        if (ghPhase === 'busy' || ghPhase === 'checking') return;
+        if (otaUploadActive || ghPhase === 'busy' || ghPhase === 'checking') return;
         if (ghPhase === 'available') githubUpdate();
         else checkGithubUpdate();          // idle, current, error → re-check
     }
@@ -13676,7 +13708,7 @@
     // running version isn't known yet or a check/flash is already in flight.
     function maybeAutoCheckGithub() {
         if (!state.buildVersion || state.buildVersion === '—') return;
-        if (ghPhase === 'busy' || ghPhase === 'checking') return;
+        if (otaUploadActive || ghPhase === 'busy' || ghPhase === 'checking') return;
         checkGithubUpdate();
     }
 
@@ -13708,7 +13740,7 @@
     }
 
     async function githubUpdate() {
-        if (ghPhase !== 'available' || !ghManifest) return;
+        if (otaUploadActive || ghPhase !== 'available' || !ghManifest) return;
         const otaPw = await otaPasswordPrompt(
             'Re-enter the device password to flash firmware v' + ghManifest.version + ' from GitHub.');
         if (otaPw === null) return;   // cancelled
@@ -13887,6 +13919,7 @@
     }
 
     function disconnectWifi() {
+        wsGen++;
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
@@ -14183,6 +14216,7 @@
     // Forget any remembered login on this browser, drop the live session, and
     // re-show the login overlay. Reachable from the WiFi Info screen.
     function signOut() {
+        wsGen++;                       // orphan any in-flight reconnect probe
         localStorage.removeItem('afovToken');
         localStorage.removeItem('afovRemember');
         csrfToken = '';
@@ -14245,6 +14279,7 @@
             status.style.color = '#FFA500';
             reconnectTimer = setTimeout(async () => {
                 reconnectTimer = null;
+                const myGen = wsGen;
                 // Probe /state with the cached token before re-opening the
                 // socket. After a device reboot the session token is rotated
                 // and the authed-IP table is cleared, so every WS upgrade
@@ -14257,6 +14292,7 @@
                         signal: AbortSignal.timeout(3000),
                         headers: { 'X-AutoFOV-Token': csrfToken }
                     });
+                    if (myGen !== wsGen) return;     // disconnected while probing
                     if (r.status === 401 || r.status === 403) {
                         csrfToken = '';
                         localStorage.removeItem('afovToken');
@@ -14265,6 +14301,7 @@
                     }
                     if (r.ok) applyFullState(await r.json());
                 } catch {}
+                if (myGen !== wsGen) return;
                 openWebSocket(ip);
             }, delay);
         };
