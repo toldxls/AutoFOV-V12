@@ -1735,12 +1735,29 @@ static void startFullServer() {
     });
 
     // Serve HTML from firmware PROGMEM (gzip — regenerate web_ui.h via tools/embed_html.py)
+    //
+    // ETag + 304: Cache-Control: no-cache makes the browser REVALIDATE on every
+    // load (so an OTA'd dashboard is picked up immediately), and the validator
+    // lets that revalidation answer with an empty 304 instead of re-streaming
+    // the ~130 KB blob from PROGMEM on every reload. The tag is the version
+    // plus a hash of the embedded blob (WEB_UI_HTML_GZ_TAG) rather than the
+    // commit: two dirty dev builds from one HEAD share BUILD_COMMIT but may
+    // serve different dashboards.
     httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!hostAllowed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
+        static const char kEtag[] = "\"" BUILD_VERSION "-" WEB_UI_HTML_GZ_TAG "\"";
+        if (req->hasHeader("If-None-Match") && req->header("If-None-Match") == kEtag) {
+            AsyncWebServerResponse* resp = req->beginResponse(304);
+            resp->addHeader("ETag", kEtag);
+            resp->addHeader("Cache-Control", "no-cache");
+            req->send(resp);
+            return;
+        }
         AsyncWebServerResponse* resp = req->beginResponse_P(
             200, "text/html", WEB_UI_HTML_GZ, WEB_UI_HTML_GZ_LEN);
         resp->addHeader("Content-Encoding", "gzip");
         resp->addHeader("Cache-Control", "no-cache");
+        resp->addHeader("ETag", kEtag);
         req->send(resp);
     });
 
