@@ -114,7 +114,7 @@ def node_check(node, js):
         fp.write(js)
         path = fp.name
     try:
-        r = subprocess.run([node, '--check', path], capture_output=True, text=True)
+        r = subprocess.run([node, '--check', path], capture_output=True, text=True, encoding='utf-8')
     finally:
         os.unlink(path)
     return r.returncode, r.stderr
@@ -187,7 +187,7 @@ def minify_inline(html):
         if terser:
             r = subprocess.run([node, terser, '-c', '-m'] if not os.access(terser, os.X_OK)
                                else [terser, '-c', '-m'],
-                               input=body, capture_output=True, text=True)
+                               input=body, capture_output=True, text=True, encoding='utf-8')
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout, 'terser'
             sys.stderr.write(f'WARNING: terser failed ({r.stderr.strip()[:300]}) — trying rjsmin\n')

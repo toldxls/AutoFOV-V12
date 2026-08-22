@@ -742,7 +742,7 @@ Button btnBrightness(20, 172, 200, 35, "BRIGHTNESS",   COLOR_DARKBLUE,  TFT_WHIT
 Button btnSettingsClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true); // X close for settings (steps back to MAIN)
 Button btnSettingsMem(20, 217, 200, 38, "MEMORY", COLOR_BLUEGREEN, TFT_BLACK, 1, true);
 Button btnMemClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);      // X close for mem info
-Button btnMemReboot(128, 2, 70, 33, "REBOOT", COLOR_MAROON, TFT_WHITE, 1, true);   // two-tap (SURE?) warm restart
+Button btnMemReboot(92, 2, 105, 33, "REBOOT", COLOR_MAROON, TFT_WHITE, 1, true);   // two-tap (SURE?) warm restart; x 92..197 clear of the X (205)
 
 Button btnStartCal(10, 215, 105, 55, "START CAL", 0x001F, TFT_WHITE, 1, true);
 Button btnResetAll(125, 215, 105, 55, "RESET ALL", 0x7800, TFT_WHITE, 1, true);
@@ -1346,6 +1346,7 @@ const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mod
 // i2cMutex), which a reboot heals via recoverI2CBus() at boot.
 std::atomic<uint32_t> sensorHeartbeatMs{0};
 bool tofStalled = false;   // live: heartbeat >3 s old — MAIN shows "TOF STALL" (8/22/26)
+std::atomic<int32_t> tofZeroStepAdjT{0};   // ZERO's offset delta (tenths) for sensorTask's [L] anchor
 // Data-silence self-heal (8/16/26): the sensor stopped raising data-ready 46 min
 // after a cold boot and stayed silent 5.8 h with the task alive — invisible to
 // the bus watchdog. sensorTask stamps tofLastFrameMs on every processed frame;
@@ -1473,7 +1474,7 @@ std::atomic<uint32_t> vibHistFovCentimm{0};
 // the per-frame numbers aren't trusted when the band they can't see is hot.
 std::atomic<uint32_t> vibHistLowFUmX10{0};
 // Auto-power-off request for the accelerometer. loop() (Core 1) sets it after
-// 1 h idle; vibTask (Core 0) owns the actual LSM6DSOX power-down/up so all IMU
+// SENSOR_IDLE_OFF_MS (30 min) idle; vibTask (Core 0) owns the actual LSM6DSOX power-down/up so all IMU
 // register access stays on one core (see vibTask).
 std::atomic<bool> vibAutoOff{false};
 bool imuPresent = false;                   // set true once the LSM6DSOX answers
@@ -1919,7 +1920,7 @@ void drawLeftBoxedText(const char*, int, int, uint16_t);  // fwd ref
 void setSmoothFont(uint8_t);  // fwd ref
 void drawMemInfoUI() {
   tft.fillScreen(THEME_BG);
-  drawLeftBoxedText("MEMORY & INFO", 5, 5, COLOR_DARKGREEN);
+  drawLeftBoxedText("MEMORY", 5, 5, COLOR_DARKGREEN);   // short: REBOOT sits beside it
   btnMemClose.draw(tft);
 
   const uint32_t spriteBytes = SPRITE_BYTES;
@@ -2038,7 +2039,8 @@ void drawMemInfoUI() {
     ly += 22;                                   // was 26: two more rows fit below (8/22/26)
   };
 
-  infoRow("Firmware:", FIRMWARE_VERSION, COLOR_GREENYELLOW);
+  // (The old "Firmware: Auto FOV V12" row showed a static name, not a version —
+  // dropped 8/22/26 so six rows fit; the version is on ABOUT.)
   {
     char sdk[11]; snprintf(sdk, sizeof(sdk), "%s", ESP.getSdkVersion());
     snprintf(buf, sizeof(buf), "%lu MHz-%s", (unsigned long)getCpuFrequencyMhz(), sdk);
@@ -2067,14 +2069,22 @@ void drawMemInfoUI() {
     // 8/22/26: uptime + boot count, and the fault counters that used to live
     // only in /diag. Amber when any fault counter is non-zero.
     uint32_t up = millis() / 1000;
-    snprintf(buf, sizeof(buf), "%luh %02lum  boot #%lu", (unsigned long)(up / 3600),
-             (unsigned long)((up / 60) % 60), (unsigned long)g_rtc.bootCount);
-    infoRow("Up:", buf, themedText(COLOR_LIGHTGREY));
+    // g_rtc.bootCount is the CONSECUTIVE-CRASH streak (0 after 30 s healthy),
+    // not a lifetime count — only shown when non-zero.
+    if (g_rtc.bootCount)
+      snprintf(buf, sizeof(buf), "%luh %02lum  crash x%lu", (unsigned long)(up / 3600),
+               (unsigned long)((up / 60) % 60), (unsigned long)g_rtc.bootCount);
+    else
+      snprintf(buf, sizeof(buf), "%luh %02lum", (unsigned long)(up / 3600), (unsigned long)((up / 60) % 60));
+    infoRow("Up:", buf, g_rtc.bootCount ? 0xFD40 : themedText(COLOR_LIGHTGREY));
     uint32_t af = allocFailCount.load(std::memory_order_relaxed);
     uint32_t ie = i2cErrCount.load(std::memory_order_relaxed);
     uint32_t hl = tofSelfHealCount.load(std::memory_order_relaxed);
     uint32_t st = sensorMaxStallMs.load(std::memory_order_relaxed);
-    snprintf(buf, sizeof(buf), "alloc%lu i2c%lu heal%lu st%lus",   // compact: row is right-aligned at x=225
+    // a = alloc fails, i = IMU I2C errors, h = TOF self-heals, stl = worst
+    // sensor stall. ≤ 15 chars: the value is right-aligned at x=225 and the
+    // "Faults:" label ends at x≈69 (FreeSans9pt ≈ 10 px/char).
+    snprintf(buf, sizeof(buf), "a%lu i%lu h%lu stl%lus",
              (unsigned long)af, (unsigned long)ie, (unsigned long)hl, (unsigned long)((st + 500) / 1000));
     infoRow("Faults:", buf, (af || ie || hl) ? 0xFD40 : themedText(COLOR_LIGHTGREY));
   }
@@ -2093,6 +2103,11 @@ void memRebootTick() {                    // called from the MEM_INFO touch path
 }
 
 void handleMemInfoTouch(TS_Point p) {
+  if (btnMemClose.contains(p.x, p.y)) {            // X first: its pad overlaps REBOOT's by 4 px
+    memRebootArmedMs = 0;
+    currentMode = APP_SETTINGS; drawAppSettingsUI();
+    return;
+  }
   if (btnMemReboot.contains(p.x, p.y)) {
     if (!memRebootArmedMs) {
       memRebootArmedMs = millis(); if (!memRebootArmedMs) memRebootArmedMs = 1;
@@ -2101,15 +2116,12 @@ void handleMemInfoTouch(TS_Point p) {
       btnMemReboot.draw(tft, "BYE...", COLOR_DARKGREY, TFT_WHITE);
       memRebootArmedMs = 0;
     } else {
-      btnMemReboot.draw(tft, "OTA BUSY", COLOR_DARKGREY, TFT_WHITE);
+      btnMemReboot.draw(tft, "OTA BUSY", COLOR_DARKGREY, TFT_WHITE);   // 91 px in a 105 px button
       memRebootArmedMs = 0;
     }
     return;
   }
   memRebootArmedMs = 0;
-  if (btnMemClose.contains(p.x, p.y)) {
-    currentMode = APP_SETTINGS; drawAppSettingsUI();
-  }
 }
 
 // V11: ABOUT screen — opened by tapping the calib/version block on the main
@@ -3796,12 +3808,13 @@ void drawRelockButton(bool force) {
 //     and the reading then goes wrong the OTHER way as the sensor warms;
 //   • for 5 min after a cold power-up the silicon is still settling.
 const char* tofZeroBlockedReason() {
-  if (sensorSleeping.load(std::memory_order_acquire)) return "sensor asleep - wake it first";
-  if (!tofHot) return "TOF cold - wait for hot TOF tag";
+  // Strings double as the TFT button label — keep them ≤ 19 chars.
+  if (sensorSleeping.load(std::memory_order_acquire)) return "ASLEEP - wake first";
+  if (!tofHot) return "TOF COLD - wait";
   esp_reset_reason_t rr = esp_reset_reason();
   if ((rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT) && millis() < 300000UL)
-    return "warming up - wait 5 min after power-up";
-  if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) return "no home - SET HOME on the web";
+    return "WARMING - wait 5 min";
+  if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) return "NO HOME - set on web";
   return nullptr;
 }
 char          tofZeroUiMsg[40] = "";
@@ -3811,17 +3824,20 @@ int           lastZeroUiState  = -1;
 void drawZeroButton(bool force) {
   char lbl[40]; uint16_t col;
   int st;
+  // Labels are kept ≤ ~19 chars: FreeSans9pt averages ~10 px/char and the
+  // button is 220 px — anything longer centres off the left edge and wraps
+  // onto the RE-LOCK button below (8/22/26 audit).
   if (tofSampleActive && tofSampleMode == 2) {
-    st = 1; col = COLOR_DARKBLUE; snprintf(lbl, sizeof lbl, "ZEROING... hold still");
+    st = 1; col = COLOR_DARKBLUE; snprintf(lbl, sizeof lbl, "ZEROING... hold");
   } else if (tofZeroUiMsg[0] && millis() - tofZeroUiMsgMs < 4000) {
     st = tofZeroUiOk ? 2 : 3; col = tofZeroUiOk ? COLOR_DARKGREEN : COLOR_MAROON;
     snprintf(lbl, sizeof lbl, "%s", tofZeroUiMsg);
   } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
-    st = 4; col = COLOR_DARKGREY; snprintf(lbl, sizeof lbl, "ZERO - SET HOME ON WEB FIRST");
+    st = 4; col = COLOR_DARKGREY; snprintf(lbl, sizeof lbl, "ZERO: SET HOME (WEB)");
   } else {
     st = 0; col = COLOR_DARKGREEN;
     float off = tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f;
-    snprintf(lbl, sizeof lbl, "ZERO @ MAX RACK  (off %+.1f)", off);
+    snprintf(lbl, sizeof lbl, "ZERO @ MAX  (%+.1f)", off);
   }
   // Repaint on a state change, on force, and every 500 ms while the idle
   // offset could have moved (web ZERO) — the refresh tick calls with force=false.
@@ -3890,10 +3906,12 @@ void handleSensorInfoTouch(TS_Point p) {
   // HOME (confirm-guarded) is the only way to establish one, by design.
   if (btnSensorZero.contains(p.x, p.y)) {
     const char* why = tofZeroBlockedReason();
+    if (!why && tofRelockPhase != TOF_RELOCK_IDLE) why = "BUSY - re-locking";
+    if (!why && tofSampleActive)                     why = "BUSY - sampling";
     if (why) {
       snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "%s", why);
       tofZeroUiOk = false; tofZeroUiMsgMs = millis();
-    } else if (!tofSampleActive && tofRelockPhase == TOF_RELOCK_IDLE) {
+    } else {
       tofSampleMode = 2;
       tofSampleSum = tofSampleSumSq = 0.0;
       tofSampleCount   = 0;
@@ -4527,8 +4545,9 @@ void applyHighReflConfig() { applyReflConfig(highReflMode); }
 
 // Mark the TOF cold and schedule its automatic cure cycle. Call right after any
 // cold-start VL53L4CX_StartMeasurement (boot / manual wake / idle-resume). Not
-// called from the cure cycle itself (that would loop), nor from the hi-refl
-// toggle (a manual toggle IS a cure, so it sets tofHot directly).
+// called from the cure cycle itself (that would loop). (The TFT hi-refl toggle
+// that used to count as a manual cure was removed 8/22/26; the web `highRefl`
+// command still exists for bench use and does not touch tofHot.)
 void armTofRelock() {
   tofHot          = false;                        // biased until a cure cycle runs
   tofRelockPhase  = TOF_RELOCK_IDLE;              // cancel any half-done cycle
@@ -4694,7 +4713,7 @@ void sensorTask(void *pvParameters) {
           //  bit0 — topology changed (count / status set / inclusion mask).
           //  bit1 — level step: the EMA level has moved ≥1.5 mm from the level
           //         at the LAST logged step and HELD there for 5 consecutive
-          //         frames (~170 ms); the anchor then re-seats on the new level.
+          //         frames (≈1 s at the 200 ms budget); the anchor re-seats on the new level.
           //         The 8/10/26 logs proved a re-lock steps the SAME single
           //         target's reported range (18.0→19.0, identical topology) —
           //         a spontaneous internal step would be invisible to the
@@ -4721,10 +4740,17 @@ void sensorTask(void *pvParameters) {
           }
           snap.why = 0;
           if (sig != prevSig) { prevSig = sig; snap.why |= 1; }
+          {
+            // A ZERO shifts the published frame by Δ in one frame; follow the
+            // anchor so the zero itself is not logged as a level step.
+            int32_t adj = tofZeroStepAdjT.exchange(0, std::memory_order_acq_rel);
+            if (adj && stepRefT) { int32_t r = (int32_t)stepRefT - adj; stepRefT = (uint16_t)(r < 0 ? 0 : r); }
+          }
           if (snap.emaT) {
             if (!stepRefT) stepRefT = snap.emaT;                  // first valid level = anchor
             else if (abs((int)snap.emaT - (int)stepRefT) >= 15) {
-              if (++stepHold >= 5) { snap.why |= 2; stepRefT = snap.emaT; stepHold = 0; }
+              if (stepHold < 5) stepHold++;
+              if (stepHold >= 5) snap.why |= 2;                   // anchor re-seats when ADMITTED below
             } else stepHold = 0;
           }
 
@@ -4774,8 +4800,10 @@ void sensorTask(void *pvParameters) {
               tofTgtEvt[slot] = snap;
               tofTgtEvtSlotSeq[slot].store(ss + 2, std::memory_order_release);
               tofTgtEvtCount.store(c + 1, std::memory_order_release);
+              if (snap.why & 2) { stepRefT = snap.emaT; stepHold = 0; }   // [L] logged → new anchor
             } else {
               tofTgtEvtDropped.fetch_add(1, std::memory_order_relaxed);
+              // a rate-capped [L] keeps its hold so it fires again next frame
             }
           }
         }
@@ -5123,7 +5151,7 @@ void vibTask(void *pvParameters) {
     vTaskDelay(period);
     if (!imuPresent || !vibReady) continue;
 
-    // ── Auto power-off (1 h idle) ──
+    // ── Auto power-off (SENSOR_IDLE_OFF_MS idle, 30 min) ──
     // loop() sets vibAutoOff; we own every LSM6DSOX register write so the
     // transition happens here, on this core. Drop the accel to its lowest ODR
     // (NOT shutdown: the temp register only updates while the accel has a data
@@ -5671,11 +5699,13 @@ void setup() {
   // which linked ~45 KB of flash + ~31 KB of internal RAM of NCM/MSC/HID
   // endpoint buffers the sketch never used.
   Serial.begin(115200);
-  // Never let a print block a task: with a host holding the port open but not
-  // reading, CDC writes stall up to the TX timeout per call — and we print
-  // from the AsyncTCP task (Serial.flush in onWsEvent) and from sensorTask
-  // under i2cMutex. Unread bytes are simply dropped.
-  Serial.setTxTimeoutMs(0);
+  // setup() is single-threaded: a short bounded TX timeout lets the boot log
+  // reach a monitor intact (HWCDC drains ≤64 B per USB IN token; with a zero
+  // timeout a >64 B line would be cut). Dropped to 0 before the tasks start
+  // (below) so no print can ever block a task — we print from the AsyncTCP
+  // task and from sensorTask under i2cMutex. Serial.flush() is never called:
+  // under HWCDC with a zero timeout it DISCARDS the pending bytes.
+  Serial.setTxTimeoutMs(20);
   // Give a connected Serial Monitor up to 3 s to catch the boot log; an
   // unattended boot (no host has the port open) doesn't wait at all.
   { uint32_t t0 = millis(); while (!Serial && millis() - t0 < 3000) delay(10); }
@@ -5719,7 +5749,7 @@ void setup() {
       if (next && esp_partition_read(next, 0, &imgMagic, 1) == ESP_OK && imgMagic == 0xE9) {
         Serial.printf("[BOOT] boot-loop detected (%u) — rolling back to %s\n",
                       (unsigned)g_rtc.bootCount, next->label);
-        Serial.flush();
+
         g_rtc.rollbackAttempted = 1;
         g_rtc.pendingReasonCode = DIAG_REASON_ROLLBACK;   // labels the NEXT boot's ring entry
         if (esp_ota_set_boot_partition(next) == ESP_OK) {
@@ -5749,7 +5779,7 @@ void setup() {
     strncpy(e.version, BUILD_VERSION, sizeof(e.version) - 1);
     Serial.printf("[BOOT] reset reason: %s (last run up %us, minHeap %uKB)\n",
                   diagReasonStr(reason), (unsigned)e.uptimeSec, (unsigned)e.minHeap);
-    Serial.flush();
+
     // Compact uptime for the TFT line: 45s / 12m / 8h. Reason + uptime only —
     // no min-heap suffix here so the longest label ("SENSOR-STALL WDT") still
     // fits the 240 px row without overlapping "Last:". Full detail (heap, slot,
@@ -5803,7 +5833,7 @@ void setup() {
   } else {
     Serial.println("[PSRAM] Not found — sprites will use DRAM");
   }
-  Serial.flush();
+
 
   pinMode(LITE_PIN, OUTPUT);
   // V12.3: drive the backlight PWM at 20 kHz. analogWrite() defaults to ~1 kHz
@@ -5814,12 +5844,12 @@ void setup() {
   // comes up at the high frequency.
   analogWriteFrequency(LITE_PIN, 20000);
   analogWrite(LITE_PIN, Config::DEFAULT_BRIGHTNESS);
-  Serial.println("[BOOT] tft.begin()..."); Serial.flush();
+  Serial.println("[BOOT] tft.begin()...");
   tft.begin();
   tft.setSPISpeed(70000000);
   tft.setRotation(0);
   tft.fillScreen(THEME_BG);
-  Serial.println("[BOOT] TFT init OK"); Serial.flush();
+  Serial.println("[BOOT] TFT init OK");
 
   // Cold rings (TOF event/trend, vib signature accumulators, interval-test
   // shots) → PSRAM. Before wifiSetup() (HTTP readers) and sensorTask (writers).
@@ -5827,13 +5857,13 @@ void setup() {
   vibTestBegin();
 
   Serial.printf("[BOOT] WiFi init — free heap before: %u\n", ESP.getFreeHeap());
-  Serial.flush();
+
   wifiSetup();
   // mDNS is started by staConnectTask() after WL_CONNECTED — calling
   // MDNS.begin() here returned true but never registered anything because the
   // STA interface had no IP yet.
   Serial.printf("[BOOT] WiFi init done — free heap after: %u\n", ESP.getFreeHeap());
-  Serial.flush();
+
 
   preferences.begin("calib", false);
   size_t sch = preferences.getBytes("settings", &settings, sizeof(CalibData));
@@ -6047,6 +6077,7 @@ void setup() {
   }
 
 #if defined(ARDUINO_ARCH_ESP32)
+  Serial.setTxTimeoutMs(0);    // tasks start now — prints must never block (see Serial.begin)
   xTaskCreatePinnedToCore(sensorTask, "SensorTask", 4096, NULL, 2, &sensorTaskHandle, 0);
 #else
   xTaskCreate(sensorTask, "SensorTask", 1024, NULL, 2, &sensorTaskHandle);
@@ -6097,7 +6128,7 @@ void setup() {
     Serial.println("[BOOT] loopTask watchdog armed (15 s, Core-0 idle preserved)");
   }
 
-  Serial.println("[BOOT] setup() complete — entering loop()"); Serial.flush();
+  Serial.println("[BOOT] setup() complete — entering loop()");
 }
 
 void registerActivity() {
@@ -6592,7 +6623,7 @@ void loop() {
         if (tofSampleCount == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           0.0f, "no valid range in the 2 s window");
-          tftVerdict(false, "no valid range - aimed at nothing?");
+          tftVerdict(false, "NO RANGE at target?");
         } else if (mode == 1) {
           tofZeroHomeT.store(meanT, std::memory_order_relaxed);
           tofZeroOffsetT.store(0, std::memory_order_relaxed);
@@ -6602,20 +6633,22 @@ void loop() {
         } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "no home reference — SET HOME first");
-          tftVerdict(false, "no home - SET HOME on the web");
+          tftVerdict(false, "NO HOME - set on web");
         } else if (labs((long)meanT - (long)tofZeroHomeT.load(std::memory_order_relaxed)) > 100) {
           // >10 mm from home: almost certainly not racked to max — refuse
           // rather than silently absorb a huge phantom offset.
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
                           meanMm, "reading is >10 mm from home — bellows racked to max?");
-          tftVerdict(false, ">10 mm from home - racked to max?");
+          tftVerdict(false, ">10mm off - at max?");
         } else {
-          int32_t newOff = tofZeroOffsetT.load(std::memory_order_relaxed)
+          int32_t oldOff = tofZeroOffsetT.load(std::memory_order_relaxed);
+          int32_t newOff = oldOff
                          + ((int32_t)meanT - (int32_t)tofZeroHomeT.load(std::memory_order_relaxed));
           tofZeroOffsetT.store(newOff, std::memory_order_relaxed);
+          tofZeroStepAdjT.fetch_add(newOff - oldOff, std::memory_order_acq_rel);   // keep [L] quiet
           saveTofZeroPrefs();
           wifiPushTofZero(1, newOff / 10.0f, meanMm, "zeroed");
-          char m[40]; snprintf(m, sizeof m, "ZEROED  off %+.1f mm", newOff / 10.0f);
+          char m[40]; snprintf(m, sizeof m, "ZEROED  (%+.1f mm)", newOff / 10.0f);
           tftVerdict(true, m);
           if (currentMode == MAIN) drawCorrectionTags();   // Z tag tracks the new offset
         }
@@ -6706,8 +6739,12 @@ void loop() {
     unsigned long totalActiveTime = (unsigned long)(lastPulseTime - firstPulseTime);
     if (totalActiveTime >= MIN_ACTIVE_DURATION) {
       wifiNotifyStackComplete();
-      // TFT: banner (MAIN) + 3 backlight blinks (any screen). registerActivity()
-      // already woke/undimmed the screen on the last pulse.
+      // TFT: banner (MAIN) + 3 backlight blinks (any screen). The pulses only
+      // UNDIM (registerActivity); if the panel went to sleep during a long
+      // stack, wake it first or the banner would paint on a dark screen and
+      // expire unseen (8/22/26 audit).
+      if (isScreenSleep) wakeScreen();
+      registerActivity();
       {
         uint32_t sec = (totalActiveTime + 500) / 1000;
         char sub[40];
@@ -7616,7 +7653,7 @@ void drawTofTag() {
 //   • on completion a banner takes the DISTANCE area for 10 s (or until
 //     tapped) with frames + duration, and the backlight blinks 3× — visible
 //     from across the bench on any screen.
-const int STACK_BANNER_Y = 142, STACK_BANNER_H = 50;   // state globals live by stackPulseCount
+const int STACK_BANNER_Y = 145, STACK_BANNER_H = 47;   // below the DISTANCE label (ends y=144); state globals live by stackPulseCount
 
 void drawStackShotCount() {              // MAIN only; caller checks the mode
   tft.fillRect(101, 280, 37, 9, THEME_BG);
@@ -7685,8 +7722,10 @@ void drawCorrectionTags() {
   char buf[24] = ""; size_t n = 0;
   int32_t offT = tofZeroOffsetT.load(std::memory_order_relaxed);
   if (offT != 0) n += snprintf(buf + n, sizeof buf - n, "Z%+.1f", -offT / 10.0f);
-  if (tofTempCoeff != 0.0f)
-    n += snprintf(buf + n, sizeof buf - n, "%sT%+.1f", n ? " " : "", -tofTempCorrMm());
+  if (tofTempCoeff != 0.0f) {
+    float tc = -tofTempCorrMm(); if (fabsf(tc) < 0.05f) tc = 0.0f;   // never "T-0.0"
+    n += snprintf(buf + n, sizeof buf - n, "%sT%+.1f", n ? " " : "", tc);
+  }
   if (strcmp(buf, lastCorrTags) == 0) return;
   strncpy(lastCorrTags, buf, sizeof lastCorrTags);
   tft.fillRect(34, 37, 70, 9, THEME_BG);
@@ -8754,7 +8793,7 @@ void updateDisplay() {
       lastTextUpdate = millis();
     }
   } else {
-    if (lastDistance != 0xFFFF) {
+    if (lastDistance != 0xFFFF && !stackBannerMs) {
       lastDistance = 0xFFFF;
       lastAvgFov = -1;
       

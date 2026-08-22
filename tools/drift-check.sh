@@ -4,7 +4,9 @@
 # patch number from `git rev-list --count HEAD` (same recipe tools/embed_html.py
 # uses), so the gap is meaningful regardless of which branch is checked out.
 #
-# Always exits 0 by default — safe to source from a shell precmd or cd hook.
+# Always exits 0 by default — safe to EXECUTE from a shell precmd/cd hook
+# (bash shebang; run it, don't `source` it — it uses set -e, cd, and bash
+# word-splitting of FIRMWARE_PATHS).
 # Pass --check to exit non-zero on drift (e.g. for a pre-push hook).
 #
 # Usage:

@@ -972,9 +972,9 @@
                     the range, so <b>ZERO @ MAX RACK</b> afterwards.<br><br>
                     <div style="color:#3ddb7a; font-weight:bold; font-size:11px;">ZERO @ MAX RACK</div>
                     The zero point shifts whenever the sensor restarts (power cycle, reboot, RE-LOCK,
-                    sleep/wake). Zero <b>once per session</b> after the tag says <i>hot TOF</i>
-                    (~5&nbsp;min after power-up) and after any of those events &mdash; it is refused while
-                    cold, because a cold bias would be baked into the offset. Not needed otherwise:
+                    sleep/wake). Zero <b>once per session</b> after the tag says <i>hot TOF</i> (and at
+                    least 5&nbsp;min after a cold power-up) and after any of those events &mdash; it is
+                    refused while cold or warming, because a cold bias would be baked into the offset. Not needed otherwise:
                     temperature drift is compensated. The device's TOF SENSOR screen has the same button.<br><br>
                     <div style="color:#35e0d8; font-weight:bold; font-size:11px;">TEMP CAL</div>
                     The range drifts <b>~1.3&nbsp;mm/&deg;C</b> with room temperature (the chip's own
@@ -2584,7 +2584,8 @@
           IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.
           <b>ZERO @ MAX RACK</b>: the sensor's zero point shifts every time it restarts (power cycle,
           reboot, RE-LOCK, sleep/wake) &mdash; zero once per session after the main screen says
-          <i>hot TOF</i>, and after any of those; it is refused while cold. <b>SET HOME</b> once after an
+          <i>hot TOF</i> (and ≥5&nbsp;min after a cold power-up), and after any of those; it is refused
+          while cold or warming. <b>SET HOME</b> once after an
           FOV calibration. SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file
           is the temperature dataset.</div>
         <canvas id="tofdbg-canvas"></canvas>
@@ -2613,7 +2614,7 @@
              calibration, then ZERO at the start of each session — the measured
              drift is subtracted from every reading until the next zero. -->
         <div class="tofcal-row" style="border-top:1px solid #14302a; padding-top:8px;">
-          <button onclick="tofzeroGo()" title="WHEN: at the start of each session once the main screen says hot TOF (~5 min after power-up), and again after any RE-LOCK, reboot, power cycle or sleep/wake — each of those re-references the sensor. Not needed otherwise (temperature is compensated). Refused while cold. HOW: rack the bellows to MAX, tap; 2 s measure cancels the shift since SET HOME.">ZERO @ MAX RACK</button>
+          <button onclick="tofzeroGo()" title="WHEN: once per session after the main screen says hot TOF (and, after a cold power-up, at least 5 min in), and again after any RE-LOCK, reboot, power cycle or sleep/wake — each of those re-references the sensor. Not needed otherwise (temperature is compensated). Refused while cold or still warming. HOW: rack the bellows to MAX, tap; 2 s measure cancels the shift since SET HOME.">ZERO @ MAX RACK</button>
           <button onclick="tofzeroSetHome()" title="ONCE, right after an FOV calibration, with the sensor hot: rack the bellows to MAX and capture the home reference every later ZERO is compared against. Redo only after recalibrating."
                   style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
@@ -4093,6 +4094,7 @@
     // Apply a device screen broadcast, including the info overlays (which aren't
     // .screen elements). Never echoes a nav back — the device is the source.
     function applyRemoteScreen(id) {
+        if (!document.getElementById(id)) { console.warn('unknown remote screen', id); return; }   // version skew: leave the current view alone
         if (id === 'wifi-tips' || id === 'recovery-help') {
             if (_overlayReturn === null) _overlayReturn = state.screen;
             document.getElementById('wifi-tips').style.display     = (id === 'wifi-tips')     ? 'flex' : 'none';
@@ -9562,7 +9564,7 @@
         // Color the UPDATE button from the last GitHub check, then refresh it so
         // an available update shows green without having to open the OTA screen.
         refreshAboutUpdateBtn();
-        if (ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
+        if (!otaUploadActive && ghPhase !== 'busy' && ghPhase !== 'checking') checkGithubUpdate();
     }
 
     // Tint the About-screen UPDATE button: green when a newer GitHub release is
@@ -13256,8 +13258,8 @@
         const st = document.getElementById('ntfy-status');
         // Mirror the firmware's rule (it silently drops anything else and the
         // next slow frame would quietly revert the field): [A-Za-z0-9_-]{1,64}.
-        if (topic && !/^[A-Za-z0-9_-]{1,64}$/.test(topic)) {
-            if (st) { st.textContent = 'Invalid topic — letters, digits, - and _ only (max 64).'; st.style.color = '#ff6a6a'; }
+        if (topic && !/^[A-Za-z0-9_-]{1,63}$/.test(topic)) {   // 63: WifiCmd.val[64] transport cap
+            if (st) { st.textContent = 'Invalid topic — letters, digits, - and _ only (max 63).'; st.style.color = '#ff6a6a'; }
             return;
         }
         sendCommand('ntfyTopic', topic);
@@ -13463,6 +13465,7 @@
     //     socket — so we only reopen here on a FAILED flash.
     let otaWsSuspended = false;
     function otaSuspendWs() {
+        wsGen++;                       // a probe finishing mid-OTA must not reopen the socket
         // Cancel any ARMED reconnect first. If the socket had already dropped
         // before FLASH (ws null, a reconnect/​init-retry timer counting down),
         // closing ws isn't enough — the timer would fire mid-upload and reopen
@@ -13474,6 +13477,7 @@
         updateWifiZone(false);   // grey the header bars while the link is parked
     }
     function otaResumeWs() {
+            state.wifiRSSI = null;   // force the diffed wi-rssi readout to repaint after reconnect
         if (!otaWsSuspended) return;
         otaWsSuspended = false;
         if (wifiIP && csrfToken) openWebSocket(wifiIP);
@@ -13979,6 +13983,7 @@
 
     function disconnectWifi() {
         wsGen++;
+        state.wifiRSSI = null;           // the diffed RSSI readout must re-render on reconnect
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
@@ -14034,6 +14039,7 @@
     // dashboard sat dead (grey bars) until a manual RECONNECT or reload.
     let initRetryTimer = null, initRetryN = 0;
     async function connectWifi() {
+        wsGen++;                       // orphan any reconnect probe already in flight
         if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         reconnectAttempts = 0;

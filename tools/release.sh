@@ -65,16 +65,20 @@ VERSION=$(sed -n 's/.*BUILD_VERSION "\([^"]*\)".*/\1/p' data/web_ui.h)
 # "up to date". manifest.json records the source commit for this comparison
 # (releases before 8/21/26 have no "commit" field → guard skipped).
 fw_paths=$(sed -n "s/^FIRMWARE_PATHS[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" tools/embed_html.py)
+[ -n "$fw_paths" ] || { echo "ERROR: could not read FIRMWARE_PATHS from tools/embed_html.py"; exit 1; }
 git fetch origin gh-pages --quiet 2>/dev/null || true
 rel_manifest=$(git show origin/gh-pages:manifest.json 2>/dev/null || true)
 rel_ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$rel_manifest")
 rel_commit=$(sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$rel_manifest")
 if [ "$VERSION" = "$rel_ver" ] && [ -n "$rel_commit" ] && git cat-file -e "$rel_commit^{commit}" 2>/dev/null; then
     # shellcheck disable=SC2086
-    if ! git diff --quiet "$rel_commit" HEAD -- $fw_paths tools/build.sh; then
+    # tools/embed_html.py is diffed too: a minifier/compressor change rewrites
+    # every embedded byte without touching a FIRMWARE_PATHS file (it must NOT
+    # count toward the version, but it must block a same-number re-publish).
+    if ! git diff --quiet "$rel_commit" HEAD -- $fw_paths tools/build.sh tools/embed_html.py; then
         echo "ERROR: v$VERSION is already on gh-pages (built from ${rel_commit:0:7}) but the firmware"
         echo "       inputs differ at HEAD — a firmware change landed outside FIRMWARE_PATHS?"
-        echo "       git diff --stat $rel_commit HEAD -- $fw_paths tools/build.sh"
+        echo "       git diff --stat $rel_commit HEAD -- $fw_paths tools/build.sh tools/embed_html.py"
         exit 1
     fi
     echo "note: v$VERSION is already on gh-pages with identical firmware inputs — re-publishing the same version"
