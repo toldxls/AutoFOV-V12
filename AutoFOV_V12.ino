@@ -826,13 +826,13 @@ Button btnTheme2(124, 235, 50, 35, "");
 Button btnTheme3(180, 235, 50, 35, "");
 
 // --- SENSOR_INFO screen ---
-Button btnSensorToggle(10, 162, 220, 40, "SLEEP SENSOR",          COLOR_MAROON,     TFT_WHITE, 1, true);
+Button btnSensorToggle(10, 178, 220, 40, "SLEEP SENSOR",          COLOR_MAROON,     TFT_WHITE, 1, true);   // buttons sit 16 px lower since 8/22/26 (Comp: row above)
 // 8/22/26: the HIGH REFLECTIVITY toggle that lived here is gone (never useful
 // as an operating mode; the re-lock cure still uses the config internally).
 // Its slot is the session-zero button — the one bench ritual (rack to max,
 // zero) that used to require the laptop.
-Button btnSensorZero  (10, 210, 220, 38, "ZERO @ MAX RACK",        COLOR_DARKGREEN,  TFT_WHITE, 1, true);
-Button btnSensorRelock(10, 254, 220, 38, "RE-LOCK TOF",           COLOR_DARKBLUE,   TFT_WHITE, 1, true);
+Button btnSensorZero  (10, 224, 220, 38, "ZERO @ MAX RACK",        COLOR_DARKGREEN,  TFT_WHITE, 1, true);
+Button btnSensorRelock(10, 268, 220, 38, "RE-LOCK TOF",           COLOR_DARKBLUE,   TFT_WHITE, 1, true);
 // patched3: X close (was the "GO BACK" button) — steps back to MAIN.
 Button btnSensorBack  (205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);
 
@@ -3774,6 +3774,21 @@ void refreshSensorInfoValues() {
     snprintf(buf, sizeof(buf), "ERR %d", status); statusDesc = buf; statusCol = COLOR_RED;
   }
   sensorRow("Status:", statusDesc, statusCol, 124);
+  // Temperature compensation, live: the mm being ADDED to the raw range right
+  // now and the IMU temperature driving it (coeff × (T − ref), subtracted).
+  // This used to be a "T+3.5" tag on MAIN; it lives here now.
+  {
+    uint16_t col; char cb[24];
+    int32_t t10 = (int32_t)gAmbientTempC10.load(std::memory_order_relaxed);
+    if (tofTempCoeff == 0.0f)      { snprintf(cb, sizeof cb, "off");     col = COLOR_DARKGREY; }
+    else if (t10 == 0)             { snprintf(cb, sizeof cb, "no temp"); col = COLOR_ORANGE; }
+    else {
+      float tc = -tofTempCorrMm(); if (fabsf(tc) < 0.05f) tc = 0.0f;
+      snprintf(cb, sizeof cb, "%+.1fmm @ %.1fC", tc, t10 / 10.0f);
+      col = COLOR_LIGHTBLUE;
+    }
+    sensorRow("Comp:", cb, col, 148);
+  }
 }
 
 // Sensor-Info RE-LOCK button, drawn to reflect the cure state so it's visible on
