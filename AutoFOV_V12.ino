@@ -1510,8 +1510,10 @@ uint32_t stackPulseCount = 0;            // shutter edges in the active sequence
 // stackBannerTick near drawMainScreen). Declared here because the trigger
 // watcher in loop() references them before those functions' definitions.
 unsigned long stackBannerMs     = 0;     // 0 = no banner; else millis() it went up
-uint32_t      stackBannerFrames = 0;
-uint32_t      stackBannerSec    = 0;
+char          bannerTitle[16]   = "";    // size-2 line (≤ 10 chars fits)
+char          bannerSub[40]     = "";    // size-1 line
+uint16_t      bannerColor       = 0;     // fill colour (border is drawn lighter)
+uint32_t      bannerHoldMs      = 10000; // auto-dismiss after this
 unsigned long blinkUntilMs      = 0;     // backlight blink window end (0 = idle)
 float    measuredPerStep = 0.0f;         // last measured sec/step (0 = none yet)
 uint32_t measuredTotalSec = 0;           // last measured total stack duration, s
@@ -5950,8 +5952,14 @@ void setup() {
       finalizeCalibration();   // re-fit + re-save "calib" under the NEW magic
       currentMode = MAIN;      // finalizeCalibration()→drawSuccessScreen() set CAL_SUCCESS
       Serial.printf("[calib] restored %d pts from NVS calibbak after reset\n", (int)b.n);
+      // 8/22/26: tell the user — this used to be a Serial line only.
+      { char sub[40]; snprintf(sub, sizeof sub, "%d pts from backup - check FOV", (int)b.n);
+        raiseMainBanner("CAL RESTORED", sub, COLOR_DARKBLUE, 20000); }
     } else if (bl > 0) {
       Serial.println("[calib] calibbak present but invalid — staying factory");
+      raiseMainBanner("CAL RESET", "backup invalid - factory FOV, recal", COLOR_MAROON, 30000);
+    } else {
+      raiseMainBanner("CAL RESET", "no backup - factory FOV, recalibrate", COLOR_MAROON, 30000);
     }
   }
 
@@ -6687,10 +6695,14 @@ void loop() {
       wifiNotifyStackComplete();
       // TFT: banner (MAIN) + 3 backlight blinks (any screen). registerActivity()
       // already woke/undimmed the screen on the last pulse.
-      stackBannerFrames = stackPulseCount;
-      stackBannerSec    = (totalActiveTime + 500) / 1000;
-      stackBannerMs     = millis(); if (!stackBannerMs) stackBannerMs = 1;
-      blinkUntilMs      = millis() + 900;
+      {
+        uint32_t sec = (totalActiveTime + 500) / 1000;
+        char sub[40];
+        snprintf(sub, sizeof sub, "%lu frames  %lu:%02lu", (unsigned long)stackPulseCount,
+                 (unsigned long)(sec / 60), (unsigned long)(sec % 60));
+        raiseMainBanner("STACK DONE", sub, COLOR_DARKGREEN, 10000);
+      }
+      blinkUntilMs = millis() + 900;
       // V12: ask vibTask to compute the aggregate suggested wait, then persist.
       vibStackDoneSeq.fetch_add(1, std::memory_order_relaxed);
       vibPrefsDirty = true; lastVibEditMs = millis();
@@ -6719,10 +6731,7 @@ void loop() {
       wifiNotifyStackAbort();   // V12.6: dashboard clears its live progress
     }
     isSequenceActive = false;
-    if (currentMode == MAIN) {
-      drawStackShotCount();          // isSequenceActive is false → clears the count
-      if (stackBannerMs) drawStackBanner();
-    }
+    if (currentMode == MAIN) drawStackShotCount();   // isSequenceActive is false → clears the count
   }
 
   static bool activelyTouching = false;
@@ -7607,17 +7616,26 @@ void drawStackShotCount() {              // MAIN only; caller checks the mode
   tft.print(b);
 }
 
-void drawStackBanner() {                 // MAIN only
-  tft.fillRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, COLOR_DARKGREEN);
-  tft.drawRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, COLOR_PUREGREEN);
+void drawStackBanner() {                 // MAIN only — draws whatever banner is raised
+  tft.fillRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, bannerColor);
+  tft.drawRoundRect(6, STACK_BANNER_Y, 228, STACK_BANNER_H, 6, TFT_WHITE);
   tft.setFont(); tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
-  tft.setCursor(120 - (10 * 12) / 2, STACK_BANNER_Y + 8); tft.print("STACK DONE");
-  char b[40];
-  snprintf(b, sizeof b, "%lu frames  %lu:%02lu", (unsigned long)stackBannerFrames,
-           (unsigned long)(stackBannerSec / 60), (unsigned long)(stackBannerSec % 60));
+  tft.setCursor(120 - (int)strlen(bannerTitle) * 6, STACK_BANNER_Y + 8); tft.print(bannerTitle);
   tft.setTextSize(1);
-  tft.setCursor(120 - (int)strlen(b) * 3, STACK_BANNER_Y + 32); tft.print(b);
+  tft.setCursor(120 - (int)strlen(bannerSub) * 3, STACK_BANNER_Y + 32); tft.print(bannerSub);
+}
+
+// Raise a main-screen notice: title (size 2, ≤10 chars), sub-line, colour,
+// hold time. Paints immediately when MAIN is up; otherwise drawMainScreen()
+// paints it on the next entry (so a boot-time notice lands on the first
+// main screen). 8/22/26.
+void raiseMainBanner(const char* title, const char* sub, uint16_t col, uint32_t holdMs) {
+  snprintf(bannerTitle, sizeof bannerTitle, "%s", title);
+  snprintf(bannerSub,   sizeof bannerSub,   "%s", sub);
+  bannerColor = col; bannerHoldMs = holdMs;
+  stackBannerMs = millis(); if (!stackBannerMs) stackBannerMs = 1;
+  if (currentMode == MAIN) drawStackBanner();
 }
 
 void dismissStackBanner() {              // repaint what the banner covered
@@ -7639,7 +7657,7 @@ void stackBannerTick() {                 // loop(), Core 1
       analogWrite(LITE_PIN, ((now / 150) & 1) ? currentBrightness : DIM_BRIGHTNESS);
     }
   }
-  if (stackBannerMs && now - stackBannerMs >= 10000) dismissStackBanner();
+  if (stackBannerMs && now - stackBannerMs >= bannerHoldMs) dismissStackBanner();
 }
 
 // Main-screen correction tags (8/22/26), one line under the cold/hot tag:
