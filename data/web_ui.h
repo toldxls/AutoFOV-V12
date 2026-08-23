@@ -4,7 +4,7 @@
 #include <pgmspace.h>
 
 #define BUILD_VERSION "12.6.6"
-#define BUILD_COMMIT  "a94b24a+"
+#define BUILD_COMMIT  "d6fe73e"
 #define BUILD_SLOC    29229
 #define BUILD_SKB     1600
 #define WEB_UI_HTML_GZ_TAG "e3cec51d"   // sha1 of the gzip blob — ETag for GET /
