@@ -2582,7 +2582,10 @@
           shows the temp term added to reach the main screen's DISTANCE. The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
           age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
           below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
-          IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL.
+          IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL. The
+          ring is saved to flash hourly and before every deliberate restart (OTA, reboot, WiFi
+          change), so an overnight soak survives the morning update &mdash; a dashed line marks each
+          boot (a crash loses at most the last hour; CLEAR wipes the saved copy too).
           <b>ZERO @ MAX RACK</b>: the sensor's zero point shifts every time it restarts (power cycle,
           reboot, RE-LOCK, sleep/wake) &mdash; zero once per session after the main screen says
           <i>hot TOF</i> (and ≥5&nbsp;min after a cold power-up), and after any of those; it is refused
@@ -2623,8 +2626,9 @@
         <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
           5-min trend · <b style="color:#9fe6cf;">level mm</b> (sensor frame: zeroed, <i>no</i> temp comp — the fit needs the raw drift) ·
           <b style="color:#eda100;">signal MCps (faint)</b> ·
-          <b style="color:#e87ba4;">temp °C (right scale)</b></div>
-        <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h"></canvas>
+          <b style="color:#e87ba4;">temp °C (right scale)</b> ·
+          <span style="color:#e7967a;">dashed = reboot</span> (the ring survives restarts)</div>
+        <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h — checkpointed hourly and before every deliberate restart, so it survives reboots; dashed line = boot"></canvas>
         <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         <canvas id="tofdbg-sweep" style="display:none; width:100%; height:96px; background:#061512;
                 border:1px solid #14302a; border-radius:4px; margin-top:4px;"
@@ -5537,7 +5541,7 @@
         }
     }
     function tofdbgReboot() {
-        if (!confirm('Reboot the AutoFOV now?\nRanging pauses ~5 s; the trend ring and event log restart.')) return;
+        if (!confirm('Reboot the AutoFOV now?\nRanging pauses ~5 s; the event log restarts (the 5-min trend is kept).')) return;
         sendCommand('reboot', 1);
         document.getElementById('tofdbg-io').innerText = 'rebooting…';
     }
@@ -5741,6 +5745,7 @@
         ctx.setTransform(2, 0, 0, 2, 0, 0);
         ctx.clearRect(0, 0, W, H);
         const padL = 34, padR = 8, padT = 8, padB = 14;
+        const nowT = (j.tnow !== undefined) ? j.tnow : j.now;   // trend clock (≤ 0 = before this boot)
         const t0 = rows[0][0], t1 = rows[rows.length - 1][0];
         const ds = rows.map(r => r[1] / 10);
         let dMin = Math.min(...ds), dMax = Math.max(...ds);
@@ -5752,10 +5757,26 @@
         ctx.fillText(dMax.toFixed(1), padL - 3, padT + 8);
         ctx.fillText(dMin.toFixed(1), padL - 3, H - padB);
         ctx.textAlign = 'left';
-        ctx.fillText('-' + ((j.now - t0) / 3600000).toFixed(1) + 'h', padL + 2, H - 3);
+        ctx.fillText('-' + ((nowT - t0) / 3600000).toFixed(1) + 'h', padL + 2, H - 3);
         ctx.textAlign = 'right'; ctx.fillText('now', W - padR, H - 3);
         ctx.strokeStyle = '#14302a';
         ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
+        // Boot seam: rows at ms ≤ 0 were carried over from the previous boot
+        // (LittleFS checkpoint). A dashed line marks the restart so a step at
+        // the seam is read as "the sensor restarted", not as drift.
+        if (t0 < 0 && t1 > 0) {
+            const xb = X(0);
+            ctx.save();
+            ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(231,150,122,0.7)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(xb, padT); ctx.lineTo(xb, H - padB); ctx.stroke();
+            ctx.restore();
+            ctx.fillStyle = '#e7967a';                 // label at the foot of the seam, clear of
+            if (xb < padL + 48) {                       // the axis labels and the right-scale temps
+                ctx.textAlign = 'left';  ctx.fillText('boot', xb + 2, H - padB - 3);
+            } else {
+                ctx.textAlign = 'right'; ctx.fillText('boot', xb - 2, H - padB - 3);
+            }
+        }
         // signal context (0..max, faint)
         const cMax = Math.max(1, ...rows.map(r => r[2]));
         ctx.strokeStyle = 'rgba(237,161,0,0.35)'; ctx.lineWidth = 1;

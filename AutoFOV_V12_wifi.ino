@@ -840,6 +840,7 @@ void wifiLoop() {
     // the queued response and FIN to the client at LAN latency.
     if (restartPendingMs && !otaInProgress && (millis() - restartPendingMs) > 800UL) {
         Serial.println("[WiFi] deferred restart firing");
+        tofTrendCheckpoint("restart");
 
         ESP.restart();
     }
@@ -876,6 +877,7 @@ void wifiLoop() {
             (uint32_t)(millis() - fallbackPortalMs) > FALLBACK_PORTAL_TIMEOUT_MS &&
             WiFi.softAPgetStationNum() == 0) {
             Serial.println("[WiFi] fallback portal idle — rebooting to retry saved WiFi");
+            tofTrendCheckpoint("portal-retry");
 
             ESP.restart();
         }
@@ -947,6 +949,7 @@ void wifiLoop() {
     // UX without buying reliability.
     if (otaRestartPendingMs && (millis() - otaRestartPendingMs) > 800UL) {
         Serial.println("[OTA] response flushed, restarting");
+        tofTrendCheckpoint("ota");
 
         ESP.restart();
     }
@@ -1888,13 +1891,14 @@ static void startFullServer() {
         // heap on the AsyncTCP task for every 60 s dashboard poll, against an
         // ~80 KB floor. Worst-case size is bounded by the ring depths: every
         // field at its widest decimal form —
-        //   header   {"now":4294967295,"heals":…,"count":…,"dropped":…,"events":[   ≤ 128
+        //   header   {"now":4294967295,"tnow":-9223372036854775808,"tres":4294967295,
+        //             "heals":…,"count":…,"dropped":…,"events":[                  ≤ 192
         //   event    {"ms":4294967295,"p":65535,"e":65535,"w":255,"a":65535,
         //             "sc":65535,"i":255,"t":[[-32768,255,65535]×4]},           ≤ 160
-        //   trend    [4294967295,65535,65535,65535,255,65535,-32768,-32768],     ≤ 56
-        // so 128 + 48×160 + 288×56 = 23,936 B. The seqlock reads are the same
+        //   trend    [-9223372036854775808,65535,65535,65535,255,65535,-32768,-32768], ≤ 66
+        // so 192 + 48×160 + 288×66 = 26,880 B. The seqlock reads are the same
         // as before (plain RAM, no I²C, no FreeRTOS objects — AsyncTCP-safe).
-        constexpr size_t CAP = 128 + (size_t)TOF_EVT_RING * 160 + (size_t)TOF_TREND_RING * 56;
+        constexpr size_t CAP = 192 + (size_t)TOF_EVT_RING * 160 + (size_t)TOF_TREND_RING * 66;
         char* buf = (char*)ps_malloc(CAP);
         if (!buf) buf = (char*)malloc(CAP);
         if (!buf) { req->send(503, "text/plain", "low heap - retry"); return; }
@@ -1909,8 +1913,13 @@ static void startFullServer() {
         };
 
         uint32_t cnt = tofTgtEvtCount.load(std::memory_order_acquire);
-        put("{\"now\":%lu,\"heals\":%lu,\"count\":%lu,\"dropped\":%lu,\"events\":[",
-            (unsigned long)millis(),
+        // "now" is millis() — the event ring's clock. "tnow" is the trend clock
+        // (int64 esp_timer ms; restored rows are ≤ 0 = before this boot) and
+        // "tres" the rows carried over the last reboot. They agree until
+        // millis() wraps at 49.7 days; the trend never does.
+        put("{\"now\":%lu,\"tnow\":%lld,\"tres\":%lu,\"heals\":%lu,\"count\":%lu,\"dropped\":%lu,\"events\":[",
+            (unsigned long)millis(), (long long)tofTrendNowMs(),
+            (unsigned long)tofTrendRestored.load(std::memory_order_relaxed),
             (unsigned long)tofSelfHealCount.load(std::memory_order_relaxed),
             (unsigned long)cnt,
             (unsigned long)tofTgtEvtDropped.load(std::memory_order_relaxed));
@@ -1953,7 +1962,7 @@ static void startFullServer() {
                 s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
             } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
             if (s1 != s2 || (s1 & 1)) continue;
-            put("%s[%lu,%u,%u,%u,%u,%u,%d,%d]", first ? "" : ",", (unsigned long)tp.ms,
+            put("%s[%lld,%u,%u,%u,%u,%u,%d,%d]", first ? "" : ",", (long long)tp.ms,
                 (unsigned)tp.emaT, (unsigned)tp.cps100, (unsigned)tp.amb100, (unsigned)tp.n,
                 (unsigned)tp.spads, (int)tp.dieT10, (int)tp.imuT10);
             first = false;
@@ -3106,6 +3115,7 @@ static void handleWifiCommand(const char* key, const char* val) {
             return;
         }
 
+        tofTrendCheckpoint("rollback");
         delay(200);
         ESP.restart();
 
@@ -3944,6 +3954,7 @@ void wifiForgetAndRestart() {
     wifiPrefs.clear();
     wifiPrefs.end();
     Serial.println("[WiFi] Credentials cleared — restarting into setup portal");
+    tofTrendCheckpoint("forget-wifi");
     delay(300);
     ESP.restart();
 }

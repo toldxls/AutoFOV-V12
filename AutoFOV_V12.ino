@@ -1226,7 +1226,8 @@ std::atomic<bool> tofTgtEvtClearReq{false};
 // calling it from more than one task races. Only wifiLoop() (Core 1) reads the
 // hardware; the JSON builders AND the trend writer below read this cache.
 std::atomic<uint32_t> gDieTempC10{0};
-struct TofTrendPt { uint32_t ms; uint16_t emaT; uint16_t cps100; uint16_t amb100;
+struct TofTrendPt { int64_t ms;   // trend clock (see tofTrendNowMs); ≤ 0 = before this boot
+                    uint16_t emaT; uint16_t cps100; uint16_t amb100;
                     uint16_t spads; uint8_t n; uint8_t pad;
                     int16_t dieT10;      // SoC die ×10 — load-correlated (WiFi/CPU)
                     int16_t imuT10; };   // LSM6DSOX ×10 — the TOF ambient proxy;
@@ -1263,6 +1264,117 @@ void tofRingsBegin() {
   tofTrend       = (TofTrendPt*)ringAlloc(sizeof(TofTrendPt) * TOF_TREND_RING, "tofTrend");
   vibSigAccum    = (uint32_t*)  ringAlloc(sizeof(uint32_t)   * VIB_FFT_BINS,   "vibSigAccum");
   vibSigBaseSnap = (float*)     ringAlloc(sizeof(float)      * VIB_FFT_BINS,   "vibSigBaseSnap");
+}
+
+// ── Trend checkpoint (V12.6.6): the 24 h ring survives reboots ──────────────
+// Every release reboot used to discard up to 24 h of (temp, level) trend — the
+// overnight soak that makes the mm/°C fit possible was gone by the morning OTA.
+// The ring is checkpointed to LittleFS once an hour (12 new points) and before
+// every deliberate restart (OTA, /save, forget-wifi, rollback, reboot command),
+// and reloaded at boot BEFORE sensorTask starts. Writes: ≤ 7 KB/h on a 256 KB
+// partition — wear is a non-issue (LittleFS levels across 64 blocks).
+//
+// Time base: trend rows carry an int64 ms clock = esp_timer (never wraps, unlike
+// millis() at 49.7 d). Restored rows are re-based to THIS boot: ms ≤ 0 means
+// "before boot", and the gap between the checkpoint and the new boot comes from
+// time(): the RTC keeps the system clock across warm resets (OTA, panic, WDT,
+// ESP.restart), so the downtime is known to ~1 s without waiting for SNTP. A
+// power cycle loses the clock → the gap is taken as 0 and the seam is simply a
+// compressed gap (the passive temp fit pairs temp with level and never reads
+// the clock, so the fit is unaffected either way). Rows older than 24 h are
+// dropped when the gap is known. /tofdbg reports "tres" = rows carried over.
+constexpr char     TOF_TREND_CKPT[]      = "/toftrend.bin";
+constexpr char     TOF_TREND_CKPT_TMP[]  = "/toftrend.tmp";
+constexpr uint32_t TOF_TREND_CKPT_MAGIC  = 0x31545254;    // 'TRT1'
+constexpr uint32_t TOF_TREND_CKPT_EVERY  = 12;            // points (× 5 min = 1 h)
+struct TofTrendCkptHdr { uint32_t magic; uint32_t rowSize; uint32_t n; uint32_t pad;
+                         int64_t saveUpMs; int64_t saveEpoch; };
+std::atomic<uint32_t> tofTrendRestored{0};   // rows carried over from the previous boot
+static uint32_t       tofTrendSavedCount = 0; // tofTrendCount at the last checkpoint
+inline int64_t tofTrendNowMs() { return esp_timer_get_time() / 1000; }
+static inline bool epochValid(int64_t e) { return e > 1600000000LL; }   // > Sep 2020
+
+// Core 1 only (loop / wifiLoop / dispatcher). Seqlock-reads the ring like the
+// /tofdbg handler; a torn slot is written with emaT = 0, which every consumer
+// already filters. Returns true when the file changed.
+bool tofTrendCheckpoint(const char* why) {
+  uint32_t cnt = tofTrendCount.load(std::memory_order_acquire);
+  if (cnt == tofTrendSavedCount) return false;              // nothing new
+  if (cnt == 0) {                                           // CLEAR → the file goes too
+    LittleFS.remove(TOF_TREND_CKPT);
+    tofTrendSavedCount = 0;
+    Serial.printf("[trend] checkpoint removed (%s)\n", why);
+    return true;
+  }
+  uint32_t n = min(cnt, (uint32_t)TOF_TREND_RING);
+  File f = LittleFS.open(TOF_TREND_CKPT_TMP, "w");
+  if (!f) { Serial.println("[trend] checkpoint open failed"); return false; }
+  TofTrendCkptHdr h;
+  h.magic = TOF_TREND_CKPT_MAGIC; h.rowSize = sizeof(TofTrendPt); h.n = n; h.pad = 0;
+  h.saveUpMs = tofTrendNowMs();
+  time_t ep = time(nullptr);
+  h.saveEpoch = epochValid((int64_t)ep) ? (int64_t)ep : 0;
+  bool ok = f.write((const uint8_t*)&h, sizeof h) == sizeof h;
+  for (uint32_t k = 0; ok && k < n; k++) {                  // oldest → newest
+    int idx = (int)((cnt - n + k) % TOF_TREND_RING);
+    TofTrendPt tp; uint32_t s1, s2; int tries = 0;
+    do {
+      s1 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
+      tp = tofTrend[idx];
+      s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
+    } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
+    if (s1 != s2 || (s1 & 1)) tp.emaT = 0;                  // torn → filtered by readers
+    ok = f.write((const uint8_t*)&tp, sizeof tp) == sizeof tp;
+  }
+  f.close();
+  if (!ok) { LittleFS.remove(TOF_TREND_CKPT_TMP); Serial.println("[trend] checkpoint write failed"); return false; }
+  LittleFS.remove(TOF_TREND_CKPT);                          // rename-over is not guaranteed on every FS build
+  if (!LittleFS.rename(TOF_TREND_CKPT_TMP, TOF_TREND_CKPT)) { Serial.println("[trend] checkpoint rename failed"); return false; }
+  tofTrendSavedCount = cnt;
+  Serial.printf("[trend] checkpoint %lu rows (%s)%s\n", (unsigned long)n, why, h.saveEpoch ? "" : " [no wall clock]");
+  return true;
+}
+
+// setup() only — after LittleFS is mounted (wifiSetup) and BEFORE sensorTask is
+// created, so the ring has a single writer. Uses the slot seqlocks anyway: the
+// HTTP server is already registered and /tofdbg may read concurrently.
+void tofTrendRestore() {
+  File f = LittleFS.open(TOF_TREND_CKPT, "r");
+  if (!f) return;
+  TofTrendCkptHdr h;
+  bool ok = f.read((uint8_t*)&h, sizeof h) == sizeof h &&
+            h.magic == TOF_TREND_CKPT_MAGIC && h.rowSize == sizeof(TofTrendPt) &&
+            h.n >= 1 && h.n <= (uint32_t)TOF_TREND_RING;
+  if (!ok) { f.close(); LittleFS.remove(TOF_TREND_CKPT); Serial.println("[trend] checkpoint rejected (format)"); return; }
+  int64_t now = tofTrendNowMs();
+  int64_t ep  = (int64_t)time(nullptr);
+  int64_t gap = 0; bool gapKnown = false;
+  if (epochValid(h.saveEpoch) && epochValid(ep)) {
+    gap = (ep - h.saveEpoch) * 1000 - now;                  // checkpoint → this boot, ms
+    if (gap < 0) gap = 0;                                   // 1 s epoch granularity
+    gapKnown = true;
+  }
+  const int64_t maxAge = (int64_t)TOF_TREND_RING * TOF_TREND_INTERVAL_MS + 5 * 60000LL;
+  uint32_t kept = 0, dropped = 0;
+  for (uint32_t k = 0; k < h.n; k++) {
+    TofTrendPt tp;
+    if (f.read((uint8_t*)&tp, sizeof tp) != sizeof tp) break;
+    tp.ms = tp.ms - h.saveUpMs - gap;                       // ≤ 0: before this boot
+    if (gapKnown && (now - tp.ms) > maxAge) { dropped++; continue; }
+    int slot = (int)(kept % TOF_TREND_RING);
+    uint32_t ss = tofTrendSlotSeq[slot].load(std::memory_order_relaxed);
+    tofTrendSlotSeq[slot].store(ss + 1, std::memory_order_release);
+    tofTrend[slot] = tp;
+    tofTrendSlotSeq[slot].store(ss + 2, std::memory_order_release);
+    kept++;
+  }
+  f.close();
+  tofTrendCount.store(kept, std::memory_order_release);
+  tofTrendSavedCount = kept;                                // unchanged ring = nothing to re-save
+  tofTrendRestored.store(kept, std::memory_order_release);
+  Serial.printf("[trend] restored %lu rows (%lu aged out), gap %s%lld s\n",
+                (unsigned long)kept, (unsigned long)dropped,
+                gapKnown ? "" : "unknown, assumed ", (long long)(gap / 1000));
 }
 
 // ── TOF session zero (V12.6, Option B+) ─────────────────────────────────────
@@ -4780,12 +4892,13 @@ void sensorTask(void *pvParameters) {
             // restart, not to keep drawing the pre-clear history. Same-task write
             // (sensorTask owns both rings); the /tofdbg reader just sees count 0.
             tofTrendCount.store(0, std::memory_order_release);
+            tofTrendRestored.store(0, std::memory_order_relaxed);   // carried-over rows are gone too
             lastTrendMs = 0;       // seed a fresh first point this pass
           }
           if (lastTrendMs == 0 || snap.ms - lastTrendMs >= TOF_TREND_INTERVAL_MS) {
             lastTrendMs = snap.ms;
             TofTrendPt tp;
-            tp.ms = snap.ms; tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
+            tp.ms = tofTrendNowMs(); tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
             tp.spads = snap.spads; tp.n = snap.n; tp.pad = 0;
             tp.dieT10 = (int16_t)(int32_t)gDieTempC10.load(std::memory_order_relaxed);
             uint32_t a10 = gAmbientTempC10.load(std::memory_order_relaxed);
@@ -5874,6 +5987,7 @@ void setup() {
   Serial.printf("[BOOT] WiFi init — free heap before: %u\n", ESP.getFreeHeap());
 
   wifiSetup();
+  tofTrendRestore();       // LittleFS is mounted now; sensorTask not yet created
   // mDNS is started by staConnectTask() after WL_CONNECTED — calling
   // MDNS.begin() here returned true but never registered anything because the
   // STA interface had no IP yet.
@@ -6399,6 +6513,15 @@ void loop() {
     if (nowMs - lastSnapMs > 5000) {
       lastSnapMs = nowMs;
       g_rtc.lastUptimeSec = nowMs / 1000;
+
+      // Trend checkpoint: hourly (12 new points), or at once after a CLEAR
+      // (count fell below the saved mark) so a reboot can't resurrect the
+      // pre-clear rows.
+      {
+        uint32_t tc = tofTrendCount.load(std::memory_order_acquire);
+        if (tc < tofTrendSavedCount || tc - tofTrendSavedCount >= TOF_TREND_CKPT_EVERY)
+          tofTrendCheckpoint(tc < tofTrendSavedCount ? "clear" : "hourly");
+      }
       g_rtc.lastMinHeap   = ESP.getMinFreeHeap() / 1024;
 
       // uxTaskGetStackHighWaterMark returns the min free stack in WORDS (×4 = B).
