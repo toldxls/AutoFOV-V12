@@ -6747,11 +6747,20 @@ void loop() {
         wifiPushTofSample(meanMm, sdMm, tofSampleCount);
       } else {
         // V12.6 session zero: mode 1 = SET HOME, mode 2 = ZERO. The sampled
-        // mean is in the CORRECTED frame (offset already applied at
-        // publication), so ZERO's increment form is exact: the drift since
-        // the last zero is (corrected reading at home) − (home reference).
+        // mean already has the zero offset applied at publication.
+        // V12.6.7: also fold in the temperature term so SET HOME and ZERO
+        // record/compare the SAME frame the display publishes (zero- AND
+        // temp-corrected). Without this the two features double-corrected the
+        // thermal drift — the zero cancelled it at the current temperature and
+        // temp comp then added coeff·(T−ref) again, so a zero at max rack read
+        // ~home+temp instead of home. Sampling in the corrected frame makes
+        // them compose: a zero pins the SHOWN distance to home, and the offset
+        // then carries only the temperature-independent restart jump. (coeff 0
+        // → tofTempCorrMm()==0, so this is a no-op until a temp cal exists —
+        // SET HOME should therefore be redone whenever temp comp is enabled.)
         uint8_t mode = tofSampleMode;
         tofSampleMode = 0;
+        meanMm -= tofTempCorrMm();
         uint32_t meanT = (uint32_t)lround(meanMm * 10.0f);
         auto tftVerdict = [&](bool ok, const char* msg) {   // TOF SENSOR screen echo
           snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "%s", msg);
