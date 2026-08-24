@@ -3,10 +3,10 @@
 #pragma once
 #include <pgmspace.h>
 
-#define BUILD_VERSION "12.6.8"
-#define BUILD_COMMIT  "d8e2735+"
-#define BUILD_SLOC    29245
-#define BUILD_SKB     1601
+#define BUILD_VERSION "12.6.9"
+#define BUILD_COMMIT  "3fbfd2a+"
+#define BUILD_SLOC    29255
+#define BUILD_SKB     1602
 #define WEB_UI_HTML_GZ_TAG "e3cec51d"   // sha1 of the gzip blob — ETag for GET /
 
 // 924339 bytes raw  ->  479658 bytes minified  ->  133606 bytes gzip

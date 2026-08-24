@@ -6765,10 +6765,20 @@ void loop() {
                           0.0f, "no valid range in the 2 s window");
           tftVerdict(false, "NO RANGE at target?");
         } else if (mode == 1) {
-          tofZeroHomeT.store(meanT, std::memory_order_relaxed);
+          // BUGFIX (12.6.9): the 2 s sample ran with the OLD offset applied at
+          // publication (meanT = raw − oldOff), but SET HOME clears the offset
+          // to 0. Storing meanT directly baked the old offset into home, so the
+          // very next ZERO read (offset now 0 → raw) landed |oldOff| away from
+          // home and tripped the >10 mm guard. Add the old offset back so home
+          // is recorded in the SAME offset-0 (raw) frame every later ZERO reads.
+          int32_t oldOff = tofZeroOffsetT.load(std::memory_order_relaxed);
+          int32_t homeRawT = (int32_t)meanT + oldOff;
+          if (homeRawT < 0) homeRawT = 0;
+          tofZeroHomeT.store((uint32_t)homeRawT, std::memory_order_relaxed);
           tofZeroOffsetT.store(0, std::memory_order_relaxed);
+          tofZeroStepAdjT.fetch_add(-oldOff, std::memory_order_acq_rel);   // offset→0; keep [L] quiet
           saveTofZeroPrefs();
-          wifiPushTofZero(1, 0.0f, meanMm, "home set");
+          wifiPushTofZero(1, 0.0f, (float)homeRawT / 10.0f, "home set");
           tftVerdict(true, "HOME SET");
         } else if (tofZeroHomeT.load(std::memory_order_relaxed) == 0) {
           wifiPushTofZero(0, tofZeroOffsetT.load(std::memory_order_relaxed) / 10.0f,
