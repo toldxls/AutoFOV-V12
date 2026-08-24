@@ -6747,20 +6747,13 @@ void loop() {
         wifiPushTofSample(meanMm, sdMm, tofSampleCount);
       } else {
         // V12.6 session zero: mode 1 = SET HOME, mode 2 = ZERO. The sampled
-        // mean already has the zero offset applied at publication.
-        // V12.6.7: also fold in the temperature term so SET HOME and ZERO
-        // record/compare the SAME frame the display publishes (zero- AND
-        // temp-corrected). Without this the two features double-corrected the
-        // thermal drift — the zero cancelled it at the current temperature and
-        // temp comp then added coeff·(T−ref) again, so a zero at max rack read
-        // ~home+temp instead of home. Sampling in the corrected frame makes
-        // them compose: a zero pins the SHOWN distance to home, and the offset
-        // then carries only the temperature-independent restart jump. (coeff 0
-        // → tofTempCorrMm()==0, so this is a no-op until a temp cal exists —
-        // SET HOME should therefore be redone whenever temp comp is enabled.)
+        // mean is zero-corrected (offset applied at publication) but temp-RAW,
+        // so ZERO's increment is the raw drift since home: (raw at max rack) −
+        // home. The temperature term is handled by re-anchoring the temp-comp
+        // reference to NOW at each zero (see below), which makes the two
+        // features compose instead of double-correcting the thermal drift.
         uint8_t mode = tofSampleMode;
         tofSampleMode = 0;
-        meanMm -= tofTempCorrMm();
         uint32_t meanT = (uint32_t)lround(meanMm * 10.0f);
         auto tftVerdict = [&](bool ok, const char* msg) {   // TOF SENSOR screen echo
           snprintf(tofZeroUiMsg, sizeof tofZeroUiMsg, "%s", msg);
@@ -6794,6 +6787,20 @@ void loop() {
           tofZeroOffsetT.store(newOff, std::memory_order_relaxed);
           tofZeroStepAdjT.fetch_add(newOff - oldOff, std::memory_order_acq_rel);   // keep [L] quiet
           saveTofZeroPrefs();
+          // V12.6.7: zero-anchored temperature reference. The zero re-establishes
+          // absolute distance at THIS temperature, so the temp-comp reference
+          // belongs here too — set tofTempRef = the current ambient. Then
+          // tofTempCorrMm() is 0 at the moment of the zero (the shown distance
+          // is pinned to home, no residual thermal term fighting the zero) and
+          // grows only as the room drifts away from where you zeroed. This
+          // composes with the existing (temp-RAW) home — no re-home needed. Only
+          // when a coefficient is live (temp comp on); the dashboard owns the
+          // slope and keeps this ref sticky, so the two do not fight.
+          uint32_t a10 = gAmbientTempC10.load(std::memory_order_relaxed);
+          if (tofTempCoeff != 0.0f && a10 > 0 && a10 < 600) {
+            tofTempRef = (float)a10 / 10.0f;
+            saveTofComp();
+          }
           wifiPushTofZero(1, newOff / 10.0f, meanMm, "zeroed");
           char m[40]; snprintf(m, sizeof m, "ZEROED  (%+.1f mm)", newOff / 10.0f);
           tftVerdict(true, m);
