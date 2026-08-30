@@ -660,6 +660,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         buildFullStateJson(out, /*includeCalGraph=*/true);
         client->text(out);
         Serial.printf("[WS] full-state push: %u bytes\n", out.length());
+        wsLiveAdd(client->id());         // Core-1 fan-out sees it from here on
 
 
     } else if (type == WS_EVT_DATA) {
@@ -707,6 +708,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 
     } else if (type == WS_EVT_DISCONNECT) {
         Serial.printf("[WS] client #%u disconnected\n", client->id());
+        wsLiveRemove(client->id());      // before the object is torn down
 
         wsServer.cleanupClients();
     } else if (type == WS_EVT_ERROR) {
@@ -803,19 +805,50 @@ void wifiSetup() {
 // client that can't take a frame, and CLOSE a client whose queue has been
 // full for WS_STALL_CLOSE_MS: a live browser drains its queue in
 // milliseconds; only a dead peer stays full for seconds.
+//
+// Fan-out is BY ID, never by walking wsServer.getClients(): that list is
+// mutated on the AsyncTCP task (Core 0) — a dropped socket erases and
+// destroys its AsyncWebSocketClient under the library's private
+// _ws_clients_lock — while loop() (Core 1) has no way to hold that lock.
+// Iterating the raw list from Core 1 was a use-after-free that panicked
+// loopTask inside the destroyed client's _queue_lock (12.6.9, 5.3 h uptime:
+// xQueueTakeMutexRecursive(NULL) assert). wsServer.text(id)/binary(id)/
+// availableForWrite(id)/close(id) each take _ws_clients_lock for the lookup
+// AND the enqueue, and a stale id just returns false.
 static constexpr uint32_t WS_STALL_CLOSE_MS = 5000;
 struct WsStallEntry { uint32_t id; uint32_t sinceMs; };   // id 0 = free slot
 static WsStallEntry wsStalls[8] = {};   // DEFAULT_MAX_WS_CLIENTS on ESP32
 
+// Live client ids. Written by onWsEvent (CONNECT/DISCONNECT, AsyncTCP task),
+// read by the Core-1 pushes. 0 = free slot. CAS so a DISCONNECT that runs
+// from a Core-1 close path can't race a Core-0 CONNECT for the same slot.
+static std::atomic<uint32_t> wsLiveIds[8];
+static void wsLiveAdd(uint32_t id) {
+    for (auto& s : wsLiveIds) { uint32_t z = 0; if (s.compare_exchange_strong(z, id)) return; }
+    Serial.printf("[WS] live-id table full — client #%u gets no telemetry\n", (unsigned)id);
+}
+static void wsLiveRemove(uint32_t id) {
+    for (auto& s : wsLiveIds) { uint32_t v = id; s.compare_exchange_strong(v, 0); }
+}
+static bool wsLiveHas(uint32_t id) {
+    for (auto& s : wsLiveIds) if (s.load(std::memory_order_acquire) == id) return true;
+    return false;
+}
+
 static void wsStallClear(uint32_t id) {
     for (auto& s : wsStalls) if (s.id == id) s.id = 0;
 }
-// True when this client can take another frame. Tracks how long a full-queue
-// client has been stuck and closes it once it crosses the threshold.
-static bool wsClientReady(AsyncWebSocketClient& c, uint32_t now) {
-    if (c.status() != WS_CONNECTED) return false;
-    const uint32_t id = c.id();
-    if (!c.queueIsFull()) { wsStallClear(id); return true; }
+// Drop stall entries for clients that went away on their own (a stalled peer
+// that finally FINs before the 5 s close) so the 8 slots can't silt up.
+static void wsStallPrune() {
+    for (auto& s : wsStalls) if (s.id && !wsLiveHas(s.id)) s.id = 0;
+}
+// True when client `id` can take another frame. Tracks how long a full-queue
+// client has been stuck and closes it once it crosses the threshold. An id
+// that has already gone (availableForWrite → true for an unknown id) reads as
+// ready; the following text(id)/binary(id) then simply returns false.
+static bool wsClientReady(uint32_t id, uint32_t now) {
+    if (wsServer.availableForWrite(id)) { wsStallClear(id); return true; }
     WsStallEntry* slot = nullptr;
     for (auto& s : wsStalls) { if (s.id == id) { slot = &s; break; } }
     if (!slot) {
@@ -827,7 +860,7 @@ static bool wsClientReady(AsyncWebSocketClient& c, uint32_t now) {
         Serial.printf("[WS] client #%u stalled %us — closing\n",
                       (unsigned)id, (unsigned)(WS_STALL_CLOSE_MS / 1000));
         slot->id = 0;
-        c.close();                       // frees its queue; cleanup runs on the event
+        wsServer.close(id);              // frees its queue; cleanup runs on the event
     }
     return false;
 }
@@ -1047,25 +1080,28 @@ void wifiLoop() {
         // MEM INFO's minMaxAllocKB watches). Now: one stack snprintf, one
         // shared vector, zero copies per extra client. Server→client frames
         // are unmasked, so the shared bytes are never mutated in the queue.
+        wsStallPrune();
         AsyncWebSocketSharedBuffer sb;
-        for (auto& c : wsServer.getClients()) {
-            if (!wsClientReady(c, now)) continue;
+        for (auto& slot : wsLiveIds) {
+            const uint32_t id = slot.load(std::memory_order_acquire);
+            if (!id || !wsClientReady(id, now)) continue;
             if (!sb) {
                 char frame[512];
                 size_t n = buildFastTelemFrame(frame, sizeof frame);
                 if (!n) break;                                   // truncated — drop this frame
                 sb = std::make_shared<std::vector<uint8_t>>(frame, frame + n);
             }
-            c.text(sb);
+            wsServer.text(id, sb);
         }
     }
     if (now - lastSlowTelemMs >= SLOW_TELEM_MS) {
         lastSlowTelemMs = now;
         String out; bool built = false;
-        for (auto& c : wsServer.getClients()) {
-            if (!wsClientReady(c, now)) continue;
+        for (auto& slot : wsLiveIds) {
+            const uint32_t id = slot.load(std::memory_order_acquire);
+            if (!id || !wsClientReady(id, now)) continue;
             if (!built) { buildSlowTelemJson(out); built = true; }
-            c.text(out);
+            wsServer.text(id, out);
         }
     }
 
@@ -3700,10 +3736,11 @@ static void pushVibSpectrumBinary() {
     // copy per client).
     const uint32_t now = millis();
     AsyncWebSocketSharedBuffer sb;
-    for (auto& c : wsServer.getClients()) {
-        if (!wsClientReady(c, now)) continue;
+    for (auto& slot : wsLiveIds) {
+        const uint32_t id = slot.load(std::memory_order_acquire);
+        if (!id || !wsClientReady(id, now)) continue;
         if (!sb) sb = std::make_shared<std::vector<uint8_t>>(buf, buf + FRAME);
-        c.binary(sb);
+        wsServer.binary(id, sb);
     }
 }
 
