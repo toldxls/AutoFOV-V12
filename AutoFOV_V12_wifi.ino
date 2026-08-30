@@ -1802,6 +1802,21 @@ static void startFullServer() {
             req->send(resp);
             return;
         }
+        // Low-heap gate. A burst of page loads (several tabs refreshed at once)
+        // costs ~12 KB of INTERNAL heap per in-flight connection in lwIP send/
+        // receive buffers plus AsyncTCP's queued rx pbufs — 8/30/26 stress test
+        // took free heap to 1 KB and starved every live WebSocket. Refuse the
+        // 130 KB stream while the heap is that thin; the 304 path above stays
+        // open (it's a few hundred bytes) and the browser retries on F5.
+        constexpr size_t kMinHeapForPage = 32 * 1024;
+        if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinHeapForPage) {
+            AsyncWebServerResponse* resp = req->beginResponse(503, "text/plain",
+                "AutoFOV: low heap - wait a moment and reload");
+            resp->addHeader("Retry-After", "2");
+            resp->addHeader("Cache-Control", "no-store");
+            req->send(resp);
+            return;
+        }
         AsyncWebServerResponse* resp = req->beginResponse_P(
             200, "text/html", WEB_UI_HTML_GZ, WEB_UI_HTML_GZ_LEN);
         resp->addHeader("Content-Encoding", "gzip");
