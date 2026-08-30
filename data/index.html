@@ -3302,6 +3302,13 @@
         background:rgba(6,18,15,0.88); border:1px solid #1f3a33; border-radius:4px;
         padding:6px 10px; font-size:11px; line-height:1.7; cursor:move;
         touch-action:none; user-select:none; white-space:nowrap; }
+      #mtf-legend .lgrow { cursor:pointer; }
+      #mtf-legend .lgrow:hover { filter:brightness(1.35); }
+      #mtf-legend .lgrow.lgoff { opacity:0.32; }
+      #mtf-save { position:absolute; top:10px; left:44px; z-index:5; cursor:pointer;
+        background:rgba(26,60,58,0.85); border:1px solid #2a5e58; border-radius:5px;
+        padding:8px 14px; color:#9fe6cf; font-size:12px; font-weight:bold; user-select:none; }
+      #mtf-save:hover { background:#12362b; }
       @media (max-width:760px) {
         #mtf-body { flex-direction:column; overflow-y:auto; }
         #mtf-left { flex:0 0 auto; overflow:visible; }
@@ -3436,7 +3443,7 @@
           <div class="mtf-inp">
             <span>Grp</span><input id="mtf-group" type="number" min="0" max="9" value="4" style="width:44px;">
             <span>Elem</span><input id="mtf-elem" type="number" min="1" max="6" value="2" style="width:44px;">
-            <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0.05" max="0.95" value="0.29"
+            <span>eff&nbsp;NA</span><input id="mtf-na" type="number" step="0.01" min="0" max="0.95" value="0.29"
                    onchange="saveEffNA(parseFloat(this.value))" style="width:56px;">
           </div>
           <div id="mtf-drop" onclick="document.getElementById('mtf-file').click()">
@@ -3462,6 +3469,7 @@
             <canvas id="mtf-plot" width="220" height="150"></canvas>
             <div id="mtf-legend"></div>
             <div id="mtf-units" onclick="mtfToggleUnits()" title="Toggle x-axis: lp/mm &harr; µm (min resolvable separation = 1000/f, the Rayleigh-style figure objective datasheets quote)">lp/mm</div>
+            <div id="mtf-save" onclick="mtfSavePng()" title="Download the plot as a shareable PNG card (summary header + curves)">SAVE PNG</div>
           </div>
         </div>
       </div>
@@ -10992,11 +11000,43 @@
     // analysis (JS port of the validated slanted-edge prototype) + the MTF curve
     // plot land next.  ROI coords are in preview-canvas pixels.
     let _mtfGen=0, _mtfImg=null, _mtfDropBound=false, _mtfRoi={x:0,y:0,w:0,h:0}, _mtfFit=null, _mtfLast=null;
-    let _mtfUnits='lpmm';                    // x-axis units: 'lpmm' | 'um' (500/f = min resolvable separation)
+    let _mtfUnits='lpmm';
+    let _mtfVis={meas:true,obj:true,eff:true,eq:true};   // legend click-toggles                    // x-axis units: 'lpmm' | 'um' (500/f = min resolvable separation)
     let _mtfFiles=[], _mtfSel=-1, _mtfBestIdx=-1, _mtfHeatOn=true;
     function mtfToggleUnits(){ _mtfUnits=(_mtfUnits==='lpmm')?'um':'lpmm';
         document.getElementById('mtf-units').textContent=(_mtfUnits==='lpmm')?'lp/mm':'µm';
         if(_mtfLast) _mtfDrawPlot(_mtfLast); }
+    function mtfSavePng(){                   // export the plot as a shareable PNG card
+        const L=_mtfLast; if(!L) return;
+        const src=document.getElementById('mtf-plot');
+        if(!src.width||!src.height) return;
+        const hS=src.height/300;             // the design-unit scale the plot drew with
+        const head=Math.round(52*hS);
+        const cv=document.createElement('canvas'); cv.width=src.width; cv.height=src.height+head;
+        const ctx=cv.getContext('2d');
+        ctx.fillStyle='#0a1512'; ctx.fillRect(0,0,cv.width,cv.height);
+        ctx.textAlign='left'; ctx.textBaseline='middle';
+        ctx.fillStyle='#9fe6cf'; ctx.font='bold '+Math.round(13*hS)+'px system-ui,sans-serif';
+        ctx.fillText('MTF50 '+(isFinite(L.f50)?Math.round(L.f50)+' lp/mm':'\u2014')
+            +' \u00b7 MTF10 '+(isFinite(L.f10)?Math.round(L.f10)+' lp/mm':'\u2014')
+            +(isFinite(L.naEq)?' \u00b7 equiv NA '+L.naEq.toFixed(2):''), Math.round(10*hS), Math.round(17*hS));
+        ctx.font=Math.round(10*hS)+'px system-ui,sans-serif';
+        let x=Math.round(10*hS); const y2=Math.round(38*hS);
+        const seg=(txt,col)=>{ ctx.fillStyle=col; ctx.fillText(txt,x,y2); x+=ctx.measureText(txt).width+12*hS; };
+        seg(L.dir+' \u00b7 '+(L.umpx>0?L.umpx.toFixed(4)+' \u00b5m/px \u00b7 ':'')+new Date().toISOString().slice(0,10),'#8aa');
+        if(_mtfVis.meas) seg('\u25AC measured','#ff6a6a');
+        if(_mtfVis.obj)  seg('\u2504 '+L.objName+' NA '+L.objNA,'#4da6ff');
+        if(L.NA>0&&_mtfVis.eff&&Math.abs(L.NA-L.objNA)>0.001) seg('\u2504 eff '+L.NA,'#999');
+        if(isFinite(L.naEq)&&_mtfVis.eq) seg('\u2504 equiv '+L.naEq.toFixed(2),'#59c9a5');
+        ctx.drawImage(src,0,head);
+        cv.toBlob(b=>{ if(!b) return;
+            const a=document.createElement('a');
+            a.href=URL.createObjectURL(b);
+            a.download='mtf_'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.png';
+            document.body.appendChild(a); a.click();
+            setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+        },'image/png');
+    }
     const _MTF_LUT=(()=>{ const t=new Float64Array(256); for(let i=0;i<256;i++){ const v=i/255; t[i]=v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); } return t; })();
     function openMtf(){
         const m=document.getElementById('mtf');
@@ -11496,14 +11536,20 @@
         const lg=document.getElementById('mtf-legend'), wrap=document.getElementById('mtf-plotwrap');
         let drag=null;
         lg.addEventListener('pointerdown', e=>{ e.preventDefault(); lg.setPointerCapture(e.pointerId);
-            const r=lg.getBoundingClientRect(); drag={dx:e.clientX-r.left, dy:e.clientY-r.top}; });
+            const r=lg.getBoundingClientRect();
+            drag={dx:e.clientX-r.left, dy:e.clientY-r.top, x0:e.clientX, y0:e.clientY, moved:false,
+                  row:e.target.closest?e.target.closest('.lgrow'):null}; });
         lg.addEventListener('pointermove', e=>{ if(!drag) return;
+            if(!drag.moved && Math.abs(e.clientX-drag.x0)+Math.abs(e.clientY-drag.y0)<=6) return;
+            drag.moved=true;                     // a click (<6 px) never jiggles the box
             const wr=wrap.getBoundingClientRect();
             let x=e.clientX-wr.left-drag.dx, y=e.clientY-wr.top-drag.dy;
             x=Math.max(0,Math.min(x,wr.width-lg.offsetWidth));
             y=Math.max(0,Math.min(y,wr.height-lg.offsetHeight));
             lg.style.left=x+'px'; lg.style.top=y+'px'; lg.style.right='auto'; });
-        lg.addEventListener('pointerup', ()=>drag=null);
+        lg.addEventListener('pointerup', ()=>{ if(drag&&!drag.moved&&drag.row&&_mtfLast){
+                const k=drag.row.dataset.k; _mtfVis[k]=!_mtfVis[k]; _mtfDrawPlot(_mtfLast); }
+            drag=null; });
         lg.addEventListener('pointercancel', ()=>drag=null);
     }
     // ---- minimal baseline TIFF decoder (strips; none/LZW/PackBits; 8/16-bit;
@@ -11895,7 +11941,12 @@
         const freqs=new Float64Array(kmax+1), mtf=new Float64Array(kmax+1);
         for(let kk=0;kk<=kmax;kk++){ let re=0,im=0; const wk=-2*Math.PI*kk/nb;
             for(let i=0;i<nb;i++){ const ph=wk*i; re+=lsf[i]*Math.cos(ph); im+=lsf[i]*Math.sin(ph); }
-            mtf[kk]=Math.hypot(re,im); freqs[kk]=kk/(nb*binw); }
+            // fir2fix (ISO 12233): the 3-tap central-difference derivative rolls off by
+            // sin(w)/w vs an ideal derivative (~10% low at 0.5 cy/px with 4x binning) —
+            // divide it back out. kk=0 is the DC normaliser (correction = 1); the clamp
+            // only guards a pathological binw from dividing by ~0.
+            const wd=2*Math.PI*kk/nb, dcor=kk>0?Math.max(Math.sin(wd)/wd,0.15):1;
+            mtf[kk]=Math.hypot(re,im)/dcor; freqs[kk]=kk/(nb*binw); }
         const m0=mtf[0]||1; for(let kk=0;kk<=kmax;kk++) mtf[kk]/=m0;
         return {freqs,mtf,angle,rise};
     }
@@ -11946,12 +11997,24 @@
             let s=0; for(const L of list) s+=_mtfInterp(L.freqs,L.mtf,f); mtf[i]=s/list.length; }
         return {freqs,mtf,angle,rise};
     }
+    // Clipped-pixel tally for the exposure warning (ISO 12233 wants both edge
+    // plateaus inside the linear range — a plateau pinned at 0/255 cuts the edge
+    // transition off and the measurement reads sharper than the optics). Counted
+    // only on full-res grabs: the canvas downscale of the locate pass averages
+    // clipped pixels away and would under-count. Reset at each mtfMeasure().
+    let _mtfClipHi=0,_mtfClipLo=0,_mtfClipN=0;
     function _mtfGrabLin(gx,gy,gw,gh,ow,oh){ // linear-luma patch from the dropped image
         ow=ow||gw; oh=oh||gh;                // optional downscale (locate pass on huge boxes)
         const cv=document.createElement('canvas'); cv.width=ow; cv.height=oh;
         const c=cv.getContext('2d',{willReadFrequently:true}); c.drawImage(_mtfImg,gx,gy,gw,gh,0,0,ow,oh);
         const d=c.getImageData(0,0,ow,oh).data, out=new Float64Array(ow*oh);
-        for(let i=0,p=0;i<ow*oh;i++,p+=4) out[i]=0.2126*_MTF_LUT[d[p]]+0.7152*_MTF_LUT[d[p+1]]+0.0722*_MTF_LUT[d[p+2]];
+        const full=(ow===gw&&oh===gh);
+        for(let i=0,p=0;i<ow*oh;i++,p+=4){
+            const r=d[p],g=d[p+1],b=d[p+2];
+            out[i]=0.2126*_MTF_LUT[r]+0.7152*_MTF_LUT[g]+0.0722*_MTF_LUT[b];
+            if(full){ if(r>=254||g>=254||b>=254) _mtfClipHi++; else if(r<=1&&g<=1&&b<=1) _mtfClipLo++; }
+        }
+        if(full) _mtfClipN+=ow*oh;
         return out;
     }
     function _mtfTranspose(a,w,h){
@@ -11994,39 +12057,47 @@
             ctx.setLineDash([4*S,3*S]); ctx.beginPath();
             for(let i=0;i<=80;i++){ const f=fmax*i/80, x=toX(f), y=toY(_mtfDiff(f,NAv).mtf); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
             ctx.stroke(); ctx.setLineDash([]); };
-        ideal(L.objNA,'#4da6ff');
-        const showEff=Math.abs(L.NA-L.objNA)>0.001;
-        if(showEff) ideal(L.NA,'#999');
-        if(isFinite(L.naEq)) ideal(L.naEq,'#59c9a5');
+        if(_mtfVis.obj) ideal(L.objNA,'#4da6ff');
+        const showEff=L.NA>0 && Math.abs(L.NA-L.objNA)>0.001;
+        if(showEff&&_mtfVis.eff) ideal(L.NA,'#999');
+        if(isFinite(L.naEq)&&_mtfVis.eq) ideal(L.naEq,'#59c9a5');
         // measured
+        if(_mtfVis.meas){
         ctx.strokeStyle='#ff6a6a'; ctx.lineWidth=Math.max(1.4,1.8*S); ctx.beginPath(); let started=false;
         for(let i=0;i<L.mtf.length;i++){ const f=L.freqs[i]/L.umpx*1000; if(f>fmax)break; const x=toX(f),y=toY(L.mtf[i]); started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true); } ctx.stroke();
+        }
         // markers on the measured curve: MTF50, MTF10 (practical limit), MTF5 (~eye extinction)
         const mark=(f,lvl,col,label)=>{
             if(!isFinite(f)||f>fmax) return;
             const x=toX(f), y=toY(lvl);
             ctx.strokeStyle=col; ctx.lineWidth=1;
-            ctx.setLineDash([2*S,2*S]); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,MT+ph); ctx.stroke(); ctx.setLineDash([]);
+            ctx.setLineDash([2*S,2*S]);
+            ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,MT+ph); ctx.stroke();   // drop to the x-axis
+            ctx.beginPath(); ctx.moveTo(ML,y); ctx.lineTo(x,y); ctx.stroke();      // guide left to the y-axis
+            ctx.setLineDash([]);
             ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,2.6*S,0,2*Math.PI); ctx.fill();
             ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='left'; ctx.textBaseline='bottom';
-            const tw=ctx.measureText(label).width, lx=(x+4*S+tw>ML+pw)?x-4*S-tw:x+4*S;
-            ctx.fillText(label,lx,y-3*S);
+            ctx.fillText(label,ML+4*S,y-2*S);                                      // label rides the guide at the axis, clear of the curves
+        
         };
         const fu=f=>_mtfUnits==='um'?(1000/f).toFixed(2)+'µm':Math.round(f);   // 1000/f = line-pair period ≈ Rayleigh separation (datasheet convention)
+        if(_mtfVis.meas){
         mark(L.f50,0.5,'#ff6a6a','MTF50 '+fu(L.f50));
         mark(L.f10,0.1,'#ffb347','MTF10 '+fu(L.f10));
         mark(L.f05,0.05,'#d9d9a0','MTF5 (eye) '+(isFinite(L.f05)?fu(L.f05):''));
+        }
         ctx.fillStyle='#8aa'; ctx.font=Math.round(9*S)+'px system-ui,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
         ctx.fillText('1',ML-3*S,toY(1)); ctx.fillText('.5',ML-3*S,toY(0.5)); ctx.fillText('0',ML-3*S,toY(0.02));
         // diffraction cutoff at the right edge
         ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillStyle='#4da6ff';
         ctx.fillText(_mtfUnits==='um'?(1000/fmax).toFixed(2)+' µm':Math.round(fmax)+' lp/mm',ML+pw,MT+ph+12*S);
         // HTML legend (draggable — see _mtfBindLegend; defaults to upper right)
+        const lgRow=(k,col,html)=>'<div class="lgrow'+(_mtfVis[k]?'':' lgoff')+'" data-k="'+k+'" style="color:'+col+';" title="click to show/hide">'+html+'</div>';
         document.getElementById('mtf-legend').innerHTML=
-            '<div style="color:#ff6a6a;">&#9644; measured</div>'+
-            '<div style="color:#4da6ff;">&#9476; ideal '+L.objName+' NA '+L.objNA+'</div>'+
-            (showEff?'<div style="color:#999;">&#9476; eff NA '+L.NA+'</div>':'')+
-            (isFinite(L.naEq)?'<div style="color:#59c9a5;">&#9476; equiv NA '+L.naEq.toFixed(2)+' (fit)</div>':'')+
+            lgRow('meas','#ff6a6a','&#9644; measured')+
+            lgRow('obj','#4da6ff','&#9476; ideal '+L.objName+' NA '+L.objNA)+
+            (showEff?lgRow('eff','#999','&#9476; eff NA '+L.NA):'')+
+            (isFinite(L.naEq)?lgRow('eq','#59c9a5','&#9476; equiv NA '+L.naEq.toFixed(2)+' (fit)'):'')+
             '<div style="color:#ffb347;">&#9679; MTF10 = practical limit</div>'+
             '<div style="color:#d9d9a0;">&#9679; MTF5 &asymp; eye extinction</div>';
     }
@@ -12035,8 +12106,9 @@
         if(!_mtfImg||!_mtfFit){ res.style.color='#ff6a6a'; res.textContent='Drop a shot first.'; return; }
         const G=parseInt(document.getElementById('mtf-group').value),
               E=parseInt(document.getElementById('mtf-elem').value),
-              NA=parseFloat(document.getElementById('mtf-na').value)||0.29;
-        saveEffNA(NA);                       // typed here, remembered for FOCUS and next session
+              naRaw=parseFloat(document.getElementById('mtf-na').value),
+              NA=(naRaw===0)?0:(naRaw||0.29);   // explicit 0 = hide the eff-NA ideal; blank falls back
+        saveEffNA(NA);                       // typed here, remembered for FOCUS and next session (no-op for 0)
         if(!(G>=0&&G<=9)||!(E>=1&&E<=6)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
         const lpmmKnown=Math.pow(2, G+(E-1)/6);
         res.style.color='var(--text-primary)'; res.textContent='Measuring…'; await new Promise(r=>setTimeout(r,0));
@@ -12053,6 +12125,7 @@
         // full-frame drop would otherwise allocate two ~360MB Float64 planes)
         let k=1; if(sw*sh>2.4e6) k=Math.ceil(Math.sqrt(sw*sh/2.4e6));
         const dw=Math.max(12,Math.floor(sw/k)), dh=Math.max(12,Math.floor(sh/k));
+        _mtfClipHi=_mtfClipLo=_mtfClipN=0;   // per-measure clipped-pixel tally
         let roi=_mtfGrabLin(sx,sy,sw,sh,dw,dh);
         let ehx=0,ehy=0;
         for(let y=0;y<dh;y++){ const ro=y*dw; for(let x=0;x<dw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
@@ -12142,7 +12215,19 @@
                 if(n2>=5 && s2/n2<bestE){ bestE=s2/n2; naEq=na; }
             }
         }
-        const warn=((isFinite(f10)&&f10>objCutoff)
+        // exposure sanity: >5% of analyzed pixels pinned at 0/255 = a real clipped
+        // plateau (not stray outliers) — the edge transition was cut off, so the
+        // numbers are optimistic.
+        const clipHiPct=_mtfClipN?100*_mtfClipHi/_mtfClipN:0,
+              clipLoPct=_mtfClipN?100*_mtfClipLo/_mtfClipN:0;
+        const clipWarn=(clipHiPct>5||clipLoPct>5)
+            ? '<br><span style="color:#ffb347;">&#9888; clipped exposure — '+
+              (clipHiPct>5?clipHiPct.toFixed(0)+'% of ROI blown to white':'')+
+              (clipHiPct>5&&clipLoPct>5?', ':'')+
+              (clipLoPct>5?clipLoPct.toFixed(0)+'% crushed to black':'')+
+              ' — a clipped plateau fakes a sharper edge; re-expose so both sides stay inside 2&ndash;253</span>'
+            : '';
+        const warn=clipWarn+((isFinite(f10)&&f10>objCutoff)
             ? '<br><span style="color:#ffb347;">&#9888; MTF10 exceeds the '+objName+' NA-'+objNA+
               ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '')+
             (pitch>0 ? '' : '<br><span style="color:#ffb347;">&#9888; scale unavailable — needs &ge;2 clean,'+
@@ -12150,7 +12235,7 @@
         _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff,naEq};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
-            '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal'+
+            '<span style="font-size:10px;color:var(--text-disabled);">('+(NA>0?(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal':'no eff NA')+
             (isFinite(naEq)?' · <b style="color:#59c9a5;">equiv NA '+naEq.toFixed(2)+'</b>':'')+')<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · min sep ~'+(isFinite(f10)?(1000/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
