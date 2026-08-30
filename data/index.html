@@ -1521,7 +1521,7 @@
                 <div id="diag-faults" class="gfx-text" style="right:15px; top:116px; color:var(--text-primary); font-size:11px;">—</div>
                 <div class="gfx-text" style="left:15px; top:134px; color:var(--text-disabled);"
                      title="Program counter + task of the LAST panic, from the flash coredump.">Last crash:</div>
-                <div id="diag-crash" class="gfx-text" style="right:15px; top:134px; color:var(--text-disabled); font-size:11px;">—</div>
+                <div id="diag-crash" class="gfx-text" style="right:15px; top:135px; color:var(--text-disabled); font-size:10px;">—</div>
 
                 <div style="position:absolute; left:10px; top:152px; width:220px; height:1px; background:#333;"></div>
                 <div class="gfx-text" style="left:15px; top:158px; color:#888; font-size:10px;">RECENT RESETS (newest first)</div>
@@ -9460,13 +9460,20 @@
         // crashStale = the dump is from a DIFFERENT build, so the PC won't decode
         // against the current ELF; flag it rather than mislead.
         if (g('diag-crash')) {
+            // 240 px screen: "(old build)" beside the label overflowed into it, so
+            // the stale flag is a trailing * (amber) and the explanation lives in
+            // the tooltip. COPY still spells it out in full.
             if (s.crashPc) {
                 g('diag-crash').innerText = (s.crashTask || '?') + ' @ ' + s.crashPc +
-                                            (s.crashStale ? ' (old build)' : '');
+                                            (s.crashStale ? '*' : '');
                 g('diag-crash').style.color = s.crashStale ? '#ffaa00' : '#ff6666';
+                g('diag-crash').title = s.crashStale
+                    ? '* Coredump is from an OLDER firmware build — decode this PC against that build\'s .elf, not the current one.'
+                    : 'Decode: xtensa-esp32s3-elf-addr2line -e <build>.elf ' + s.crashPc;
             } else {
                 g('diag-crash').innerText = 'none';
                 g('diag-crash').style.color = 'var(--text-disabled)';
+                g('diag-crash').title = '';
             }
         }
         // Ring rows — reason + uptime · minHeap · minStack · version. A PANIC row
