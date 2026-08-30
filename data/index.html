@@ -12197,9 +12197,10 @@
         const f50=lp(_mtfAt(mr.freqs,mr.mtf,0.5)), f10=lp(_mtfAt(mr.freqs,mr.mtf,0.1)),
               f05=lp(_mtfAt(mr.freqs,mr.mtf,0.05));
         const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
-        const cutoff=2*NA/0.55*1000, ideal50=0.40*cutoff;
-        const objNA=NA_TABLE[state.obj]||NA, objName=(OBJ_MAG[state.obj]||'?')+'x',
+        const objNA=NA_TABLE[state.obj]||NA||0.29, objName=(OBJ_MAG[state.obj]||'?')+'x',
               objCutoff=2*objNA/0.55*1000;
+        const cutoff=2*NA/0.55*1000,
+              ideal50=0.40*objCutoff;   // %-of-ideal benchmark = the CHOSEN OBJECTIVE's diffraction limit, not the typed eff NA (that was circular)
         // equivalent NA: the diffraction-limited NA whose ideal curve best fits the
         // measurement over the 0.15-0.85 contrast band (below 0.15 the noise floor
         // lifts the tail; above 0.85 the normalisation pins everything to 1)
@@ -12235,7 +12236,7 @@
         _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff,naEq};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
-            '<span style="font-size:10px;color:var(--text-disabled);">('+(NA>0?(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of NA-'+NA+' ideal':'no eff NA')+
+            '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of '+objName+' NA-'+objNA+' ideal'+
             (isFinite(naEq)?' · <b style="color:#59c9a5;">equiv NA '+naEq.toFixed(2)+'</b>':'')+')<br>'+
             'MTF10 '+(isFinite(f10)?f10.toFixed(0):'—')+' lp/mm · min sep ~'+(isFinite(f10)?(1000/f10).toFixed(2):'—')+' µm<br>'+
             (found.length>1?'2 edges ('+f50each.map(v=>isFinite(v)?v.toFixed(0):'—').join('/')+') · ':'')+
