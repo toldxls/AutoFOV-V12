@@ -11029,13 +11029,7 @@
         if(L.NA>0&&_mtfVis.eff&&Math.abs(L.NA-L.objNA)>0.001) seg('\u2504 eff '+L.NA,'#999');
         if(isFinite(L.naEq)&&_mtfVis.eq) seg('\u2504 equiv '+L.naEq.toFixed(2),'#59c9a5');
         ctx.drawImage(src,0,head);
-        cv.toBlob(b=>{ if(!b) return;
-            const a=document.createElement('a');
-            a.href=URL.createObjectURL(b);
-            a.download='mtf_'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.png';
-            document.body.appendChild(a); a.click();
-            setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
-        },'image/png');
+        cv.toBlob(b=>{ if(b) downloadBlob(b,'mtf_'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.png'); },'image/png');
     }
     const _MTF_LUT=(()=>{ const t=new Float64Array(256); for(let i=0;i<256;i++){ const v=i/255; t[i]=v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); } return t; })();
     function openMtf(){
@@ -11547,7 +11541,7 @@
             x=Math.max(0,Math.min(x,wr.width-lg.offsetWidth));
             y=Math.max(0,Math.min(y,wr.height-lg.offsetHeight));
             lg.style.left=x+'px'; lg.style.top=y+'px'; lg.style.right='auto'; });
-        lg.addEventListener('pointerup', ()=>{ if(drag&&!drag.moved&&drag.row&&_mtfLast){
+        lg.addEventListener('pointerup', ()=>{ if(drag&&!drag.moved&&drag.row&&_mtfLast&&_mtfLast.umpx>0){
                 const k=drag.row.dataset.k; _mtfVis[k]=!_mtfVis[k]; _mtfDrawPlot(_mtfLast); }
             drag=null; });
         lg.addEventListener('pointercancel', ()=>drag=null);
@@ -11999,9 +11993,10 @@
     }
     // Clipped-pixel tally for the exposure warning (ISO 12233 wants both edge
     // plateaus inside the linear range — a plateau pinned at 0/255 cuts the edge
-    // transition off and the measurement reads sharper than the optics). Counted
-    // only on full-res grabs: the canvas downscale of the locate pass averages
-    // clipped pixels away and would under-count. Reset at each mtfMeasure().
+    // transition off and the measurement reads sharper than the optics). The
+    // reset sits AFTER the locate pass, so only the full-res per-edge recut
+    // strips count — a glint in the box but far from the measured edge can't
+    // trip the warning, and the tally can't depend on the user's box size.
     let _mtfClipHi=0,_mtfClipLo=0,_mtfClipN=0;
     function _mtfGrabLin(gx,gy,gw,gh,ow,oh){ // linear-luma patch from the dropped image
         ow=ow||gw; oh=oh||gh;                // optional downscale (locate pass on huge boxes)
@@ -12107,7 +12102,7 @@
         const G=parseInt(document.getElementById('mtf-group').value),
               E=parseInt(document.getElementById('mtf-elem').value),
               naRaw=parseFloat(document.getElementById('mtf-na').value),
-              NA=(naRaw===0)?0:(naRaw||0.29);   // explicit 0 = hide the eff-NA ideal; blank falls back
+              NA=(naRaw===0)?0:(naRaw>0?naRaw:0.29);   // explicit 0 = hide the eff-NA ideal; blank/negative falls back
         saveEffNA(NA);                       // typed here, remembered for FOCUS and next session (no-op for 0)
         if(!(G>=0&&G<=9)||!(E>=1&&E<=6)){ res.style.color='#ff6a6a'; res.textContent='Enter a valid Group (0–9) and Element (1–6).'; return; }
         const lpmmKnown=Math.pow(2, G+(E-1)/6);
@@ -12125,7 +12120,6 @@
         // full-frame drop would otherwise allocate two ~360MB Float64 planes)
         let k=1; if(sw*sh>2.4e6) k=Math.ceil(Math.sqrt(sw*sh/2.4e6));
         const dw=Math.max(12,Math.floor(sw/k)), dh=Math.max(12,Math.floor(sh/k));
-        _mtfClipHi=_mtfClipLo=_mtfClipN=0;   // per-measure clipped-pixel tally
         let roi=_mtfGrabLin(sx,sy,sw,sh,dw,dh);
         let ehx=0,ehy=0;
         for(let y=0;y<dh;y++){ const ro=y*dw; for(let x=0;x<dw-1;x++){ const dd=roi[ro+x+1]-roi[ro+x]; ehx+=dd*dd; } }
@@ -12161,6 +12155,7 @@
             if(horizEdge){ roi2=_mtfTranspose(roi2,rsw,rsh); W2=rsh; H2=rsw; }
             try{ return _mtfSlantedEdge(roi2,W2,H2,4,pol); }catch(e){ lastErr=e.message; return null; }
         };
+        _mtfClipHi=_mtfClipLo=_mtfClipN=0;   // tally only the analyzed per-edge strips — the locate grab above is excluded
         const found=[]; for(const pol of [1,-1]){ const m=tryEdge(pol); if(m) found.push(m); }
         if(!found.length){
             fail(lastErr==='noisy' ? 'Edge too noisy or bent — move the box to a cleaner stretch of one bar edge.'
@@ -12180,7 +12175,7 @@
         // (MTF10/MTF5) don't read the floor as resolution.
         let floor=0;
         {
-            const objNAf=NA_TABLE[state.obj]||NA, cutF=2*objNAf/0.55*1000;
+            const objNAf=NA_TABLE[state.obj]||NA||0.29, cutF=2*objNAf/0.55*1000;
             if(umpx>0){
                 const tail=[];
                 for(let i=0;i<mr.mtf.length;i++)
@@ -12199,8 +12194,7 @@
         const f50each=found.map(m=>lp(_mtfAt(m.freqs,m.mtf,0.5)));
         const objNA=NA_TABLE[state.obj]||NA||0.29, objName=(OBJ_MAG[state.obj]||'?')+'x',
               objCutoff=2*objNA/0.55*1000;
-        const cutoff=2*NA/0.55*1000,
-              ideal50=0.40*objCutoff;   // %-of-ideal benchmark = the CHOSEN OBJECTIVE's diffraction limit, not the typed eff NA (that was circular)
+        const ideal50=0.40*objCutoff;   // %-of-ideal benchmark = the CHOSEN OBJECTIVE's diffraction limit, not the typed eff NA (that was circular)
         // equivalent NA: the diffraction-limited NA whose ideal curve best fits the
         // measurement over the 0.15-0.85 contrast band (below 0.15 the noise floor
         // lifts the tail; above 0.85 the normalisation pins everything to 1)
@@ -12233,7 +12227,8 @@
               ' diffraction limit ('+Math.round(objCutoff)+' lp/mm) — check Grp/Elem &amp; objective</span>' : '')+
             (pitch>0 ? '' : '<br><span style="color:#ffb347;">&#9888; scale unavailable — needs &ge;2 clean,'+
               ' evenly-spaced bars spanning the frame, so lp/mm cannot be shown</span>');
-        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,cutoff,ideal50,objNA,objName,objCutoff,naEq};
+        _mtfVis.meas=true;   // a fresh measurement always shows its own curve (ideal toggles stay sticky)
+        _mtfLast={freqs:mr.freqs,mtf:mr.mtf,angle:mr.angle,umpx,NA,f50,f10,f05,dir,ideal50,objNA,objName,objCutoff,naEq};
         res.style.color='var(--text-primary)';
         res.innerHTML='<b style="color:#7fff7f;">MTF50 '+(isFinite(f50)?f50.toFixed(0):'—')+' lp/mm</b> '+
             '<span style="font-size:10px;color:var(--text-disabled);">('+(isFinite(f50)?(100*f50/ideal50).toFixed(0):'—')+'% of '+objName+' NA-'+objNA+' ideal'+
