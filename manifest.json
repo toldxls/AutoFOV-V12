@@ -1,1 +1,1 @@
-{ "version": "12.6.14", "sha256": "7b29148cd5396ffbc63892bf5b8f45367ad0f9f541cb5399160a13cef1825b04", "bin": "firmware.bin", "commit": "cf3c82c70d521b118f5c7c3aebca1ce98bbee6f7" }
+{ "version": "12.6.16", "sha256": "645d33b0ea5fbf384a0d81cbcff4db131be027ad231e7bd1df29264841f97d75", "bin": "firmware.bin", "commit": "ee79c8816416fd020940fe3529be3f7571abb1dd" }
