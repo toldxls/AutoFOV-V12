@@ -3971,6 +3971,8 @@
         tintPct: 50,          // 0-100
         photoWidth: 6960,
         demarcDist: 0.40,
+        fitWidth: 6960,       // fit-time pair of the ACTIVE cal (device-sent) — graph/points math only
+        fitDemarc: 0.40,
         effNA: 0.29,          // effective NA of the imaging train — MTF + FOCUS share it
         effNASet: false,      // ...but 0.29 is only a placeholder until MTF measures
                               // one (or a saved value is restored) — anything that
@@ -9762,6 +9764,11 @@
         tip.style.top  = top  + 'px';
     }
 
+    // Fit-time demarc × width of the ACTIVE calibration — what the device's
+    // calFitKPx() converts its pixel line back to mm with (sent as
+    // fitWidth/fitDemarc). The live Photo Width / Demarc fields are the NEXT
+    // calibration's inputs and never enter this math.
+    function calFitKPx() { return (state.fitDemarc || 0.4) * (state.fitWidth || 6960); }
     function drawCalGraph() {
         const canvas = document.getElementById('cal-canvas');
         if (!canvas) return;
@@ -9792,14 +9799,11 @@
         const intc  = state.fovIntercept ?? 1652.202;
         const rmse  = state.calibError   ?? 0.0060;
         // Pixel-space cal: pixels = slope*dist + intc; FOV = kPx/pixels (curve).
-        // kPx must be the product the ACTIVE fit was made with. Factory m/b were
-        // fit at 0.40 mm × 6960 px — fixed reference facts — so live Demarc /
-        // Photo Width edits (which describe the user's NEXT calibration) must
-        // not rescale the factory curve away from its hard-coded points. The
-        // device's fovAt() pins the same way, so the graph tracks its readouts.
-        const kPx   = state.isCustomCalib
-                          ? (state.demarcDist || 0.4) * (state.photoWidth || 6960)
-                          : 0.40 * 6960;
+        // kPx must be the product the ACTIVE fit was made with — the device's
+        // calFitKPx() (factory 0.40 mm × 6960 px; custom = the fit-time pair it
+        // sends as fitWidth/fitDemarc). Live Demarc / Photo Width edits describe
+        // the NEXT calibration and never move this curve, same as the readouts.
+        const kPx   = calFitKPx();
         const fovPred = d => { const px = slope * d + intc; return px > 1 ? kPx / px : 0; };
         // View mode: 'fov' = FOV vs distance (curve); 'px' = pixels vs distance
         // (the straight line actually fit, where m/b/R² read literally).
@@ -9808,12 +9812,8 @@
         // so live redraws never yank a legend the user is mid-drag.
         if (mode !== legendModeApplied) { applyLegendPos(mode); legendModeApplied = mode; }
         const yOf    = mode === 'px' ? (p => (p.fov > 0 ? kPx / p.fov : 0)) : (p => p.fov);
-        // Known limitation (CUSTOM cal only — factory pins fit-time kPx above):
-        // after editing Photo Width / demarc without recalibrating, px-view
-        // points rescale with the new kPx while the fit line (slope/intc, in
-        // fit-time pixel units) doesn't — the offset IS the un-recalibrated
-        // settings change. Not fixable client-side: the device doesn't expose
-        // a custom cal's fit-time width/demarc to rebase either one.
+        // Both views use the fit-time kPx, so a post-fit Photo Width / demarc
+        // edit (next-cal inputs) leaves points and line exactly where they are.
         const lineAt = mode === 'px' ? (d => slope * d + intc) : fovPred;
         const yFmt   = mode === 'px' ? (v => v.toFixed(0)) : (v => v.toFixed(2));
         const ylab = document.getElementById('calgraph-ylabel');
@@ -10111,11 +10111,9 @@
         calPointsView = which;
         const factory = (which === 'factory');
         const pts = factory ? FACTORY_POINTS : (state.calGraphPoints || []);
-        // "Current" on a factory device is still the factory fit — same fit-time
-        // kPx rule as drawCalGraph, or the PIXELS column drifts with live edits.
-        const kPx = (factory || !state.isCustomCalib)
-                            ? (0.40 * 6960)
-                            : ((state.demarcDist || 0.4) * (state.photoWidth || 6960));
+        // Same fit-time kPx rule as drawCalGraph (device-sent fitWidth/fitDemarc),
+        // or the PIXELS column would drift with live next-cal edits.
+        const kPx = factory ? (0.40 * 6960) : calFitKPx();
         document.getElementById('calpoints-title').textContent =
             'CALIBRATION POINTS (' + pts.length + ')';
         document.getElementById('calpoints-sub').textContent = factory
@@ -14994,6 +14992,8 @@
         if (data.calibR2      !== undefined) { state.calibR2      = data.calibR2;      fovInfoDirty = true; }
         if (data.calWidth     !== undefined) { state.photoWidth   = data.calWidth;     fovInfoDirty = true; updateCalSettingsUI(); }
         if (data.demarcDist   !== undefined) { state.demarcDist   = data.demarcDist;   updateCalSettingsUI(); }
+        if (data.fitWidth     !== undefined) { state.fitWidth     = data.fitWidth;     fovInfoDirty = true; }
+        if (data.fitDemarc    !== undefined) { state.fitDemarc    = data.fitDemarc;    fovInfoDirty = true; }
         if (data.calPoints    !== undefined) { state.calPoints    = data.calPoints;    updateCalSettingsUI(); }
         if (fovInfoDirty) {
             if (state.screen === 'screen-fovinfo' || state.screen === 'screen-calgraph') updateFovInfoUI();
@@ -15010,11 +15010,12 @@
                 // Device is the source of truth for the point set — mirror it into the
                 // review list so the web can't drift out of sync (was: web 11 / dev 13).
                 // The device stores only dist+fov, so reverse the pixel count from the
-                // FOV formula (fov = demarc/px * sensorWidth -> px = demarc*sensorWidth/fov).
+                // FOV formula (fov = demarc/px * sensorWidth -> px = demarc*sensorWidth/fov)
+                // using the cal's fit-time pair, not the live next-cal inputs.
                 // Skipped while a capture is in flight (incremental calPointResult owns
                 // it) and for the factory-default set (not a user calibration).
                 if (!_pendingCalCapture && state.isCustomCalib) {
-                    const dw = state.demarcDist, sw = state.photoWidth;
+                    const dw = state.fitDemarc || state.demarcDist, sw = state.fitWidth || state.photoWidth;
                     state.capturedPoints = gp.map((p, i) => ({
                         idx: i + 1,
                         px: (p.fov > 0 && dw && sw) ? Math.round(dw * sw / p.fov) : 0,

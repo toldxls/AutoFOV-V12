@@ -6044,6 +6044,33 @@ void setup() {
       }
     }
 
+    // settings.sensorWidth/demarcation are the ACTIVE cal's fit-time reference
+    // (calFitKPx()). Firmware before 9/2/26 let the web Demarc / Photo Width
+    // edits overwrite them, so a device edited after its last calibration can
+    // carry an edited value there. "calibbak" is written only by
+    // finalizeCalibration(), so for the same point set it holds the true
+    // fit-time pair — repair from it once (persisted on the deferred flush).
+    if (isCustomCalib && pointsCaptured >= 2) {
+      CalibBackup b = {0};
+      Preferences bp;
+      bp.begin("calibbak", true);   // read-only
+      size_t bl = bp.getBytes("bak", &b, sizeof(b));
+      bp.end();
+      bool same = (bl == sizeof(b) && b.magic == CALIBBAK_MAGIC && b.n == pointsCaptured &&
+                   b.width >= 100.0f && b.width <= 30000.0f &&
+                   b.demarc >= 0.01f && b.demarc <= 5.0f);
+      for (int i = 0; same && i < b.n; i++)
+        if (fabsf(b.dist[i] - distPoints[i]) > 1e-3f || fabsf(b.fov[i] - fovPoints[i]) > 1e-5f) same = false;
+      if (same && (fabsf(b.width - settings.sensorWidth) > 0.5f ||
+                   fabsf(b.demarc - settings.demarcation) > 1e-4f)) {
+        Serial.printf("[calib] fit-time reference repaired from calibbak: %.0f px x %.3f mm (was %.0f x %.3f)\n",
+                      b.width, b.demarc, settings.sensorWidth, settings.demarcation);
+        settings.sensorWidth = b.width; settings.demarcation = b.demarc;
+        sensorWidthPixels = b.width;    demarcationDist = b.demarc;   // next-cal inputs default to the cal's pair
+        calibPrefsDirty = true; lastCalibEditMs = millis();
+      }
+    }
+
     if (settings.brightness < 1 || settings.brightness > 255) settings.brightness = Config::DEFAULT_BRIGHTNESS;
     currentBrightness = settings.brightness;
     
@@ -7603,15 +7630,17 @@ void drawSignalHealthBar(uint8_t status, float mcps, int x, int y, bool toSprite
 //
 // kPx (demarc × width) must be the product the ACTIVE fit was made with — it
 // is what converts the fit's pixel line back to mm. For the factory cal that
-// is the reference dataset's 0.4 mm × 6960 px, a fixed historical fact; the
-// live demarcationDist/sensorWidthPixels describe the user's rig for the NEXT
-// calibration (and the µm/px math), so editing them must not rescale factory
-// FOV. A custom cal keeps the live product: its fields held the fit-time
-// values at finalize, and a deliberate post-fit edit reinterprets that cal
-// (see the dashboard graph's known-limitation note).
+// is the reference dataset's 0.4 mm × 6960 px, a fixed historical fact. For a
+// custom cal it is the pair finalizeCalibration() fit with and stored in
+// settings.sensorWidth/demarcation. The live demarcationDist/sensorWidthPixels
+// describe the user's rig for the NEXT calibration (and the µm/px math) and
+// nothing else — editing them never moves the current cal's FOV. Points within
+// one calibration may use different demarcs: each capture bakes its own demarc
+// into that point's FOV, and the fit only needs one fixed reference product.
 float calFitKPx() {
-  return isCustomCalib ? (demarcationDist * sensorWidthPixels)
-                       : (Config::DEFAULT_DEMARCATION_MM * Config::DEFAULT_SENSOR_WIDTH_PX);
+  if (!isCustomCalib) return Config::DEFAULT_DEMARCATION_MM * Config::DEFAULT_SENSOR_WIDTH_PX;
+  float k = settings.demarcation * settings.sensorWidth;   // fit-time reference
+  return (k > 0.0f) ? k : (demarcationDist * sensorWidthPixels);
 }
 
 float fovAt(float distMm) {

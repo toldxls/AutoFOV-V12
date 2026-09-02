@@ -2263,8 +2263,8 @@ static void startFullServer() {
         // fit is 0.4 mm × 6960 px regardless of the live calibrator fields, and
         // exporting the live values after an edit would ship a file whose
         // width/demarc no longer match its own fit/points.
-        doc["calWidth"]   = isCustomCalib ? sensorWidthPixels : Config::DEFAULT_SENSOR_WIDTH_PX;
-        doc["demarcDist"] = isCustomCalib ? demarcationDist   : Config::DEFAULT_DEMARCATION_MM;
+        doc["calWidth"]   = isCustomCalib ? settings.sensorWidth : Config::DEFAULT_SENSOR_WIDTH_PX;
+        doc["demarcDist"] = isCustomCalib ? settings.demarcation : Config::DEFAULT_DEMARCATION_MM;
         doc["calPoints"]  = nPoints;
         doc["ambC"]       = calAmbT10 / 10.0f;   // capture temp — provenance for the shared library
         JsonObject fit = doc.createNestedObject("fit");   // informational only
@@ -2973,15 +2973,15 @@ static void handleWifiCommand(const char* key, const char* val) {
         }
 
     // ── Calibration: photo width ──────────────────────────────────────────────
+    //    Live inputs for the NEXT calibration only — never written to settings.*,
+    //    which hold the current cal's fit-time reference (see calFitKPx()).
     } else if (strcmp(key, "calWidth") == 0) {
         sensorWidthPixels = constrain(fVal, 100.0f, 30000.0f);
-        settings.sensorWidth = sensorWidthPixels;
         if (currentMode == CAL_SETTINGS) refreshCalSettingsValues(true);
 
     // ── Calibration: demarcation distance ────────────────────────────────────
     } else if (strcmp(key, "demarcDist") == 0) {
         demarcationDist = constrain(fVal, 0.01f, 5.0f);
-        settings.demarcation = demarcationDist;
         if (currentMode == CAL_SETTINGS) refreshCalSettingsValues(true);
 
     // ── Calibration: target point count ──────────────────────────────────────
@@ -3467,6 +3467,10 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     doc["calAmbC"]       = calAmbT10 / 10.0f;             // 0 = not recorded
     doc["calWidth"]      = (int)sensorWidthPixels;
     doc["demarcDist"]    = roundf(demarcationDist * 100.0f) / 100.0f;
+    // Fit-time pair of the ACTIVE cal (calFitKPx()) — the dashboard graph and
+    // points list convert FOV<->pixels with this, never with the live inputs above.
+    doc["fitWidth"]      = (int)(isCustomCalib ? settings.sensorWidth : Config::DEFAULT_SENSOR_WIDTH_PX);
+    doc["fitDemarc"]     = roundf((isCustomCalib ? settings.demarcation : Config::DEFAULT_DEMARCATION_MM) * 1000.0f) / 1000.0f;
     doc["calPoints"]     = nPoints;
     // Session zero: home reference + live offset (tenths -> mm), so the
     // dashboard can show "home set / offset -1.5 mm" without a command round-trip.
