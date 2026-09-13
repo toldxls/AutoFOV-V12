@@ -2493,23 +2493,42 @@
         background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
         padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
         box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
-      #tofdbg-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
-      #tofdbg-left  { flex:1 1 55%; display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
-      #tofdbg-right { flex:1 1 45%; display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
+      /* Column split, live-plot height and log height are draggable (the three
+         splitters) and remembered per browser. They live in CSS custom
+         properties on #tofdbg — the stylesheet stays the layout's single
+         source of truth, the JS only moves the numbers. */
+      #tofdbg { --tofdbg-left-w:42%; --tofdbg-stems-h:200px; --tofdbg-log-h:130px; }
+      #tofdbg-body { flex:1 1 auto; display:flex; padding:12px 16px 14px; min-height:0; }
+      #tofdbg-left  { flex:0 0 var(--tofdbg-left-w); display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
+      #tofdbg-right { flex:1 1 auto; display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
+      #tofdbg-vsplit { flex:0 0 14px; cursor:col-resize; touch-action:none; position:relative; }
+      #tofdbg-vsplit::after { content:''; position:absolute; top:0; bottom:0; left:6px; width:2px;
+        background:#14302a; border-radius:1px; }
+      .tofdbg-hsplit { flex:0 0 12px; cursor:row-resize; touch-action:none; position:relative; }
+      .tofdbg-hsplit::after { content:''; position:absolute; left:0; right:0; top:5px; height:2px;
+        background:#14302a; border-radius:1px; }
+      #tofdbg-vsplit:hover::after, #tofdbg-vsplit.drag::after,
+      .tofdbg-hsplit:hover::after, .tofdbg-hsplit.drag::after { background:#2a7a6a; }
       #tofdbg .tc-sub { font-size:11px; color:#7ab4a2; line-height:1.55; }
       /* The plot canvas fills a flex-sized box (same shape as #mtf-plotwrap) so its
          bitmap size never feeds back into layout. */
-      #tofdbg-plotwrap { flex:1 1 260px; min-height:220px; position:relative; }
+      #tofdbg-plotwrap { flex:0 0 auto; height:var(--tofdbg-stems-h); min-height:100px; position:relative; }
       #tofdbg-canvas { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box;
         background:#061512; border:1px solid #14302a; border-radius:4px; }
       #tofdbg-live { font-size:12px; color:#9fe6cf; min-height:14px; }
       #tofdbg-legend { font-size:11px; color:#7ab4a2; }
       #tofdbg-legend b { font-weight:normal; }
-      #tofdbg-trend { display:none; flex:0 0 auto; width:100%; height:150px; background:#061512;
-        border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-trendwrap { flex:1 1 200px; min-height:120px; position:relative; }
+      #tofdbg-trend { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box;
+        background:#061512; border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-scatwrap { flex:1 1 140px; min-height:110px; position:relative; }
+      #tofdbg-scat { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box;
+        background:#061512; border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-stats { font-size:11px; color:#9fc9bc; line-height:1.5; }
+      #tofdbg-stats b { color:#cfe7df; }
       #tofdbg-sweep { display:none; flex:0 0 auto; width:100%; height:120px; background:#061512;
         border:1px solid #14302a; border-radius:4px; margin-top:4px; }
-      #tofdbg-log { flex:1 1 auto; min-height:120px; overflow-y:auto; padding:6px 8px;
+      #tofdbg-log { flex:0 0 auto; height:var(--tofdbg-log-h); min-height:40px; overflow-y:auto; padding:6px 8px;
         background:#061512; border:1px solid #14302a; border-radius:4px;
         font-size:11px; line-height:1.7; color:#9fc9bc; }
       #tofdbg-log .ev-pub { color:#e87ba4; }
@@ -2521,10 +2540,13 @@
       #tofdbg button:active { filter:brightness(1.6); }
       @media (max-width:760px) {
         #tofdbg-sub { display:none; }
-        #tofdbg-body { flex-direction:column; overflow-y:auto; }
+        #tofdbg-body { flex-direction:column; overflow-y:auto; gap:6px; }
         #tofdbg-left, #tofdbg-right { flex:0 0 auto; }
-        #tofdbg-plotwrap { flex:0 0 auto; height:230px; }
-        #tofdbg-log { flex:0 0 auto; max-height:260px; }
+        #tofdbg-vsplit, .tofdbg-hsplit { display:none; }
+        #tofdbg-plotwrap { height:200px; }
+        #tofdbg-trendwrap { flex:0 0 auto; height:220px; }
+        #tofdbg-scatwrap { flex:0 0 auto; height:160px; }
+        #tofdbg-log { height:auto; max-height:220px; }
       }
     </style>
     <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
@@ -2621,10 +2643,11 @@
         <i>hot TOF</i> (and ≥5&nbsp;min after a cold power-up), and after any of those; it is refused
         while cold or warming. <b>SET HOME</b> once after an
         FOV calibration. SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file
-        is the temperature dataset.</div>
+        is the temperature dataset. <b>LEVEL vs TEMPERATURE</b> replots the same ring as level against IMU temperature: a tight diagonal cloud is thermal drift (its slope is the passive fit), a vertical smear at one temperature is non-thermal walk; bright dots are recent, the newest is ringed. The stats line under it gives the window span, &sigma;, the fitted walk rate in mm/h, the last hour&rsquo;s move and the [L] step count. The thin bars between panels drag to resize them (remembered per browser).</div>
       <div id="tofdbg-body">
         <div id="tofdbg-left">
           <div id="tofdbg-plotwrap"><canvas id="tofdbg-canvas"></canvas></div>
+          <div class="tofdbg-hsplit" id="tofdbg-hsplit-stems" title="Drag to resize the live plot"></div>
           <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
           <b style="color:#eda100;">&#9632;</b> 3 min-clip&ensp;
@@ -2658,16 +2681,23 @@
           <canvas id="tofdbg-sweep" style="display:none;"
           title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
           <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
+          <div class="tc-sub" style="margin-top:4px; padding-top:5px; border-top:1px solid #14302a;">LEVEL vs TEMPERATURE
+            <span style="color:#5a7a70;">&mdash; one dot per trend point, bright = recent &middot; dashed = passive fit</span></div>
+          <div id="tofdbg-scatwrap"><canvas id="tofdbg-scat"
+               title="The same 5-min ring replotted as level (mm) against IMU temperature (°C). A tight diagonal cloud = thermal drift (its slope is the passive fit); a vertical smear at one temperature = non-thermal walk. Newest point ringed."></canvas></div>
+          <div id="tofdbg-stats">no trend yet</div>
         </div>
+        <div id="tofdbg-vsplit" title="Drag to resize the columns"></div>
         <div id="tofdbg-right">
           <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
           5-min trend · <b style="color:#9fe6cf;">level mm</b> (sensor frame: zeroed, <i>no</i> temp comp — the fit needs the raw drift) ·
           <b style="color:#eda100;">signal MCps (faint)</b> ·
           <b style="color:#e87ba4;">temp °C (right scale)</b> ·
           <span style="color:#e7967a;">dashed = reboot</span> (the ring survives restarts)</div>
-          <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h — checkpointed hourly and before every deliberate restart, so it survives reboots; dashed line = boot"></canvas>
+          <div id="tofdbg-trendwrap" style="display:none;"><canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h — checkpointed hourly and before every deliberate restart, so it survives reboots; dashed line = boot"></canvas></div>
           <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
-          <div class="tc-sub" style="margin-top:2px; padding-top:5px; border-top:1px solid #14302a;">EVENT LOG
+          <div class="tofdbg-hsplit" id="tofdbg-hsplit-log" title="Drag to resize the event log"></div>
+          <div class="tc-sub" style="padding-top:2px;">EVENT LOG
             <span style="color:#5a7a70;">&mdash; [T] topology &middot; [L] level step &middot; local time</span></div>
           <div id="tofdbg-log">no events fetched yet</div>
         </div>
@@ -5593,6 +5623,7 @@
         _tofdbgSweepMaxMm = parseFloat(ls.get('afovSweepMaxMm', '0')) || 0;
         document.getElementById('tofdbg').classList.add('open');
         document.getElementById('tofdbg-help').style.display = 'none';
+        tofdbgLayoutInit();                       // splitters bound once, sizes re-applied
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
         if (tofdbgLogRaw) tofdbgDrawTrend(tofdbgLogRaw);   // cached trend while the refresh is in flight
         tofdbgFetchLog();
@@ -5608,12 +5639,73 @@
     }
     // Full-viewport panel: the canvases take their size from the window, so a
     // resize (or a phone rotating) repaints all three from the cached data.
-    window.addEventListener('resize', () => {
-        if (!tofdbgOpenFlag) return;
-        if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
-        if (tofdbgLogRaw) tofdbgDrawTrend(tofdbgLogRaw);
-        tofdbgDrawSweep();
-    });
+    window.addEventListener('resize', () => { if (tofdbgOpenFlag) tofdbgRedrawAll(); });
+    function tofdbgRedrawAll() {
+        if (_tofdbgRedrawRaf) return;             // one repaint per frame while dragging
+        _tofdbgRedrawRaf = requestAnimationFrame(() => {
+            _tofdbgRedrawRaf = 0;
+            if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
+            if (tofdbgLogRaw) tofdbgDrawTrend(tofdbgLogRaw);   // also the scatter + stats
+            tofdbgDrawSweep();
+        });
+    }
+    // ── Draggable layout: column split, live-plot height, log height ────────
+    // Pointer events (mouse + touch), remembered per browser via ls. The
+    // sizes are CSS custom properties on #tofdbg; the stylesheet decides what
+    // they mean, this code only moves the numbers within [min, max].
+    const TOFDBG_LAYOUT = {                       // key: [ls key, css var, default, min, max, unit]
+        left:  ['afovTofdbgLeftPct', '--tofdbg-left-w',  42,  22,  70, '%'],
+        stems: ['afovTofdbgStemsH',  '--tofdbg-stems-h', 200, 100, 700, 'px'],
+        log:   ['afovTofdbgLogH',    '--tofdbg-log-h',   130,  40, 800, 'px'],
+    };
+    let _tofdbgLayoutBound = false, _tofdbgRedrawRaf = 0;
+    function tofdbgLayoutInit() {
+        const root = document.getElementById('tofdbg');
+        for (const k in TOFDBG_LAYOUT) {
+            const [key, cssVar, dflt, lo, hi, unit] = TOFDBG_LAYOUT[k];
+            const v = parseFloat(ls.get(key, dflt));
+            root.style.setProperty(cssVar, (isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt) + unit);
+        }
+        if (_tofdbgLayoutBound) return;
+        _tofdbgLayoutBound = true;
+        const body = document.getElementById('tofdbg-body');
+        const px = id => document.getElementById(id).getBoundingClientRect();
+        // flex-basis % resolves against the flex container's content box
+        const bodyInner = () => Math.max(1, body.clientWidth - 32);
+        _tofdbgBindSplit('tofdbg-vsplit', 'left',
+            () => px('tofdbg-left').width / bodyInner() * 100,
+            (st, e) => st.v + (e.clientX - st.x) / bodyInner() * 100);
+        _tofdbgBindSplit('tofdbg-hsplit-stems', 'stems',
+            () => px('tofdbg-plotwrap').height,
+            (st, e) => st.v + (e.clientY - st.y));
+        _tofdbgBindSplit('tofdbg-hsplit-log', 'log',      // handle sits ABOVE the log: down = smaller log
+            () => px('tofdbg-log').height,
+            (st, e) => st.v - (e.clientY - st.y));
+    }
+    function _tofdbgBindSplit(handleId, which, current, next) {
+        const h = document.getElementById(handleId);
+        if (!h) return;
+        const [key, cssVar, , lo, hi, unit] = TOFDBG_LAYOUT[which];
+        const root = document.getElementById('tofdbg');
+        let st = null;
+        h.addEventListener('pointerdown', e => {
+            st = { x: e.clientX, y: e.clientY, v: current() };
+            h.setPointerCapture(e.pointerId); h.classList.add('drag'); e.preventDefault();
+        });
+        h.addEventListener('pointermove', e => {
+            if (!st) return;
+            const v = Math.min(hi, Math.max(lo, next(st, e)));
+            root.style.setProperty(cssVar, v + unit);
+            tofdbgRedrawAll();
+        });
+        const end = () => {
+            if (!st) return;
+            st = null; h.classList.remove('drag');
+            ls.set(key, parseFloat(root.style.getPropertyValue(cssVar)).toFixed(1));
+        };
+        h.addEventListener('pointerup', end);
+        h.addEventListener('pointercancel', end);
+    }
     let tofdbgLastTgAt = 0;
     let _tofdbgCpsHi = 0;
     function tofdbgOnLive(tg) {
@@ -5779,16 +5871,21 @@
     // (context only, no axis — exact values are in the saved JSON).
     function tofdbgDrawTrend(j) {
         const cv = document.getElementById('tofdbg-trend');
+        const wrap = document.getElementById('tofdbg-trendwrap');
         const rows = (j.trend || []).filter(r => r[1] > 0);
         const lg = document.getElementById('tofdbg-trendlegend');
         if (rows.length < 2) {
             cv.style.display = 'none';
+            if (wrap) wrap.style.display = 'none';
+            tofdbgDrawScatter(null, null, null);
+            const st = document.getElementById('tofdbg-stats'); if (st) st.innerText = 'no trend yet';
             if (lg) lg.style.display = 'none';
             const f0 = document.getElementById('tofdbg-tempfit');
             if (f0) f0.style.display = 'none';       // no stale fit text either
             return;
         }
         cv.style.display = 'block';
+        if (wrap) wrap.style.display = '';      // before measuring — a hidden box has no size
         if (lg) lg.style.display = 'block';
         const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
         if (cv.width !== W * 2 || cv.height !== H * 2) { cv.width = W * 2; cv.height = H * 2; }
@@ -5850,6 +5947,7 @@
                         : (r.length > 6 && isFinite(r[6])) ? r[6] / 10 : null;
         const usedImu = rows.some(r => r.length > 7 && r[7] !== -32768);
         const tr = rows.filter(r => tval(r) !== null);
+        let scat = null;                         // fit handed to the scatter below
         if (tr.length >= 2) {
             const ts = tr.map(tval);
             let tMin = Math.min(...ts), tMax = Math.max(...ts);
@@ -5876,6 +5974,7 @@
                     const slope = sxx>0 ? sxy/sxx : 0;
                     const r2den = sxx*syy;
                     const rr = r2den>0 ? sxy/Math.sqrt(r2den) : 0;
+                    scat = { slope: slope, icpt: my - slope * mx, r: rr };
                     fit.style.display='block';
                     fit.innerHTML = 'passive temp fit (' + (usedImu ? 'imu' : 'die') +
                         '): <b>' + (slope>=0?'+':'') + slope.toFixed(2) +
@@ -5889,6 +5988,90 @@
                 }
             }
         } else if (fit) fit.style.display='none';
+        tofdbgDrawScatter(tr, tval, scat);
+        tofdbgStats(rows, j);
+    }
+    // Level vs temperature — the trend's other axis. Thermal drift is a tight
+    // diagonal cloud (its slope IS the passive fit); non-thermal walk smears
+    // vertically at one temperature. Older points fade, the newest is ringed.
+    function tofdbgDrawScatter(tr, tval, scat) {
+        const cv = document.getElementById('tofdbg-scat');
+        if (!cv) return;
+        const W = cv.clientWidth, H = cv.clientHeight;
+        if (!W || !H) return;
+        if (cv.width !== W * 2 || cv.height !== H * 2) { cv.width = W * 2; cv.height = H * 2; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        ctx.font = '9px monospace';
+        if (!tr || tr.length < 3) {
+            ctx.fillStyle = '#5a7a70'; ctx.textAlign = 'center';
+            ctx.fillText('needs a few trend points with temperature', W / 2, H / 2);
+            return;
+        }
+        const padL = 34, padR = 8, padT = 8, padB = 14;
+        const xs = tr.map(tval), ys = tr.map(r => r[1] / 10), n = xs.length;
+        let xLo = Math.min(...xs), xHi = Math.max(...xs), yLo = Math.min(...ys), yHi = Math.max(...ys);
+        if (xHi - xLo < 1) { const m = (xHi + xLo) / 2; xLo = m - 0.5; xHi = m + 0.5; }
+        if (yHi - yLo < 1) { const m = (yHi + yLo) / 2; yLo = m - 0.5; yHi = m + 0.5; }
+        const X = t => padL + (W - padL - padR) * (t - xLo) / (xHi - xLo);
+        const Y = d => padT + (H - padT - padB) * (1 - (d - yLo) / (yHi - yLo));
+        ctx.strokeStyle = '#14302a'; ctx.lineWidth = 1;
+        ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
+        ctx.fillStyle = '#7ab4a2';
+        ctx.textAlign = 'right';
+        ctx.fillText(yHi.toFixed(1), padL - 3, padT + 8);
+        ctx.fillText(yLo.toFixed(1), padL - 3, H - padB);
+        ctx.textAlign = 'left';  ctx.fillText(xLo.toFixed(1) + '\u00b0', padL + 2, H - 3);
+        ctx.textAlign = 'right'; ctx.fillText(xHi.toFixed(1) + '\u00b0', W - padR, H - 3);
+        ctx.fillStyle = 'rgba(232,123,164,0.85)'; ctx.textAlign = 'center';
+        ctx.fillText('temp \u00b0C', (padL + W - padR) / 2, H - 3);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(padL, padT, W - padL - padR, H - padT - padB); ctx.clip();
+        if (scat) {                                  // the passive fit, under the points
+            ctx.strokeStyle = 'rgba(232,123,164,0.8)'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(X(xLo), Y(scat.icpt + scat.slope * xLo));
+            ctx.lineTo(X(xHi), Y(scat.icpt + scat.slope * xHi));
+            ctx.stroke(); ctx.setLineDash([]);
+        }
+        for (let k = 0; k < n; k++) {
+            const a = 0.2 + 0.8 * (k / Math.max(1, n - 1));   // oldest faint → newest solid
+            ctx.fillStyle = 'rgba(159,230,207,' + a.toFixed(2) + ')';
+            ctx.fillRect(X(xs[k]) - 1.5, Y(ys[k]) - 1.5, 3, 3);
+        }
+        ctx.restore();                               // ring outside the clip: whole even at the edge
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(X(xs[n - 1]), Y(ys[n - 1]), 4, 0, Math.PI * 2); ctx.stroke();
+    }
+    // The trend in numbers: where the level sits against the window, how fast
+    // it is walking, and how many [L] steps the log saw — one glance, no
+    // scrolling. The event log stays for the per-event detail.
+    function tofdbgStats(rows, j) {
+        const el = document.getElementById('tofdbg-stats');
+        if (!el || !rows || rows.length < 2) return;
+        const ys = rows.map(r => r[1] / 10), n = ys.length, last = ys[n - 1];
+        const lo = Math.min(...ys), hi = Math.max(...ys);
+        const mean = ys.reduce((a, v) => a + v, 0) / n;
+        const sd = Math.sqrt(ys.reduce((a, v) => a + (v - mean) * (v - mean), 0) / n);
+        const hrs = rows.map(r => r[0] / 3600000), mh = hrs.reduce((a, v) => a + v, 0) / n;
+        let sxx = 0, sxy = 0;                        // OLS level-vs-time → mm/h
+        for (let k = 0; k < n; k++) { const dx = hrs[k] - mh; sxx += dx * dx; sxy += dx * (ys[k] - mean); }
+        const rate = sxx > 0 ? sxy / sxx : 0;
+        const span = (rows[n - 1][0] - rows[0][0]) / 3600000;
+        let back = null;                             // the point ≥ 1 h behind the newest
+        for (let k = n - 1; k >= 0; k--) if (rows[n - 1][0] - rows[k][0] >= 3600000) { back = ys[k]; break; }
+        const steps = (j && j.events) ? j.events.filter(e => e.w & 2) : [];
+        const lastStep = steps.length ? steps[steps.length - 1] : null;
+        const sg = v => (v >= 0 ? '+' : '') + v;
+        el.innerHTML =
+            'now <b>' + last.toFixed(1) + '</b> mm \u00b7 window ' + lo.toFixed(1) + '\u2013' + hi.toFixed(1) +
+            ' (span <b>' + (hi - lo).toFixed(1) + '</b>, \u03c3 ' + sd.toFixed(2) + ') over ' +
+            span.toFixed(1) + ' h / ' + n + ' pts<br>' +
+            'walk <b>' + sg(rate.toFixed(2)) + ' mm/h</b> (fit)' +
+            (back !== null ? ' \u00b7 last hour ' + sg((last - back).toFixed(1)) + ' mm' : '') +
+            ' \u00b7 [L] steps <b>' + steps.length + '</b>' +
+            (lastStep ? ' (last ' + tofdbgWhen(lastStep.ms, j.now) + ')' : '');
     }
     // ── Rack-sweep logger: (distance, MCps) pairs at fast-telemetry rate ──
     // Maps count rate vs distance (the parallax-overlap × inverse-square curve)
