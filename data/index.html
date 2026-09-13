@@ -2474,33 +2474,58 @@
       #tofcal-box button.apply:disabled { opacity:0.4; cursor:default; }
       #tofcal-box button.off { background:#2a1414; border-color:#7a3a3a; }
       .tofcal-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
-      /* ── TOF TARGETS debug view (V12.6). Sits above tofcal (662) so the two
-         TOF dialogs stack deterministically; calio-name (664) tops both. ── */
-      #tofdbg-overlay { display:none; position:fixed; inset:0; z-index:663;
-        background:rgba(4,13,11,0.92); align-items:center; justify-content:center;
-        flex-direction:column; font-family:monospace; padding:16px; }
-      #tofdbg-overlay.open { display:flex; }
-      #tofdbg-box { background:#0a1f1a; border:1px solid #2a7a6a; border-radius:8px;
-        padding:14px 16px; max-width:520px; width:100%; max-height:92vh; overflow-y:auto;
-        color:#cfe7df; font-size:12px; }
-      #tofdbg-box h3 { color:#00c8b4; font-size:15px; letter-spacing:1px; margin:0 0 6px; }
-      #tofdbg-box .tc-sub { font-size:10px; color:#7ab4a2; line-height:1.55; margin-bottom:8px; }
-      #tofdbg-canvas { width:100%; height:230px; background:#061512;
-        border:1px solid #14302a; border-radius:4px; }
-      #tofdbg-live { font-size:11px; color:#9fe6cf; margin:6px 0; min-height:14px; }
-      #tofdbg-legend { font-size:10px; color:#7ab4a2; margin:2px 0 6px; }
+      /* ── TOF TARGETS (V12.6). Was a 520 px popup; now a full-viewport panel
+         OUTSIDE #ili9341-display like #mtf / #focus (the mirror's scale(2.0)
+         would trap a position:fixed child). z-index 400 keeps TEMP CAL (662),
+         the numeric pad (660) and login (650) stacking on top of it. ── */
+      #tofdbg { display:none; position:fixed; inset:0; z-index:400;
+        background:#06120f; color:#cfe7df; font-family:monospace; font-size:12px;
+        flex-direction:column; }
+      #tofdbg.open { display:flex; }
+      #tofdbg-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+        gap:12px; padding:9px 16px; background:#0c2b2e; border-bottom:1px solid #1f3a33; }
+      #tofdbg-title { color:#00c8b4; font-weight:bold; letter-spacing:1px; font-size:14px; white-space:nowrap; }
+      #tofdbg-sub { font-size:11px; color:#7ab4a2; line-height:1.4; }
+      #tofdbg-close { cursor:pointer; background:#780000; border:1px solid #ff6600; white-space:nowrap;
+        padding:6px 14px; border-radius:3px; color:#ffd9c0; font-size:12px; }
+      #tofdbg-help { display:none; position:absolute; top:46px; left:16px; z-index:20;
+        max-width:560px; max-height:calc(100% - 60px); overflow-y:auto;
+        background:#0a1f1a; border:1px solid #2a7a6a; border-radius:6px;
+        padding:14px 16px; font-size:12px; line-height:1.55; color:#cfe7df;
+        box-shadow:0 4px 18px rgba(0,0,0,0.6); cursor:pointer; }
+      #tofdbg-body { flex:1 1 auto; display:flex; gap:16px; padding:12px 16px 14px; min-height:0; }
+      #tofdbg-left  { flex:1 1 55%; display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
+      #tofdbg-right { flex:1 1 45%; display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0; }
+      #tofdbg .tc-sub { font-size:11px; color:#7ab4a2; line-height:1.55; }
+      /* The plot canvas fills a flex-sized box (same shape as #mtf-plotwrap) so its
+         bitmap size never feeds back into layout. */
+      #tofdbg-plotwrap { flex:1 1 260px; min-height:220px; position:relative; }
+      #tofdbg-canvas { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box;
+        background:#061512; border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-live { font-size:12px; color:#9fe6cf; min-height:14px; }
+      #tofdbg-legend { font-size:11px; color:#7ab4a2; }
       #tofdbg-legend b { font-weight:normal; }
-      #tofdbg-trend { display:none; width:100%; height:96px; background:#061512;
-        border:1px solid #14302a; border-radius:4px; margin:2px 0 4px; }
-      #tofdbg-log { max-height:180px; overflow-y:auto; margin:4px 0;
-        font-size:10px; line-height:1.7; color:#9fc9bc; }
+      #tofdbg-trend { display:none; flex:0 0 auto; width:100%; height:150px; background:#061512;
+        border:1px solid #14302a; border-radius:4px; }
+      #tofdbg-sweep { display:none; flex:0 0 auto; width:100%; height:120px; background:#061512;
+        border:1px solid #14302a; border-radius:4px; margin-top:4px; }
+      #tofdbg-log { flex:1 1 auto; min-height:120px; overflow-y:auto; padding:6px 8px;
+        background:#061512; border:1px solid #14302a; border-radius:4px;
+        font-size:11px; line-height:1.7; color:#9fc9bc; }
       #tofdbg-log .ev-pub { color:#e87ba4; }
       #tofdbg-log .ev-in  { color:#9fe6cf; }
       #tofdbg-log .ev-out { color:#5a7a70; }
-      #tofdbg-box button { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df;
+      #tofdbg button { background:#1a4a3a; border:1px solid #3ddb7a; color:#cfe7df;
         font-family:monospace; font-size:11px; font-weight:bold; padding:6px 12px;
         border-radius:4px; cursor:pointer; }
-      #tofdbg-box button:active { filter:brightness(1.6); }
+      #tofdbg button:active { filter:brightness(1.6); }
+      @media (max-width:760px) {
+        #tofdbg-sub { display:none; }
+        #tofdbg-body { flex-direction:column; overflow-y:auto; }
+        #tofdbg-left, #tofdbg-right { flex:0 0 auto; }
+        #tofdbg-plotwrap { flex:0 0 auto; height:230px; }
+        #tofdbg-log { flex:0 0 auto; max-height:260px; }
+      }
     </style>
     <div id="tofcal-overlay" onclick="if(event.target===this)tofcalClose()">
       <div id="tofcal-box">
@@ -2561,84 +2586,90 @@
       </div>
     </div>
 
-    <!-- ── TOF TARGETS debug view (V12.6) ── -->
-    <div id="tofdbg-overlay" onclick="if(event.target===this)tofdbgClose()">
-      <div id="tofdbg-box">
-        <h3>TOF TARGETS</h3>
-        <div class="tc-sub">Raw histogram targets, live &mdash; solid stems are in the published
-          blend, hollow are excluded. <span class="help-btn" onclick="tofdbgToggleHelp()"
-          title="What the stems, log codes, and graphs mean">?</span></div>
-        <div id="tofdbg-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
-          The published distance is the signal-weighted average of the <b>solid</b> stems &mdash; status
-          0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). Log codes: <b>[T]</b> a stem
-          appeared, vanished, changed status, or crossed the 20% line; <b>[L]</b> the smoothed level moved
-          &ge;1.5&nbsp;mm from where it was at the last [L] and held there for 5 frames &mdash; a sudden,
-          sustained shift (re-lock, bump, re-reference). Whole-mm dither and single-frame noise don't
-          qualify; slow drift shows up as an [L] every 1.5&nbsp;mm of travel, and the 5-min trend graph
-          carries the level itself. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
-          gauge (reported MCps is pinned at the servo setpoint on bright scenes); it hops between
-          quantized maps (e.g. 57&nbsp;&harr;&nbsp;36) on a static scene, which adds noise but not bias.
-          Figures here are the sensor's own frame (zeroed, <i>not</i> temperature-compensated); the live line
-          shows the temp term added to reach the main screen's DISTANCE. The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
-          age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
-          below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
-          IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL. The
-          ring is saved to flash hourly and before every deliberate restart (OTA, reboot, WiFi
-          change), so an overnight soak survives the morning update &mdash; a dashed line marks each
-          boot (a crash loses at most the last hour; CLEAR wipes the saved copy too).
-          <b>ZERO @ MAX RACK</b>: the sensor's zero point shifts every time it restarts (power cycle,
-          reboot, RE-LOCK, sleep/wake) &mdash; zero once per session after the main screen says
-          <i>hot TOF</i> (and ≥5&nbsp;min after a cold power-up), and after any of those; it is refused
-          while cold or warming. <b>SET HOME</b> once after an
-          FOV calibration. SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file
-          is the temperature dataset.</div>
-        <canvas id="tofdbg-canvas"></canvas>
-        <div id="tofdbg-legend">status:
+    <!-- ── TOF TARGETS (V12.6) — full-viewport panel (see the CSS note) ── -->
+    <div id="tofdbg">
+      <div id="tofdbg-head">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <div id="tofdbg-title">TOF TARGETS</div>
+          <div id="tofdbg-info" class="help-btn lg" onclick="tofdbgToggleHelp()"
+               title="What the stems, log codes, and graphs mean">?</div>
+          <div id="tofdbg-sub">Raw histogram targets, live &mdash; solid stems are in the published
+            blend, hollow are excluded.</div>
+        </div>
+        <div id="tofdbg-close" onclick="tofdbgClose()">CLOSE &#10005;</div>
+      </div>
+      <div id="tofdbg-help" onclick="tofdbgToggleHelp()">
+        The published distance is the signal-weighted average of the <b>solid</b> stems &mdash; status
+        0/3/6 <i>and</i> &ge;20% of the strongest signal (dashed line). Log codes: <b>[T]</b> a stem
+        appeared, vanished, changed status, or crossed the 20% line; <b>[L]</b> the smoothed level moved
+        &ge;1.5&nbsp;mm from where it was at the last [L] and held there for 5 frames &mdash; a sudden,
+        sustained shift (re-lock, bump, re-reference). Whole-mm dither and single-frame noise don't
+        qualify; slow drift shows up as an [L] every 1.5&nbsp;mm of travel, and the 5-min trend graph
+        carries the level itself. <b>spads</b> is the count the sensor's SPAD servo enabled &mdash; the real brightness
+        gauge (reported MCps is pinned at the servo setpoint on bright scenes); it hops between
+        quantized maps (e.g. 57&nbsp;&harr;&nbsp;36) on a static scene, which adds noise but not bias.
+        Figures here are the sensor's own frame (zeroed, <i>not</i> temperature-compensated); the live line
+        shows the temp term added to reach the main screen's DISTANCE. The liveness line shows data AGE &mdash; a silent sensor freezes every number on screen, so
+        age is the only honest signal; a 10&nbsp;s stall triggers an automatic restart (counted
+        below). The trend graph is the 5-min / 24&nbsp;h ring: level (green), signal (faint orange),
+        IMU temperature (pink, right scale); the passive temp fit beneath it feeds TEMP CAL. The
+        ring is saved to flash hourly and before every deliberate restart (OTA, reboot, WiFi
+        change), so an overnight soak survives the morning update &mdash; a dashed line marks each
+        boot (a crash loses at most the last hour; CLEAR wipes the saved copy too).
+        <b>ZERO @ MAX RACK</b>: the sensor's zero point shifts every time it restarts (power cycle,
+        reboot, RE-LOCK, sleep/wake) &mdash; zero once per session after the main screen says
+        <i>hot TOF</i> (and ≥5&nbsp;min after a cold power-up), and after any of those; it is refused
+        while cold or warming. <b>SET HOME</b> once after an
+        FOV calibration. SAVE LOG writes the events <i>and</i> the full trend ring &mdash; that file
+        is the temperature dataset.</div>
+      <div id="tofdbg-body">
+        <div id="tofdbg-left">
+          <div id="tofdbg-plotwrap"><canvas id="tofdbg-canvas"></canvas></div>
+          <div id="tofdbg-legend">status:
           <b style="color:#3ddb7a;">&#9632;</b> 0 valid&ensp;
           <b style="color:#eda100;">&#9632;</b> 3 min-clip&ensp;
           <b style="color:#3987e5;">&#9632;</b> 6 no-wrap&ensp;
           <b style="color:#e66767;">&#9632;</b> other&ensp;
           <b style="color:#e87ba4;">&#9650;</b> published blend</div>
-        <div id="tofdbg-stale" style="font-size:12px; min-height:16px; margin:2px 0;"></div>
-        <div id="tofdbg-live">waiting for telemetry&hellip;</div>
-        <div class="tofcal-row">
+          <div id="tofdbg-stale" style="font-size:12px; min-height:16px; margin:2px 0;"></div>
+          <div id="tofdbg-live">waiting for telemetry&hellip;</div>
+          <div class="tofcal-row">
           <button onclick="tofdbgFetchLog()">REFRESH LOG</button>
           <button onclick="tofdbgSaveLog()">SAVE LOG</button>
           <button onclick="tofdbgClearLog()" title="Reset the event counters and ring — for before/after tests of a scene or config change">CLEAR</button>
           <button id="tofdbg-sweep-btn" onclick="tofdbgSweepToggle()"
-                  title="Log (distance, signal) pairs at 30 Hz while you rack the bellows from max to closest — maps count rate vs distance">LOG SWEEP</button>
+          title="Log (distance, signal) pairs at 30 Hz while you rack the bellows from max to closest — maps count rate vs distance">LOG SWEEP</button>
           <button onclick="tofdbgReboot()"
-                  title="Warm-restart the device (rails stay up, so the TOF re-references warm — the cold-start-bias cure and the wedge recovery lever). Trend ring and event log restart.">REBOOT</button>
+          title="Warm-restart the device (rails stay up, so the TOF re-references warm — the cold-start-bias cure and the wedge recovery lever). Trend ring and event log restart.">REBOOT</button>
           <span id="tofdbg-io" style="font-size:10px;color:#7ab4a2;"></span>
-        </div>
-        <!-- Session zero (V12.6 B+): the sensor's absolute reading drifts with
-             room temperature (~1.3 mm/°C, TEMP CAL compensates it) plus a
-             restart jump each power-up. Rack the bellows to MAX
-             (the repeatable reference), SET HOME once right after FOV
-             calibration, then ZERO at the start of each session — the measured
-             drift is subtracted from every reading until the next zero. -->
-        <div class="tofcal-row" style="border-top:1px solid #14302a; padding-top:8px;">
+          </div>
+          <!-- Session zero (V12.6 B+): the sensor's absolute reading drifts with
+          room temperature (~1.3 mm/°C, TEMP CAL compensates it) plus a
+          restart jump each power-up. Rack the bellows to MAX
+          (the repeatable reference), SET HOME once right after FOV
+          calibration, then ZERO at the start of each session — the measured
+          drift is subtracted from every reading until the next zero. -->
+          <div class="tofcal-row" style="border-top:1px solid #14302a; padding-top:8px;">
           <button onclick="tofzeroGo()" title="WHEN: once per session after the main screen says hot TOF (and, after a cold power-up, at least 5 min in), and again after any RE-LOCK, reboot, power cycle or sleep/wake — each of those re-references the sensor. Not needed otherwise (temperature is compensated). Refused while cold or still warming. HOW: rack the bellows to MAX, tap; 2 s measure cancels the shift since SET HOME.">ZERO @ MAX RACK</button>
           <button onclick="tofzeroSetHome()" title="ONCE, right after an FOV calibration, with the sensor hot: rack the bellows to MAX and capture the home reference every later ZERO is compared against. Redo only after recalibrating."
-                  style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
+          style="background:#1a3a4a;border-color:#3d9bdb;">SET HOME</button>
           <span id="tofzero-status" style="font-size:10px;color:#7ab4a2;"></span>
+          </div>
+          <canvas id="tofdbg-sweep" style="display:none;"
+          title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
+          <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
         </div>
-        <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
+        <div id="tofdbg-right">
+          <div id="tofdbg-trendlegend" style="display:none; font-size:10px; color:#7ab4a2; margin-top:6px;">
           5-min trend · <b style="color:#9fe6cf;">level mm</b> (sensor frame: zeroed, <i>no</i> temp comp — the fit needs the raw drift) ·
           <b style="color:#eda100;">signal MCps (faint)</b> ·
           <b style="color:#e87ba4;">temp °C (right scale)</b> ·
           <span style="color:#e7967a;">dashed = reboot</span> (the ring survives restarts)</div>
-        <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h — checkpointed hourly and before every deliberate restart, so it survives reboots; dashed line = boot"></canvas>
-        <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
-        <canvas id="tofdbg-sweep" style="display:none; width:100%; height:96px; background:#061512;
-                border:1px solid #14302a; border-radius:4px; margin-top:4px;"
-                title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
-        <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
-        <div style="font-size:10px; color:#7ab4a2; margin-top:8px; padding-top:5px;
-             border-top:1px solid #14302a;">EVENT LOG <span style="color:#5a7a70;">— [T] topology · [L] level step · local time</span></div>
-        <div id="tofdbg-log">no events fetched yet</div>
-        <div class="tofcal-row" style="margin-top:8px;">
-          <button onclick="tofdbgClose()">CLOSE</button>
+          <canvas id="tofdbg-trend" title="EMA level (zero-corrected, NOT temp-corrected — the temperature fit must see the drift) + signal + temperature, one sample / 5 min, up to 24 h — checkpointed hourly and before every deliberate restart, so it survives reboots; dashed line = boot"></canvas>
+          <div id="tofdbg-tempfit" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
+          <div class="tc-sub" style="margin-top:2px; padding-top:5px; border-top:1px solid #14302a;">EVENT LOG
+            <span style="color:#5a7a70;">&mdash; [T] topology &middot; [L] level step &middot; local time</span></div>
+          <div id="tofdbg-log">no events fetched yet</div>
         </div>
       </div>
     </div>
@@ -5560,8 +5591,10 @@
         tofzeroStatusIdle();
         tofdbgOpenFlag = true;
         _tofdbgSweepMaxMm = parseFloat(ls.get('afovSweepMaxMm', '0')) || 0;
-        document.getElementById('tofdbg-overlay').classList.add('open');
+        document.getElementById('tofdbg').classList.add('open');
+        document.getElementById('tofdbg-help').style.display = 'none';
         if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
+        if (tofdbgLogRaw) tofdbgDrawTrend(tofdbgLogRaw);   // cached trend while the refresh is in flight
         tofdbgFetchLog();
         if (!_tofdbgPoll) _tofdbgPoll = setInterval(() => { if (tofdbgOpenFlag) tofdbgFetchLog(true); }, 60000);
         if (!_tofdbgStaleT) _tofdbgStaleT = setInterval(_tofdbgStaleTick, 1000);
@@ -5569,10 +5602,18 @@
     }
     function tofdbgClose() {
         tofdbgOpenFlag = false;
-        document.getElementById('tofdbg-overlay').classList.remove('open');
+        document.getElementById('tofdbg').classList.remove('open');
         if (_tofdbgPoll) { clearInterval(_tofdbgPoll); _tofdbgPoll = null; }
         if (_tofdbgStaleT) { clearInterval(_tofdbgStaleT); _tofdbgStaleT = null; }
     }
+    // Full-viewport panel: the canvases take their size from the window, so a
+    // resize (or a phone rotating) repaints all three from the cached data.
+    window.addEventListener('resize', () => {
+        if (!tofdbgOpenFlag) return;
+        if (tofdbgLastTg) tofdbgDraw(tofdbgLastTg);
+        if (tofdbgLogRaw) tofdbgDrawTrend(tofdbgLogRaw);
+        tofdbgDrawSweep();
+    });
     let tofdbgLastTgAt = 0;
     let _tofdbgCpsHi = 0;
     function tofdbgOnLive(tg) {
@@ -5585,7 +5626,7 @@
         const cv = document.getElementById('tofdbg-canvas');
         const W = cv.clientWidth, H = cv.clientHeight;
         if (!W) return;
-        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        if (cv.width !== W * 2 || cv.height !== H * 2) { cv.width = W * 2; cv.height = H * 2; }
         const ctx = cv.getContext('2d');
         ctx.setTransform(2, 0, 0, 2, 0, 0);
         ctx.clearRect(0, 0, W, H);
@@ -5750,7 +5791,7 @@
         cv.style.display = 'block';
         if (lg) lg.style.display = 'block';
         const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
-        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        if (cv.width !== W * 2 || cv.height !== H * 2) { cv.width = W * 2; cv.height = H * 2; }
         const ctx = cv.getContext('2d');
         ctx.setTransform(2, 0, 0, 2, 0, 0);
         ctx.clearRect(0, 0, W, H);
@@ -5899,7 +5940,7 @@
         if (!cv || !_tofSweep || _tofSweep.pts.length < 2) return;
         const pts = _tofSweep.pts;
         const W = cv.clientWidth || 460, H = cv.clientHeight || 96;
-        if (cv.width !== W * 2) { cv.width = W * 2; cv.height = H * 2; }
+        if (cv.width !== W * 2 || cv.height !== H * 2) { cv.width = W * 2; cv.height = H * 2; }
         const ctx = cv.getContext('2d');
         ctx.setTransform(2, 0, 0, 2, 0, 0);
         ctx.clearRect(0, 0, W, H);
@@ -6001,6 +6042,7 @@
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape' && tofcalOpenFlag) { tofcalClose(); return; }
+        if (e.key === 'Escape' && tofdbgOpenFlag) { tofdbgClose(); return; }   // after TEMP CAL: it stacks on top
         if (e.key === 'Escape' && vibtestOpenFlag) { vibtestClose(); return; }
         if (e.key === 'Escape' && vibRepOpenFlag) vibRepClose();
     });
