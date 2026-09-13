@@ -1228,7 +1228,9 @@ std::atomic<bool> tofTgtEvtClearReq{false};
 std::atomic<uint32_t> gDieTempC10{0};
 struct TofTrendPt { int64_t ms;   // trend clock (see tofTrendNowMs); ≤ 0 = before this boot
                     uint16_t emaT; uint16_t cps100; uint16_t amb100;
-                    uint16_t spads; uint8_t n; uint8_t pad;
+                    uint16_t spads; uint8_t n;
+                    uint8_t flags;       // bit0 = first valid row after a boot (was pad —
+                                         // same layout, old checkpoints read as 0)
                     int16_t dieT10;      // SoC die ×10 — load-correlated (WiFi/CPU)
                     int16_t imuT10; };   // LSM6DSOX ×10 — the TOF ambient proxy;
                                          // -32768 = IMU not read yet
@@ -4895,11 +4897,19 @@ void sensorTask(void *pvParameters) {
             tofTrendRestored.store(0, std::memory_order_relaxed);   // carried-over rows are gone too
             lastTrendMs = 0;       // seed a fresh first point this pass
           }
+          // Boot mark: every restart gets its own seam on the trend, not just
+          // the latest (restored rows all re-base to ≤ 0, so "ms crosses 0"
+          // can only find one). Sticky until a row carries a level — the
+          // seeded first row usually has emaT 0 (EMA unprimed) and consumers
+          // drop those, which would drop the mark with it.
+          static bool bootMarkPending = true;
           if (lastTrendMs == 0 || snap.ms - lastTrendMs >= TOF_TREND_INTERVAL_MS) {
             lastTrendMs = snap.ms;
             TofTrendPt tp;
             tp.ms = tofTrendNowMs(); tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
-            tp.spads = snap.spads; tp.n = snap.n; tp.pad = 0;
+            tp.spads = snap.spads; tp.n = snap.n;
+            tp.flags = bootMarkPending ? 1 : 0;
+            if (snap.emaT > 0) bootMarkPending = false;
             tp.dieT10 = (int16_t)(int32_t)gDieTempC10.load(std::memory_order_relaxed);
             uint32_t a10 = gAmbientTempC10.load(std::memory_order_relaxed);
             tp.imuT10 = a10 ? (int16_t)(int32_t)a10 : (int16_t)-32768;

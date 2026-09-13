@@ -1980,10 +1980,10 @@ static void startFullServer() {
         //             "heals":…,"count":…,"dropped":…,"events":[                  ≤ 192
         //   event    {"ms":4294967295,"p":65535,"e":65535,"w":255,"a":65535,
         //             "sc":65535,"i":255,"t":[[-32768,255,65535]×4]},           ≤ 160
-        //   trend    [-9223372036854775808,65535,65535,65535,255,65535,-32768,-32768], ≤ 66
-        // so 192 + 48×160 + 288×66 = 26,880 B. The seqlock reads are the same
+        //   trend    [-9223372036854775808,65535,65535,65535,255,65535,-32768,-32768,255], ≤ 70
+        // so 192 + 48×160 + 288×70 = 28,032 B. The seqlock reads are the same
         // as before (plain RAM, no I²C, no FreeRTOS objects — AsyncTCP-safe).
-        constexpr size_t CAP = 192 + (size_t)TOF_EVT_RING * 160 + (size_t)TOF_TREND_RING * 66;
+        constexpr size_t CAP = 192 + (size_t)TOF_EVT_RING * 160 + (size_t)TOF_TREND_RING * 70;
         char* buf = (char*)ps_malloc(CAP);
         if (!buf) buf = (char*)malloc(CAP);
         if (!buf) { req->send(503, "text/plain", "low heap - retry"); return; }
@@ -2029,11 +2029,12 @@ static void startFullServer() {
             put("]}");
         }
         // 5-min level/signal trend, oldest → newest:
-        // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10, imuT10] — both temps
+        // [ms, emaT, cps100, amb100, n, spads(8.8), dieT10, imuT10, flags] — both temps
         // ×10 logged per point so an overnight soak yields (temp, level) pairs
         // for the mm/°C correlation with zero manual captures. imuT10 (LSM6DSOX,
         // low self-heat, near the sensor) is the preferred axis; dieT10 (SoC)
         // separates load-driven heating. imuT10 = -32768 until first IMU read.
+        // flags bit0 = first row after a boot (the dashboard's dashed seams).
         put("],\"trend\":[");
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);
@@ -2047,9 +2048,9 @@ static void startFullServer() {
                 s2 = tofTrendSlotSeq[idx].load(std::memory_order_acquire);
             } while ((s1 != s2 || (s1 & 1)) && ++tries < 4);
             if (s1 != s2 || (s1 & 1)) continue;
-            put("%s[%lld,%u,%u,%u,%u,%u,%d,%d]", first ? "" : ",", (long long)tp.ms,
+            put("%s[%lld,%u,%u,%u,%u,%u,%d,%d,%u]", first ? "" : ",", (long long)tp.ms,
                 (unsigned)tp.emaT, (unsigned)tp.cps100, (unsigned)tp.amb100, (unsigned)tp.n,
-                (unsigned)tp.spads, (int)tp.dieT10, (int)tp.imuT10);
+                (unsigned)tp.spads, (int)tp.dieT10, (int)tp.imuT10, (unsigned)tp.flags);
             first = false;
         }
         put("]}");

@@ -2524,6 +2524,8 @@
       #tofdbg-scatwrap { flex:1 1 140px; min-height:110px; position:relative; }
       #tofdbg-scat { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box;
         background:#061512; border:1px solid #14302a; border-radius:4px; }
+      .tof-age-swatch { display:inline-block; width:44px; height:6px; vertical-align:middle; border-radius:2px;
+        background:linear-gradient(90deg, rgb(74,92,255), rgb(31,199,224), rgb(200,232,74), rgb(255,176,32)); }
       #tofdbg-stats { font-size:11px; color:#9fc9bc; line-height:1.5; }
       #tofdbg-stats b { color:#cfe7df; }
       #tofdbg-sweep { display:none; flex:0 0 auto; width:100%; height:120px; background:#061512;
@@ -2558,7 +2560,9 @@
         <div id="tofcal-help" class="tc-sub" style="display:none; border-left:2px solid #2a7a6a; padding-left:8px;">
           Subtracts <i>coeff &times; (T &minus; ref)</i> from the range before FOV, zeroing, and capture.
           T is the LSM6DSOX (outside the enclosure, tracks room air; the TOF chip has no thermometer).
-          Pink cloud = the device's passive 5-min / 24&nbsp;h log (RAM, restarts on reboot); green dots
+          Colour trace = the device's passive 5-min / 24&nbsp;h log, joined in time order and shaded by age
+          (indigo oldest &rarr; amber newest, arrows = direction) so a warm-up and a cool-down that don't
+          overlay show as a loop &mdash; thermal lag; green dots
           = your CAPTURE points (2-s averages, kept in this browser). Both feed <b>one</b> fit.
           <b>ref</b> is where the correction is zero &mdash; the FOV cal's capture temperature (recorded
           automatically at recal) keeps absolute readings anchored to the calibrated state; any ref
@@ -2682,9 +2686,10 @@
           title="Signal (MCps) vs distance (mm), logged at 30 Hz during a rack sweep"></canvas>
           <div id="tofdbg-sweepcap" style="display:none; font-size:10px; color:#7ab4a2; margin:2px 0 4px;"></div>
           <div class="tc-sub" style="margin-top:4px; padding-top:5px; border-top:1px solid #14302a;">LEVEL vs TEMPERATURE
-            <span style="color:#5a7a70;">&mdash; one dot per trend point, bright = recent &middot; dashed = passive fit</span></div>
+            <span style="color:#5a7a70;">&mdash; joined in time order, colour = age (<span class="tof-age-swatch"></span>
+            <span id="tofdbg-scat-span"></span>), arrows = direction &middot; dashed = passive fit</span></div>
           <div id="tofdbg-scatwrap"><canvas id="tofdbg-scat"
-               title="The same 5-min ring replotted as level (mm) against IMU temperature (°C). A tight diagonal cloud = thermal drift (its slope is the passive fit); a vertical smear at one temperature = non-thermal walk. Newest point ringed."></canvas></div>
+               title="The same 5-min ring replotted as level (mm) against IMU temperature (°C). A tight diagonal cloud = thermal drift (its slope is the passive fit); a vertical smear at one temperature = non-thermal walk; an open loop (warming and cooling legs apart) = thermal lag. Newest point ringed."></canvas></div>
           <div id="tofdbg-stats">no trend yet</div>
         </div>
         <div id="tofdbg-vsplit" title="Drag to resize the columns"></div>
@@ -5128,7 +5133,7 @@
             const tval = row => (row.length > 7 && row[7] !== -32768 && isFinite(row[7])) ? row[7] / 10
                               : (row.length > 6 && isFinite(row[6])) ? row[6] / 10 : null;
             let pts = (j.trend || []).filter(row => row[1] > 0 && tval(row) !== null)
-                                     .map(row => ({ t: tval(row), d: row[1] / 10 }));
+                                     .map(row => ({ t: tval(row), d: row[1] / 10, ms: row[0], boot: row.length > 8 && (row[8] & 1) }));
             tofcalPassiveN = pts.length;
             if (pts.length >= 8) {
                 const lv = pts.map(p => p.d).sort((a, b) => a - b);
@@ -5420,12 +5425,9 @@
         }
         g.stroke();
 
-        // Passive layer UNDERNEATH: faint pink cloud (the auto-logged 5-min
-        // points, static cluster only) + its dashed fit when the span is real.
-        if (havePas) {
-            g.fillStyle = 'rgba(232,123,164,0.45)';
-            pa.pts.forEach(p => g.fillRect(X(p.t) - 1, Y(p.d) - 1, 2, 2));
-        }
+        // Passive layer UNDERNEATH: the auto-logged 5-min points (static
+        // cluster only) as an age-coloured time trace — see tofTimeTrace.
+        if (havePas) tofTimeTrace(g, pa.pts.map(p => ({ x: X(p.t), y: Y(p.d), ms: p.ms, boot: p.boot })), 2.5);
 
         // THE fit line — one regression over passive + captured together.
         if (fit && fit.span >= 0.5) {
@@ -5465,6 +5467,16 @@
         g.fillText(t1.toFixed(1) + '°C', L + pw, T + ph + 6);
         g.textAlign = 'left';
         g.fillText(t0.toFixed(1) + '°C', L, T + ph + 6);
+        if (havePas) {                                 // age key, bottom centre
+            const bw = Math.min(90, pw * 0.3), bx = L + (pw - bw) / 2, by = T + ph + 10;
+            const gr = g.createLinearGradient(bx, 0, bx + bw, 0);
+            TOF_AGE_STOPS.forEach((c, i2) => gr.addColorStop(i2 / (TOF_AGE_STOPS.length - 1), 'rgb(' + c.join(',') + ')'));
+            g.fillStyle = gr; g.fillRect(bx, by, bw, 5);
+            g.fillStyle = '#7ab4a2'; g.textBaseline = 'middle';
+            const hrs = (pa.pts[pa.pts.length - 1].ms - pa.pts[0].ms) / 3600000;
+            g.textAlign = 'right'; g.fillText('-' + hrs.toFixed(1) + 'h', bx - 4, by + 3);
+            g.textAlign = 'left';  g.fillText('newest', bx + bw + 4, by + 3);
+        }
         g.save();
         g.translate(11, T + ph / 2); g.rotate(-Math.PI / 2);
         g.textAlign = 'center'; g.textBaseline = 'top';
@@ -5909,15 +5921,28 @@
         ctx.textAlign = 'right'; ctx.fillText('now', W - padR, H - 3);
         ctx.strokeStyle = '#14302a';
         ctx.strokeRect(padL, padT, W - padL - padR, H - padT - padB);
-        // Boot seam: rows at ms ≤ 0 were carried over from the previous boot
-        // (LittleFS checkpoint). A dashed line marks the restart so a step at
-        // the seam is read as "the sensor restarted", not as drift.
-        if (t0 < 0 && t1 > 0) {
-            const xb = X(0);
+        // Boot seams: a dashed line at every restart so a step at the seam is
+        // read as "the sensor restarted", not as drift. Rows at ms ≤ 0 were
+        // carried over from before THIS boot — that crossing is exact (X(0)).
+        // Earlier restarts are only knowable from the row flag (bit0 = first
+        // row after a boot, firmware ≥ 12.6.22); restore re-bases them into the
+        // same ≤ 0 range, so their seam goes midway between the two rows.
+        const seams = [];
+        if (t0 < 0 && t1 > 0) seams.push(X(0));
+        for (let k = 1; k < rows.length; k++) {
+            if (!(rows[k].length > 8 && (rows[k][8] & 1))) continue;
+            if (rows[k - 1][0] <= 0 && rows[k][0] > 0) continue;   // this boot — already exact
+            seams.push(X((rows[k - 1][0] + rows[k][0]) / 2));
+        }
+        seams.sort((a, b) => a - b);
+        let lastLbl = -1e9;
+        for (const xb of seams) {
             ctx.save();
             ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(231,150,122,0.7)'; ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(xb, padT); ctx.lineTo(xb, H - padB); ctx.stroke();
             ctx.restore();
+            if (xb - lastLbl < 40) continue;          // restarts close together: one label
+            lastLbl = xb;
             ctx.fillStyle = '#e7967a';                 // label at the foot of the seam, clear of
             if (xb < padL + 48) {                       // the axis labels and the right-scale temps
                 ctx.textAlign = 'left';  ctx.fillText('boot', xb + 2, H - padB - 3);
@@ -6035,14 +6060,62 @@
             ctx.lineTo(X(xHi), Y(scat.icpt + scat.slope * xHi));
             ctx.stroke(); ctx.setLineDash([]);
         }
-        for (let k = 0; k < n; k++) {
-            const a = 0.2 + 0.8 * (k / Math.max(1, n - 1));   // oldest faint → newest solid
-            ctx.fillStyle = 'rgba(159,230,207,' + a.toFixed(2) + ')';
-            ctx.fillRect(X(xs[k]) - 1.5, Y(ys[k]) - 1.5, 3, 3);
-        }
+        tofTimeTrace(ctx, tr.map((r, k) => ({ x: X(xs[k]), y: Y(ys[k]), ms: r[0], boot: r.length > 8 && (r[8] & 1) })), 3);
         ctx.restore();                               // ring outside the clip: whole even at the edge
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(X(xs[n - 1]), Y(ys[n - 1]), 4, 0, Math.PI * 2); ctx.stroke();
+        const sp = document.getElementById('tofdbg-scat-span');
+        if (sp) sp.textContent = 'over ' + ((tr[n - 1][0] - tr[0][0]) / 3600000).toFixed(1) + ' h';
+    }
+    // Age-coloured trace for the level-vs-temperature plots. Oldest indigo →
+    // cyan → lime → amber newest — deliberately NOT a cool→hot ramp, the x
+    // axis is already temperature. Consecutive points are joined so a lagging
+    // warm-up and cool-down draw an open loop instead of one smeared cloud;
+    // hourly chevrons give the direction of travel. The colour is by TIME, not
+    // index, so a reboot gap shows as a colour jump (and the line breaks there).
+    const TOF_AGE_STOPS = [[74, 92, 255], [31, 199, 224], [200, 232, 74], [255, 176, 32]];
+    const TOF_AGE_GAP_MS = 12 * 60000;               // > 2 missed 5-min points: don't bridge
+    function tofAgeColor(f, a) {
+        f = Math.min(1, Math.max(0, f)) * (TOF_AGE_STOPS.length - 1);
+        const i = Math.min(TOF_AGE_STOPS.length - 2, Math.floor(f)), u = f - i;
+        const c0 = TOF_AGE_STOPS[i], c1 = TOF_AGE_STOPS[i + 1];
+        return 'rgba(' + c0.map((v, k) => Math.round(v + (c1[k] - v) * u)).join(',') + ',' + a + ')';
+    }
+    // pts: [{x, y, ms, boot}] in canvas px, chronological; boot = first row
+    // after a restart (never joined to the row before). dot = square size px.
+    function tofTimeTrace(ctx, pts, dot) {
+        const n = pts.length;
+        if (!n) return;
+        const t0 = pts[0].ms, span = Math.max(1, pts[n - 1].ms - t0);
+        const fr = p => (p.ms - t0) / span;
+        ctx.lineWidth = 1; ctx.lineCap = 'round';
+        for (let k = 1; k < n; k++) {
+            const a = pts[k - 1], b = pts[k];
+            if (b.ms - a.ms > TOF_AGE_GAP_MS || b.boot) continue;
+            ctx.strokeStyle = tofAgeColor(fr(b), 0.5);
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+        for (let k = 0; k < n; k++) {
+            ctx.fillStyle = tofAgeColor(fr(pts[k]), 0.95);
+            ctx.fillRect(pts[k].x - dot / 2, pts[k].y - dot / 2, dot, dot);
+        }
+        // Hourly arrowheads on top of the dots. Direction from the points ±3
+        // either side (a single 5-min step is a few px of noise), skipped where
+        // that window spans a gap or barely moves.
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(6,21,18,0.9)';
+        for (let k = 6; k + 3 < n; k += 12) {
+            const a = pts[k - 3], b = pts[k + 3], c = pts[k];
+            if (b.ms - a.ms > 6 * 300000 + TOF_AGE_GAP_MS) continue;
+            const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+            if (len < 10) continue;
+            const ux = dx / len, uy = dy / len, s = 5;
+            ctx.fillStyle = tofAgeColor(fr(c), 1);
+            ctx.beginPath();
+            ctx.moveTo(c.x + ux * s * 1.2, c.y + uy * s * 1.2);
+            ctx.lineTo(c.x - ux * s - uy * s * 0.7, c.y - uy * s + ux * s * 0.7);
+            ctx.lineTo(c.x - ux * s + uy * s * 0.7, c.y - uy * s - ux * s * 0.7);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
     }
     // The trend in numbers: where the level sits against the window, how fast
     // it is walking, and how many [L] steps the log saw — one glance, no
