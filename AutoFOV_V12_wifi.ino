@@ -2034,7 +2034,8 @@ static void startFullServer() {
         // for the mm/°C correlation with zero manual captures. imuT10 (LSM6DSOX,
         // low self-heat, near the sensor) is the preferred axis; dieT10 (SoC)
         // separates load-driven heating. imuT10 = -32768 until first IMU read.
-        // flags bit0 = first row after a boot (the dashboard's dashed seams).
+        // flags bit0 = first row after a boot (the dashboard's dashed seams),
+        // bit1 = TOF cold / re-locking (plotted hollow, excluded from temp fits).
         put("],\"trend\":[");
         uint32_t tcnt = tofTrendCount.load(std::memory_order_acquire);
         uint32_t tn = min(tcnt, (uint32_t)TOF_TREND_RING);

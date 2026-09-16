@@ -1229,7 +1229,8 @@ std::atomic<uint32_t> gDieTempC10{0};
 struct TofTrendPt { int64_t ms;   // trend clock (see tofTrendNowMs); ≤ 0 = before this boot
                     uint16_t emaT; uint16_t cps100; uint16_t amb100;
                     uint16_t spads; uint8_t n;
-                    uint8_t flags;       // bit0 = first valid row after a boot (was pad —
+                    uint8_t flags;       // bit0 = first valid row after a boot, bit1 = TOF
+                                         // cold (excluded from temp fits) (was pad —
                                          // same layout, old checkpoints read as 0)
                     int16_t dieT10;      // SoC die ×10 — load-correlated (WiFi/CPU)
                     int16_t imuT10; };   // LSM6DSOX ×10 — the TOF ambient proxy;
@@ -1453,6 +1454,16 @@ bool           tofHot           = false;            // false = cold (biased), tr
 // tofRelockDueMs directly, so a manual cure still fires immediately.
 const unsigned long TOF_RELOCK_DELAY_MS = 45000UL;  // auto-cure this long after a cold start
 const unsigned long TOF_RELOCK_DWELL_MS = 2500UL;   // range in the opposite mode for this long
+// Cold-row flag for the 5-min trend (flags bit1). A row is cold when the sensor
+// is not cured (tofHot false — covers a re-lock still pending or mid-dwell) or
+// within TOF_TREND_COLD_MS of a genuine cold start: power-on/brownout boot,
+// wake from sleep, self-heal restart. 5.5 min so the first 5-min row after a
+// cold start is always inside the window (the zero guard's own warm-up rule is
+// 5 min). A soft reboot keeps the sensor powered and warm — tofHot alone gates
+// it. Core 1 writes (armTofRelock / cure / dwell), sensorTask reads.
+const unsigned long TOF_TREND_COLD_MS = 330000UL;
+std::atomic<uint32_t> tofColdStartMs{0};     // millis() of the last cold start; 0 = none
+std::atomic<bool>     tofTrendCold{true};    // mirror of (!tofHot || dwell)
 // V12.5 (F3): sensorTask liveness heartbeat — stores millis() at the TOP of
 // every poll iteration (the sleep path still loops ~100 ms, so a fresh value
 // means alive-or-idle, NOT necessarily ranging). loop() (Core 1) watches this;
@@ -4679,6 +4690,9 @@ void applyHighReflConfig() { applyReflConfig(highReflMode); }
 // command still exists for bench use and does not touch tofHot.)
 void armTofRelock() {
   tofHot          = false;                        // biased until a cure cycle runs
+  tofTrendCold.store(true, std::memory_order_release);
+  uint32_t nowMs  = millis();
+  tofColdStartMs.store(nowMs ? nowMs : 1, std::memory_order_release);
   tofRelockPhase  = TOF_RELOCK_IDLE;              // cancel any half-done cycle
   tofRelockDueMs  = millis() + TOF_RELOCK_DELAY_MS;
   if (tofRelockDueMs == 0) tofRelockDueMs = 1;    // 0 is the "none pending" sentinel
@@ -4909,6 +4923,11 @@ void sensorTask(void *pvParameters) {
             tp.ms = tofTrendNowMs(); tp.emaT = snap.emaT; tp.amb100 = snap.amb100;
             tp.spads = snap.spads; tp.n = snap.n;
             tp.flags = bootMarkPending ? 1 : 0;
+            {
+              uint32_t cs = tofColdStartMs.load(std::memory_order_acquire);
+              if (tofTrendCold.load(std::memory_order_acquire) ||
+                  (cs && millis() - cs < TOF_TREND_COLD_MS)) tp.flags |= 2;
+            }
             if (snap.emaT > 0) bootMarkPending = false;
             tp.dieT10 = (int16_t)(int32_t)gDieTempC10.load(std::memory_order_relaxed);
             uint32_t a10 = gAmbientTempC10.load(std::memory_order_relaxed);
@@ -6238,6 +6257,11 @@ void setup() {
     applyHighReflConfig();   // sets timing budget + ROI per current highReflMode
     sensor.VL53L4CX_StartMeasurement();
     armTofRelock();          // cold boot → mark cold + schedule auto cure
+    {                        // soft restart: sensor stayed powered — no warm-up window
+      esp_reset_reason_t rr = esp_reset_reason();
+      if (rr != ESP_RST_POWERON && rr != ESP_RST_BROWNOUT)
+        tofColdStartMs.store(0, std::memory_order_release);
+    }
     imuSetup();              // V12: bring up the LSM6DSOX on the same I²C bus
     xSemaphoreGive(i2cMutex);
   }
@@ -6681,6 +6705,7 @@ void loop() {
         sensorEmaReset.store(true, std::memory_order_release);
         tofRelockPhase = TOF_RELOCK_IDLE;
         tofHot = true;                    // cured — main-screen tag flips to HOT
+        tofTrendCold.store(false, std::memory_order_release);
         // Ambient in the log line: cure events shift the reading (~+2.6 mm on
         // the 7/27/26 bench), so a serial trace can tie a step to its cure.
         Serial.printf("[tof] re-lock complete (t=%lu ms, ambient %.1f C)\n",
@@ -6704,6 +6729,7 @@ void loop() {
       sensorEmaReset.store(true, std::memory_order_release);
       tofRelockDueMs   = 0;
       tofRelockPhase   = TOF_RELOCK_DWELL;
+      tofTrendCold.store(true, std::memory_order_release);   // opposite-mode rows aren't the level
       tofRelockPhaseMs = millis();
       // Timestamped so an early cure is distinguishable from a stale UI at a
       // glance: an automatic cure cannot begin before TOF_RELOCK_DELAY_MS.
