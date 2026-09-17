@@ -357,7 +357,6 @@
         #btn-fov-info {
             position: absolute; left: 152px; top: 2px; width: 44px; height: 40px; cursor: pointer;
         }
-        .fov-bullet { position: absolute; top: 20px; width: 2px; height: 2px; background: #CA00FC; border-radius: 50%; }
         .fov-err     { color: inherit; letter-spacing: 0; font-weight: normal; }
         .fov-err::before,
         .fov-err::after { position: relative; top: -3px; }
@@ -393,54 +392,95 @@
            top:6/8px the rows ship with. */
         .stack-row .gfx-text { top: 50% !important; transform: translateY(-50%); }
 
-        /* Web STACK CALC / STACK TIME — the TOF TARGETS green panel family
-           (#0a1f1a fill, #2a7a6a rule, #3ddb7a live) with blue / orange nudge
-           buttons for variety. Cards are fixed-dark on every theme, like
-           .tof-stats. Values edit in place; .sk-nudge buttons hold-to-repeat. */
-        .sk-card { position: absolute; left: 12px; width: 216px; height: 60px; box-sizing: border-box;
+        /* Shared web menu kit (.mn-*) — STACK CALC / TIME, BRIGHTNESS, IR,
+           TIMEOUTS; build new menu cards from these. The TOF TARGETS green
+           panel family (#0a1f1a fill, #2a7a6a rule, #3ddb7a live) with blue /
+           orange accents for variety. Cards are fixed-dark on every theme, like
+           .tof-stats. Values edit in place; .mn-nudge buttons hold-to-repeat. */
+        .mn-card { position: absolute; left: 12px; width: 216px; height: 60px; box-sizing: border-box;
                    padding: 6px 7px 7px; border-radius: 5px;
                    background: linear-gradient(180deg, #0c2620 0%, #081813 100%);
                    border: 1px solid #2a7a6a; box-shadow: inset 0 1px 0 rgba(160,255,220,0.07); }
-        .sk-k  { display: flex; justify-content: space-between; align-items: baseline;
+        .mn-k  { display: flex; justify-content: space-between; align-items: baseline;
                  font-size: 8px; font-weight: bold; letter-spacing: 0.12em; color: #7ab4a2; line-height: 1; }
-        .sk-kr { font-weight: normal; letter-spacing: 0.04em; color: #4f7d70; }
-        .sk-field { display: flex; gap: 5px; margin-top: 5px; height: 32px; }
-        .sk-input { flex: 1 1 auto; min-width: 0; height: 100%; box-sizing: border-box; margin: 0;
+        .mn-kr { font-weight: normal; letter-spacing: 0.04em; color: #4f7d70; }
+        .mn-field { display: flex; gap: 5px; margin-top: 5px; height: 32px; }
+        .mn-input { flex: 1 1 auto; min-width: 0; height: 100%; box-sizing: border-box; margin: 0;
                     background: #061512; border: 1px solid #1f3a33; border-radius: 4px;
                     color: #eafff6; font: bold 17px monospace; text-align: center; text-align-last: center;
                     padding: 0 4px; outline: none; cursor: text;
                     -moz-appearance: textfield; appearance: textfield;
                     transition: border-color 90ms ease-out, box-shadow 90ms ease-out; }
-        .sk-input::-webkit-outer-spin-button,
-        .sk-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        .sk-input:hover { border-color: #2a7a6a; }
-        .sk-input:focus { border-color: #3ddb7a; box-shadow: 0 0 0 1px rgba(61,219,122,0.35), 0 0 8px rgba(61,219,122,0.25); }
-        .sk-select { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 16px;
+        .mn-input::-webkit-outer-spin-button,
+        .mn-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .mn-input:hover { border-color: #2a7a6a; }
+        .mn-input:focus { border-color: #3ddb7a; box-shadow: 0 0 0 1px rgba(61,219,122,0.35), 0 0 8px rgba(61,219,122,0.25); }
+        .mn-select { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 16px;
                      background: #061512 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%233ddb7a'/%3E%3C/svg%3E") no-repeat right 7px center; }
-        .sk-select option { background: #0a1f1a; color: #cfe7df; font-size: 13px; }
-        .sk-nudge { flex: 0 0 34px; height: 100%; box-sizing: border-box; border-radius: 4px;
+        .mn-select option { background: #0a1f1a; color: #cfe7df; font-size: 13px; }
+        .mn-nudge { flex: 0 0 34px; height: 100%; box-sizing: border-box; border-radius: 4px;
                     display: flex; align-items: center; justify-content: center; cursor: pointer;
                     font: bold 19px/1 system-ui, sans-serif; user-select: none; -webkit-user-select: none;
                     touch-action: none; transition: filter 60ms ease-out, transform 60ms ease-out;
                     box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -2px 3px rgba(0,0,0,0.3); }
-        .sk-nudge.sk-blue   { background: linear-gradient(180deg, #2a5fa4, #173b6e); border: 1px solid #74b9ff; color: #dbeeff; }
-        .sk-nudge.sk-orange { background: linear-gradient(180deg, #a3590d, #6e3a05); border: 1px solid #ffab3d; color: #ffe6c7; }
-        .sk-nudge:hover  { filter: brightness(1.15); }
-        .sk-nudge.held   { filter: brightness(1.45); transform: scale(0.94); }
-        .sk-chip { position: absolute; height: 20px; padding: 0 7px; box-sizing: border-box; border-radius: 10px;
+        .mn-nudge.mn-blue   { background: linear-gradient(180deg, #2a5fa4, #173b6e); border: 1px solid #74b9ff; color: #dbeeff; }
+        .mn-nudge.mn-orange { background: linear-gradient(180deg, #a3590d, #6e3a05); border: 1px solid #ffab3d; color: #ffe6c7; }
+        .mn-nudge:hover  { filter: brightness(1.15); }
+        .mn-nudge.held   { filter: brightness(1.45); transform: scale(0.94); }
+        /* Sliders: dark track, colour-ramp fill, round knob. Ids stay on the
+           track / fill / thumb so startSlider() + the update fns drive them. */
+        .mn-slider { position: relative; margin-top: 12px; height: 16px; box-sizing: border-box;
+                     background: #061512; border: 1px solid #1f3a33; border-radius: 8px;
+                     cursor: pointer; touch-action: none; }
+        .mn-slider:hover { border-color: #2a7a6a; }
+        .mn-slider-fill  { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px 0 0 8px; }
+        .mn-slider-thumb { position: absolute; top: 50%; width: 20px; height: 20px; border-radius: 50%;
+                           transform: translate(-50%, -50%); box-sizing: border-box; pointer-events: none;
+                           background: radial-gradient(circle at 35% 30%, #ffffff 0%, #dfeee8 45%, #9fb8ae 100%);
+                           border: 2px solid var(--mn-ring, #3ddb7a);
+                           box-shadow: 0 1px 3px rgba(0,0,0,0.6), 0 0 8px var(--mn-glow, rgba(61,219,122,0.35)); }
+        .mn-slider.mn-amber { --mn-ring: #ffab3d; --mn-glow: rgba(255,171,61,0.45); }
+        .mn-slider.mn-amber .mn-slider-fill { background: linear-gradient(90deg, #6e3a05, #d98a1c 60%, #ffd35c); }
+        .mn-slider.mn-cyan  { --mn-ring: #74b9ff; --mn-glow: rgba(116,185,255,0.45); }
+        .mn-slider.mn-cyan  .mn-slider-fill { background: linear-gradient(90deg, #173b6e, #2f7fd8 60%, #8fd0ff); }
+        .mn-slider.mn-tint  .mn-slider-fill { background: linear-gradient(90deg, #0b3d24, #1f9a55 60%, #5dff9a); }
+        .mn-slider.mn-off { cursor: default; }
+        .mn-slider.mn-off .mn-slider-fill { background: repeating-linear-gradient(135deg, #0c1c18 0 5px, #081411 5px 10px) !important; width: 100% !important; border-radius: 8px; }
+        .mn-slider.mn-off .mn-slider-thumb { display: none; }
+        /* Larger coloured card label (slider cards); colour set inline. */
+        .mn-lbl   { font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+                    text-shadow: 0 0 6px rgba(0,0,0,0.6); }
+        /* Percentage readout that is also an input. */
+        .mn-pct   { display: flex; align-items: center; gap: 3px; color: #7ab4a2; font-weight: normal; letter-spacing: 0; }
+        .mn-input.mn-mini { flex: none; width: 38px; height: 18px; font-size: 11px; padding: 0 2px; color: #3ddb7a; }
+        .mn-input.mn-mini:disabled { color: #4f7d70; cursor: default; }
+        /* ON/OFF pill switch. */
+        .mn-switch { position: relative; width: 34px; height: 18px; margin-left: 6px; box-sizing: border-box; cursor: pointer;
+                     border-radius: 9px; background: #2a1414; border: 1px solid #7a3a3a; transition: background 120ms, border-color 120ms; }
+        .mn-switch i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+                       background: #c9a3a3; transition: left 120ms ease-out, background 120ms; }
+        .mn-switch.on   { background: #0f4a2c; border-color: #3ddb7a; box-shadow: 0 0 6px rgba(61,219,122,0.4); }
+        .mn-switch.on i { left: 18px; background: #eafff6; }
+        /* Card of action buttons. */
+        .mn-pad  { padding: 8px 9px 9px; }
+        .mn-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 8px;
+                   margin-top: 9px; height: calc(100% - 17px); }
+        .mn-gbtn { position: relative; gap: 7px; font-size: 13px; }
+        .mn-wide { grid-column: 1 / -1; }
+        .mn-chip { position: absolute; height: 20px; padding: 0 7px; box-sizing: border-box; border-radius: 10px;
                    display: flex; align-items: center; gap: 4px; white-space: nowrap;
                    background: #0a1f1a; border: 1px solid #2a7a6a; color: #3ddb7a;
                    font: bold 9px monospace; letter-spacing: 0.02em; }
-        .sk-chip .sk-na { color: #7ab4a2; font-weight: normal; }
-        .sk-stats .tof-stat { background: linear-gradient(180deg, #0c2620 0%, #081813 100%); border-color: #1f5a4c; }
-        .sk-stats .tof-stat .k, .sk-stats .tof-stat .u { color: #7ab4a2; }
-        .sk-stats .tof-stat .v { color: #eafff6; }
-        .sk-tap { cursor: pointer; }
-        .sk-tap:hover .tof-stat { border-color: #2a7a6a; }
-        .sk-meter { position: absolute; left: 12px; width: 216px; height: 6px; border-radius: 3px;
+        .mn-chip .mn-na { color: #7ab4a2; font-weight: normal; }
+        .mn-stats .tof-stat { background: linear-gradient(180deg, #0c2620 0%, #081813 100%); border-color: #1f5a4c; }
+        .mn-stats .tof-stat .k, .mn-stats .tof-stat .u { color: #7ab4a2; }
+        .mn-stats .tof-stat .v { color: #eafff6; }
+        .mn-tap { cursor: pointer; }
+        .mn-tap:hover .tof-stat { border-color: #2a7a6a; }
+        .mn-meter { position: absolute; left: 12px; width: 216px; height: 6px; border-radius: 3px;
                     background: #061512; border: 1px solid #1f3a33; box-sizing: border-box; overflow: hidden; }
-        .sk-meter-fill { height: 100%; width: 0; border-radius: 3px; transition: width 140ms ease-out, background 140ms; }
-        .sk-meter-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(207,231,223,0.35); }
+        .mn-meter-fill { height: 100%; width: 0; border-radius: 3px; transition: width 140ms ease-out, background 140ms; }
+        .mn-meter-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(207,231,223,0.35); }
         .sk-go { justify-content: flex-start; padding-left: 40px; }
         .sk-go-time { margin-left: auto; font: bold 13px monospace; color: #ffc27a;
                       text-shadow: 0 0 6px rgba(255,160,60,0.35); }
@@ -454,7 +494,7 @@
                      display: flex; flex-direction: column; justify-content: center; gap: 8px;
                      background: radial-gradient(120% 90% at 50% 0%, #3a2408 0%, #1a1206 55%, #0d0a05 100%);
                      border: 1px solid #b86a14; box-shadow: inset 0 1px 0 rgba(255,200,130,0.12), 0 0 12px rgba(255,140,40,0.12); }
-        .sk-result .sk-k { color: #e0a060; }
+        .sk-result .mn-k { color: #e0a060; }
         .sk-total  { font: bold 28px/1 monospace; color: #FFA500; text-shadow: 0 0 10px rgba(255,165,0,0.35); }
         .sk-finish { font-size: 10px; color: #c89a64; min-height: 10px; }
 
@@ -493,49 +533,27 @@
                       box-sizing: border-box; font-size: 9px; color: #FFF; }
         .leg-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
 
-        /* --- BRIGHTNESS SLIDERS --- */
-        .slider-track {
-            position: absolute; left: 15px; width: 210px; height: 22px;
-            background: #787878; border-radius: 2px; border: 1px solid #C0C0C0;
-            box-sizing: border-box; cursor: pointer; overflow: hidden;
-        }
-        .slider-fill { height: 100%; border-radius: 2px; transition: none; }
-        .slider-thumb {
-            position: absolute; top: 0; width: 4px; height: 100%;
-            background: white; transform: translateX(-2px);
-        }
-        .slider-track { touch-action: none; }
 
-        /* --- SCREEN TIMEOUT ADJUSTERS --- */
-        .timeout-val {
-            position: absolute; left: 60px; width: 120px; text-align: center;
-            font-size: 16px; color: #ADFF2F; font-weight: bold;
-        }
-
-        /* --- THEME SWATCHES --- */
+        /* --- THEME SWATCHES (TIMEOUTS card) --- */
+        .mn-swatches { display: flex; gap: 6px; margin-top: 7px; height: 44px; }
         .theme-swatch {
-            position: absolute; width: 50px; height: 35px; top: 235px;
-            border-radius: 3px; cursor: pointer; display: flex;
-            justify-content: center; align-items: center;
-            font-size: 16px; font-weight: bold; border: 1px solid #787878;
-            /* patched3 UI polish: bevel only — no gradient, so the swatch
-               still reads as a faithful sample of its theme color. */
+            flex: 1 1 0; border-radius: 4px; cursor: pointer; display: flex;
+            justify-content: center; align-items: center; box-sizing: border-box;
+            font-size: 14px; font-weight: bold; color: #fff; border: 1px solid #1f3a33;
+            /* bevel only — no gradient, so the swatch still reads as a
+               faithful sample of its theme color. */
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.32),
                         inset 0 -2px 3px rgba(0,0,0,0.32);
-            text-shadow: 0 1px 1px rgba(0,0,0,0.5);
+            text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+            transition: box-shadow 90ms ease-out;
         }
-        .theme-swatch.active { border: 2px solid white; }
+        .theme-swatch.active { border: 2px solid #3ddb7a;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -2px 3px rgba(0,0,0,0.32),
+                        0 0 0 1px #06120f, 0 0 9px rgba(61,219,122,0.65); }
 
-        /* --- TINT SLIDER --- */
-        #tint-track {
-            position: absolute; left: 70px; width: 155px; height: 12px;
-            background: #787878; border-radius: 2px; top: 193px;
-            cursor: pointer; box-sizing: border-box;
-        }
-        #tint-fill {
-            height: 100%; border-radius: 2px; background: #00FF00;
-        }
-        #tint-center { position: absolute; left: 50%; top: -3px; width: 1px; height: 18px; background: white; }
+        /* --- TINT SLIDER (centre tick = neutral) --- */
+        #tint-center { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px;
+                       background: rgba(207,231,223,0.55); pointer-events: none; }
 
         /* --- CALIB BLOCK (MAIN) --- */
         /* Shares .gfx-btn (added in markup) for the sheen + bevel + press
@@ -679,23 +697,34 @@
                             display:flex; flex-direction:column; align-items:center; justify-content:center;">
                     <div style="font-size:7px; color:#3ddb7a; letter-spacing:0.6px; line-height:1;">VIBE</div>
                     <svg width="34" height="14" viewBox="0 1 34 19" style="display:block; margin:0;" preserveAspectRatio="none">
-                        <defs><path id="vibwave" d="M 2,11 Q 3,2 4,11 Q 5,19 6,11 Q 7,3 8,11 Q 9,18 10,11 Q 11,4 12,11 Q 13,17 14,11 Q 15,5 16,11 Q 17,16 18,11 Q 19,6 20,11 Q 21,15 22,11 Q 23,7 24,11 Q 25,14 26,11 Q 27,8 28,11 Q 29,13 30,11 Q 31,10 32,11"/></defs>
+                        <defs><path id="vibwave" d="M 2,11 Q 3,10 4,11 Q 5,13 6,11 Q 7,8 8,11 Q 9,14 10,11 Q 11,7 12,11 Q 13,15 14,11 Q 15,6 16,11 Q 17,16 18,11 Q 19,5 20,11 Q 21,17 22,11 Q 23,4 24,11 Q 25,18 26,11 Q 27,3 28,11 Q 29,19 30,11 Q 31,2 32,11"/></defs>
                         <line x1="1" y1="11" x2="33" y2="11" stroke="#1f3a33" stroke-width="0.8"/>
                         <!-- extruded depth: dark copies stepped up-right behind the lit wave -->
                         <use href="#vibwave" transform="translate(1.05,-0.85)" fill="none" stroke="#05230f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                         <use href="#vibwave" transform="translate(0.70,-0.57)" fill="none" stroke="#0a3a1c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                         <use href="#vibwave" transform="translate(0.35,-0.28)" fill="none" stroke="#11542b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                        <use href="#vibwave" fill="none" stroke="#3ddb7a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        <use href="#vibwave" fill="none" stroke="#1f5a3a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        <!-- Live meter: colour draws ALONG the wave, left → right, as a dash
+                             (pathLength 100 → dash = % filled). -->
+                        <path id="vib-live-wave" d="M 2,11 Q 3,10 4,11 Q 5,13 6,11 Q 7,8 8,11 Q 9,14 10,11 Q 11,7 12,11 Q 13,15 14,11 Q 15,6 16,11 Q 17,16 18,11 Q 19,5 20,11 Q 21,17 22,11 Q 23,4 24,11 Q 25,18 26,11 Q 27,3 28,11 Q 29,19 30,11 Q 31,2 32,11" pathLength="100" stroke-dasharray="0 100"
+                              fill="none" stroke="#3ddb7a" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"
+                              style="transition: stroke-dasharray 120ms linear;"/>
                     </svg>
                     <div style="font-size:7px; color:#3ddb7a; letter-spacing:0.6px; line-height:1;">CHECK</div>
                 </div>
 
-                <!-- FOV Info zone: two purple bullets flanking text -->
-                <!-- WiFi status zone: top-middle x=93..151 -->
-<div id="btn-fov-info" onclick="switchScreen('screen-fovinfo')">
-                    <div class="fov-bullet" style="left: 3px;"></div>
-                    <div class="gfx-text" style="left: 9px; top: 10px; color: var(--accent-magenta); font-size: 10px; text-align: center;">FOV<br>Info</div>
-                    <div class="fov-bullet" style="left: 33px;"></div>
+                <!-- FOV Info → CAL GRAPH: a mini calibration plot (axes, purple 1/x fit
+                     curve, green fit points + one orange outlier, "FOV" upper-right).
+                     Same pixel geometry as the firmware's drawFovInfoIcon(). -->
+<div id="btn-fov-info" onclick="switchScreen('screen-calgraph')" title="Calibration graph">
+                    <svg width="44" height="40" viewBox="0 0 44 40" style="display:block;">
+                        <path d="M9.5 11V31.5H37" fill="none" stroke="var(--text-disabled)" stroke-width="1"/>
+                        <polyline points="11,13 13,17.3 15,20.1 17,22.1 19,23.7 21,24.9 23,25.8 25,26.6 27,27.2 29,27.8 31,28.2 33,28.6 35,29"
+                                  fill="none" stroke="var(--accent-magenta)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                        <g fill="#48e878"><circle cx="12.9" cy="17.1" r="1.4"/><circle cx="18.2" cy="23.1" r="1.4"/><circle cx="25.4" cy="26.7" r="1.4"/></g>
+                        <circle cx="33.8" cy="26.3" r="1.4" fill="#ff8a3d"/>
+                        <text x="40" y="17" text-anchor="end" fill="var(--accent-magenta)" font-family="monospace" font-weight="bold" font-size="8">FOV</text>
+                    </svg>
                 </div>
 
                 <!-- Gear icon — true extrusion: the cog path (defined once as
@@ -791,12 +820,16 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 100px;">SETTINGS</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
 
-                <!-- Brightness mini-bar (static preview in settings) -->
-                <div class="gfx-text" style="left: 15px; top: 52px; font-size: 11px; color: var(--text-muted);">BRIGHTNESS</div>
-                <div id="settings-bright-pct" class="gfx-text" style="right: 15px; top: 52px; font-size: 11px; color: var(--accent-green);">50%</div>
-                <div class="slider-track" style="top: 72px;" id="settings-slider" onmousedown="startSlider(event,'brightness')" ontouchstart="startSlider(event,'brightness')">
-                    <div id="settings-slider-fill" class="slider-fill" style="background:#FFD700; width:50%;"></div>
-                    <div id="settings-slider-thumb" class="slider-thumb" style="left:50%;"></div>
+                <!-- Screen brightness — same .mn-slider card as the BRIGHTNESS screen. -->
+                <div class="mn-card" style="top: 44px; height: 66px;">
+                    <div class="mn-k"><span class="mn-lbl" style="color:#ffc15c;">SCREEN BRIGHTNESS</span>
+                        <span class="mn-pct"><input id="settings-bright-pct" class="mn-input mn-mini" type="number" inputmode="numeric"
+                               min="1" max="100" step="1" onchange="setBrightPct('brightness', this.value, this)"
+                               onkeydown="if(event.key==='Enter')this.blur()" onfocus="this.select()" title="Type a percentage">%</span></div>
+                    <div class="mn-slider mn-amber" id="settings-slider" onmousedown="startSlider(event,'brightness')" ontouchstart="startSlider(event,'brightness')">
+                        <div id="settings-slider-fill" class="mn-slider-fill" style="width:50%;"></div>
+                        <div id="settings-slider-thumb" class="mn-slider-thumb" style="left:50%;"></div>
+                    </div>
                 </div>
 
                 <!-- STACK CALC with calculator icon (patched3: redrawn cleaner) -->
@@ -884,30 +917,30 @@
             <div id="screen-stackcalc" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 110px;">STACK CALC</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
-                <div id="val-calc-obj" class="sk-chip" style="right: 40px; top: 9px;">20x</div>
+                <div id="val-calc-obj" class="mn-chip" style="right: 40px; top: 9px;">20x</div>
 
-                <div class="sk-card" style="top: 42px;">
-                    <div class="sk-k">STEP SIZE <span id="sk-step-idx" class="sk-kr">6 / 23</span></div>
-                    <div class="sk-field">
-                        <div class="sk-nudge sk-blue" data-nudge="step" data-dir="-1" title="Smaller step (hold to repeat)">&#8249;</div>
-                        <select id="val-step" class="sk-input sk-select" onchange="setStepIndex(+this.value)"
+                <div class="mn-card" style="top: 42px;">
+                    <div class="mn-k">STEP SIZE <span id="sk-step-idx" class="mn-kr">6 / 23</span></div>
+                    <div class="mn-field">
+                        <div class="mn-nudge mn-blue" data-nudge="step" data-dir="-1" title="Smaller step (hold to repeat)">&#8249;</div>
+                        <select id="val-step" class="mn-input mn-select" onchange="setStepIndex(+this.value)"
                                 title="Step size — the rail's fixed table"></select>
-                        <div class="sk-nudge sk-blue" data-nudge="step" data-dir="1" title="Larger step (hold to repeat)">&#8250;</div>
+                        <div class="mn-nudge mn-blue" data-nudge="step" data-dir="1" title="Larger step (hold to repeat)">&#8250;</div>
                     </div>
                 </div>
 
-                <div class="sk-card" style="top: 108px;">
-                    <div class="sk-k">IMAGES <span class="sk-kr">2 &ndash; 50000</span></div>
-                    <div class="sk-field">
-                        <div class="sk-nudge sk-orange" data-nudge="imgs" data-dir="-1" title="One fewer (hold to repeat, speeds up)">&minus;</div>
-                        <input id="val-imgs" class="sk-input" type="number" inputmode="numeric" min="2" max="50000" step="1"
+                <div class="mn-card" style="top: 108px;">
+                    <div class="mn-k">IMAGES <span class="mn-kr">2 &ndash; 50000</span></div>
+                    <div class="mn-field">
+                        <div class="mn-nudge mn-orange" data-nudge="imgs" data-dir="-1" title="One fewer (hold to repeat, speeds up)">&minus;</div>
+                        <input id="val-imgs" class="mn-input" type="number" inputmode="numeric" min="2" max="50000" step="1"
                                onchange="setImgs(this.value)" onkeydown="if(event.key==='Enter')this.blur()"
                                onfocus="this.select()" title="Type the image count">
-                        <div class="sk-nudge sk-orange" data-nudge="imgs" data-dir="1" title="One more (hold to repeat, speeds up)">+</div>
+                        <div class="mn-nudge mn-orange" data-nudge="imgs" data-dir="1" title="One more (hold to repeat, speeds up)">+</div>
                     </div>
                 </div>
 
-                <div class="tof-stats sk-stats" style="top: 176px;">
+                <div class="tof-stats mn-stats" style="top: 176px;">
                     <div class="tof-stat"><div class="k">DOF</div>
                          <div class="v"><span id="val-dof">—</span><span class="u">&micro;m</span></div></div>
                     <div class="tof-stat"><div class="k">DEPTH</div>
@@ -916,9 +949,9 @@
                          <div class="v"><span id="val-overlap">—</span><span class="u">%</span></div></div>
                 </div>
                 <!-- Overlap gauge: step vs DOF. Green ≥30%, amber 0–30%, red = gaps. -->
-                <div class="sk-meter" style="top: 238px;" title="Frame-to-frame DOF overlap">
-                    <div id="sk-overlap-fill" class="sk-meter-fill"></div>
-                    <div class="sk-meter-tick" style="left: 30%;"></div>
+                <div class="mn-meter" style="top: 238px;" title="Frame-to-frame DOF overlap">
+                    <div id="sk-overlap-fill" class="mn-meter-fill"></div>
+                    <div class="mn-meter-tick" style="left: 30%;"></div>
                 </div>
 
                 <div class="gfx-btn btn-tof btn-steel sk-go" style="top: 258px; height: 48px;"
@@ -939,7 +972,7 @@
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-stackcalc')">X</div>
 
                 <!-- The stack being timed — tap to go back and change it. -->
-                <div class="tof-stats sk-stats sk-tap" style="top: 42px;" onclick="goBack('screen-stackcalc')"
+                <div class="tof-stats mn-stats mn-tap" style="top: 42px;" onclick="goBack('screen-stackcalc')"
                      title="Edit the stack in STACK CALC">
                     <div class="tof-stat"><div class="k">STEP</div>
                          <div class="v"><span id="time-val-step">—</span><span class="u">&micro;m</span></div></div>
@@ -949,14 +982,14 @@
                          <div class="v"><span id="time-val-imgs">—</span></div></div>
                 </div>
 
-                <div class="sk-card" style="top: 106px;">
-                    <div class="sk-k">SEC / STEP <span class="sk-kr">0.1 &ndash; 60 s</span></div>
-                    <div class="sk-field">
-                        <div class="sk-nudge sk-orange" data-nudge="sec" data-dir="-1" title="−0.1 s (hold to repeat, speeds up)">&minus;</div>
-                        <input id="val-secstep" class="sk-input" type="number" inputmode="decimal" min="0.1" max="60" step="0.1"
+                <div class="mn-card" style="top: 106px;">
+                    <div class="mn-k">SEC / STEP <span class="mn-kr">0.1 &ndash; 60 s</span></div>
+                    <div class="mn-field">
+                        <div class="mn-nudge mn-orange" data-nudge="sec" data-dir="-1" title="−0.1 s (hold to repeat, speeds up)">&minus;</div>
+                        <input id="val-secstep" class="mn-input" type="number" inputmode="decimal" min="0.1" max="60" step="0.1"
                                onchange="setSecStep(this.value)" onkeydown="if(event.key==='Enter')this.blur()"
                                onfocus="this.select()" title="Type seconds per step">
-                        <div class="sk-nudge sk-orange" data-nudge="sec" data-dir="1" title="+0.1 s (hold to repeat, speeds up)">+</div>
+                        <div class="mn-nudge mn-orange" data-nudge="sec" data-dir="1" title="+0.1 s (hold to repeat, speeds up)">+</div>
                     </div>
                 </div>
 
@@ -969,41 +1002,22 @@
                 </div>
 
                 <div class="sk-result" style="top: 204px;">
-                    <div class="sk-k" style="justify-content: center;">CALCULATED STACK TIME</div>
+                    <div class="mn-k" style="justify-content: center;">CALCULATED STACK TIME</div>
                     <div id="val-totaltime" class="sk-total">—</div>
                     <div id="time-finish" class="sk-finish"></div>
                 </div>
             </div>
 
-            <!-- ===================== FOV INFO ===================== -->
-            <div id="screen-fovinfo" class="screen">
-                <div class="title-stripe" style="left: 5px; top: 5px; width: 105px;">CALIB INFO</div>
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
-
-                <div id="fovinfo-status" class="gfx-text" style="width: 240px; text-align: center; top: 60px; color: var(--accent-green); font-size: 12px;">Status: —</div>
-
-                <div class="gfx-text" style="left: 20px; top: 95px;  color: var(--text-disabled); font-size: 12px;">Slope:</div>
-                <div id="fovinfo-slope" class="gfx-text" style="right: 15px; top: 95px;  color: var(--text-primary); font-size: 12px;">—</div>
-                <div class="gfx-text" style="left: 20px; top: 120px; color: var(--text-disabled); font-size: 12px;">Intercept:</div>
-                <div id="fovinfo-intercept" class="gfx-text" style="right: 15px; top: 120px; color: var(--text-primary); font-size: 12px;">—</div>
-                <div class="gfx-text" style="left: 20px; top: 145px; color: var(--text-disabled); font-size: 12px;">Base Err:</div>
-                <div id="fovinfo-err" class="gfx-text" style="right: 15px; top: 145px; color: #00FF00; font-size: 12px;">—</div>
-                <div class="gfx-text" style="left: 20px; top: 170px; color: var(--text-disabled); font-size: 12px;">R-Squared:</div>
-                <div id="fovinfo-r2" class="gfx-text" style="right: 15px; top: 170px; color: #00FF00; font-size: 12px;">—</div>
-                <div class="gfx-text" style="left: 20px; top: 200px; color: var(--text-disabled); font-size: 12px;">Photo Width:</div>
-                <div id="fovinfo-photowidth" class="gfx-text" style="right: 15px; top: 200px; color: var(--text-primary); font-size: 12px;">—</div>
-
-                <div class="gfx-btn" style="left: 20px; top: 270px; width: 95px; height: 40px;
-                     background: #000; border: 1px solid #787878; color: #FFF;"
-                     onclick="switchScreen('screen-calgraph')">GRAPH</div>
-                <div class="gfx-btn" style="left: 125px; top: 270px; width: 95px; height: 40px;
-                     background: #000; border: 1px solid #2a7a6a; color: #3ddb7a;"
-                     onclick="openCalPoints()">POINTS</div>
-            </div>
-
             <!-- ===================== CAL GRAPH ===================== -->
+            <!-- The FOV-info tap lands here directly (the old CALIB INFO stats page
+                 duplicated the legend and was removed on both sides); its status
+                 line lives top-left and POINTS bottom-right. -->
             <div id="screen-calgraph" class="screen">
-                <div class="gfx-btn btn-close-x" onclick="goBack('screen-fovinfo')">X</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-main')">X</div>
+                <div id="calgraph-status" class="gfx-text" style="left: 8px; top: 12px; font-size: 12px; font-weight: bold;
+                     display: flex; align-items: center; gap: 6px; color: var(--accent-green);"
+                     title="Calibration in use"><span id="calgraph-status-dot" style="width: 8px; height: 8px; border-radius: 50%;
+                     background: currentColor; box-shadow: 0 0 5px currentColor;"></span><span id="calgraph-status-txt">—</span></div>
                 <!-- Y-axis label rotated. left:-8 hugs the screen's left edge
                      so the rotated text sits just left of the canvas y-tick
                      column without a wasted gutter. -->
@@ -1044,6 +1058,9 @@
                      line that's actually fit, where R²/m/b read literally). -->
                 <div id="calgraph-mode" class="gfx-btn" style="left:6px; top:299px; width:128px; height:17px;
                      background:#143a3a; border:1px solid #2a5e58; font-size:9px;" onclick="toggleCalGraphMode()">VIEW: FOV vs DIST</div>
+                <div class="gfx-btn" style="left:140px; top:299px; width:94px; height:17px;
+                     background:#0a3344; border:1px solid #2a7a9a; font-size:9px;" onclick="openCalPoints()"
+                     title="Calibration point list">&#9776; POINTS</div>
                 <!-- Tap-a-point readout. Positioned over the graph by drawCalGraph
                      when state.calGraphSel is set; tapping empty space hides it. -->
                 <div id="calgraph-tip" style="position:absolute; display:none; pointer-events:none;
@@ -1342,64 +1359,75 @@
             </div>
 
             <!-- ===================== BRIGHTNESS SETTINGS ===================== -->
+            <!-- Web layout uses the shared .mn-* menu kit; the TFT keeps its own.
+                 Slider ids / commands (brightness, ledEnabled, ledDuty) unchanged. -->
             <div id="screen-brightness" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 100px;">BRIGHTNESS</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
 
-                <!-- Screen slider -->
-                <div class="gfx-text" style="left: 15px; top: 72px; color: var(--text-disabled); font-size: 11px;">SCREEN</div>
-                <div id="bright-screen-pct" class="gfx-text" style="right: 15px; top: 72px; color: var(--accent-green); font-size: 11px;">50%</div>
-                <div class="slider-track" style="top: 90px;" id="screen-slider" onmousedown="startSlider(event,'brightness')" ontouchstart="startSlider(event,'brightness')">
-                    <div id="screen-slider-fill" class="slider-fill" style="background:#FFD700; width:50%;"></div>
-                    <div id="screen-slider-thumb" class="slider-thumb" style="left:50%;"></div>
+                <div class="mn-card" style="top: 42px; height: 66px;">
+                    <div class="mn-k"><span class="mn-lbl" style="color:#ffc15c;">SCREEN</span>
+                        <span class="mn-pct"><input id="bright-screen-pct" class="mn-input mn-mini" type="number" inputmode="numeric"
+                               min="1" max="100" step="1" onchange="setBrightPct('brightness', this.value)"
+                               onkeydown="if(event.key==='Enter')this.blur()" onfocus="this.select()" title="Type a percentage">%</span></div>
+                    <div class="mn-slider mn-amber" id="screen-slider" onmousedown="startSlider(event,'brightness')" ontouchstart="startSlider(event,'brightness')">
+                        <div id="screen-slider-fill" class="mn-slider-fill" style="width:50%;"></div>
+                        <div id="screen-slider-thumb" class="mn-slider-thumb" style="left:50%;"></div>
+                    </div>
                 </div>
 
-                <!-- LED label + value + toggle -->
-                <div class="gfx-text" style="left: 15px; top: 138px; color: var(--text-disabled); font-size: 11px;">LED</div>
-                <div id="bright-led-pct" class="gfx-text" style="left: 80px; top: 138px; color: var(--accent-magenta); font-size: 11px;">25%</div>
-                <div id="btn-led-toggle" class="gfx-btn"
-                     style="left: 155px; top: 136px; width: 75px; height: 26px; background: #780000; font-size: 12px;"
-                     onclick="toggleLed()">OFF</div>
-
-                <!-- LED slider -->
-                <div class="slider-track" style="top: 172px;" id="led-slider" onmousedown="startSlider(event,'led')" ontouchstart="startSlider(event,'led')">
-                    <div id="led-slider-fill" class="slider-fill" style="background:#A800F8; width:25%;"></div>
-                    <div id="led-slider-thumb" class="slider-thumb" style="left:25%;"></div>
+                <div class="mn-card" style="top: 116px; height: 66px;">
+                    <div class="mn-k"><span class="mn-lbl" style="color:#8fd0ff;">TRIGGER LED</span>
+                        <span class="mn-pct"><input id="bright-led-pct" class="mn-input mn-mini" type="number" inputmode="numeric"
+                               min="0" max="100" step="1" onchange="setBrightPct('led', this.value)"
+                               onkeydown="if(event.key==='Enter')this.blur()" onfocus="this.select()" title="Type a percentage">%
+                        <div id="btn-led-toggle" class="mn-switch" onclick="toggleLed()" title="Trigger LED on / off"><i></i></div></span></div>
+                    <div class="mn-slider mn-cyan" id="led-slider" onmousedown="startSlider(event,'led')" ontouchstart="startSlider(event,'led')">
+                        <div id="led-slider-fill" class="mn-slider-fill" style="width:25%;"></div>
+                        <div id="led-slider-thumb" class="mn-slider-thumb" style="left:25%;"></div>
+                    </div>
                 </div>
 
-                <!-- patched3: IR CONTROL button -->
-                <div class="gfx-btn"
-                     style="left: 20px; top: 210px; width: 200px; height: 31px; background-color: #A800F8; font-size: 12px;"
-                     onclick="switchScreen('screen-ir')">IR CONTROL</div>
-
-                <!-- SCREEN TIMEOUTS button -->
-                <div class="gfx-btn"
-                     style="left: 20px; top: 248px; width: 200px; height: 31px; background-color: #00968C; font-size: 12px;"
-                     onclick="switchScreen('screen-timeout')">SCREEN TIMEOUTS</div>
-
+                <div class="gfx-btn btn-tof btn-copper" style="top: 200px;" onclick="switchScreen('screen-ir')"
+                     title="Drive the MJKZZ rail over IR">
+                    <svg style="position:absolute;left:12px;" width="20" height="23" viewBox="0 -2.5 20 23">
+                        <rect x="6" y="6" width="8" height="13" rx="2" fill="#3d2004" stroke="#ffcf94" stroke-width="1.3"/>
+                        <circle cx="10" cy="10" r="1.5" fill="#ffab3d"/>
+                        <path d="M6.2 3.6a5.4 5.4 0 0 1 7.6 0M4 1.6a8.4 8.4 0 0 1 12 0" fill="none" stroke="#ffcf94" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                    <span>IR CONTROL</span>
+                </div>
+                <div class="gfx-btn btn-tof btn-steel" style="top: 250px;" onclick="switchScreen('screen-timeout')"
+                     title="Dim / sleep timeouts, tint and colour theme">
+                    <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
+                        <rect x="2" y="3" width="16" height="11" rx="1.6" fill="#0d2748" stroke="#9fd0ff" stroke-width="1.3"/>
+                        <path d="M10 5.6v3.2l2.2 1.3" fill="none" stroke="#ffb35c" stroke-width="1.5" stroke-linecap="round"/>
+                        <path d="M7 17.5h6M10 14v3.5" stroke="#9fd0ff" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                    <span>TIMEOUTS &amp; THEME</span>
+                </div>
             </div>
 
             <!-- ===================== IR REMOTE (patched3) ===================== -->
             <div id="screen-ir" class="screen">
-                <div class="title-stripe" style="left: 5px; top: 5px; width: 95px; background-color: #A800F8;">IR REMOTE</div>
+                <div class="title-stripe" style="left: 5px; top: 5px; width: 95px;">IR REMOTE</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-brightness')">X</div>
 
-                <div class="gfx-btn"
-                     style="left: 20px; top: 55px; width: 200px; height: 40px; background-color: #006400;"
-                     onclick="sendCommand('ir','start')">START</div>
-                <div class="gfx-btn"
-                     style="left: 20px; top: 105px; width: 200px; height: 40px; background-color: #780000;"
-                     onclick="sendCommand('ir','stop')">STOP</div>
-                <div class="gfx-btn"
-                     style="left: 20px; top: 155px; width: 95px; height: 40px; background-color: #0000A8;"
-                     onclick="sendCommand('ir','up')">UP</div>
-                <div class="gfx-btn"
-                     style="left: 125px; top: 155px; width: 95px; height: 40px; background-color: #0000A8;"
-                     onclick="sendCommand('ir','down')">DOWN</div>
-                <div class="gfx-btn"
-                     style="left: 20px; top: 205px; width: 200px; height: 40px; background-color: #A800F8;"
-                     onclick="sendCommand('ir','capture')">CAPTURE PHOTO</div>
-
+                <div class="mn-card mn-pad" style="top: 42px; height: 262px;">
+                    <div class="mn-k">MJKZZ RAIL <span class="mn-kr">NEC IR</span></div>
+                    <div class="mn-grid">
+                        <div class="gfx-btn btn-go mn-gbtn" onclick="sendCommand('ir','start')" title="Start the rail's stack">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 1.5v11l9-5.5z" fill="#d8ffe9"/></svg>START</div>
+                        <div class="gfx-btn btn-danger mn-gbtn" onclick="sendCommand('ir','stop')" title="Stop the rail">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><rect x="2.5" y="2.5" width="9" height="9" rx="1" fill="#ffe0e4"/></svg>STOP</div>
+                        <div class="gfx-btn btn-steel mn-gbtn" onclick="sendCommand('ir','up')" title="Jog up">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 2l5.5 8h-11z" fill="#dbeeff"/></svg>UP</div>
+                        <div class="gfx-btn btn-steel mn-gbtn" onclick="sendCommand('ir','down')" title="Jog down">
+                            <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12L1.5 4h11z" fill="#dbeeff"/></svg>DOWN</div>
+                        <div class="gfx-btn btn-copper mn-gbtn mn-wide" onclick="sendCommand('ir','capture')" title="Fire the camera">
+                            <svg width="18" height="14" viewBox="0 0 18 14"><path d="M2 4h3l1.5-2h5L13 4h3v9H2z" fill="none" stroke="#ffe6c7" stroke-width="1.4" stroke-linejoin="round"/><circle cx="9" cy="8.3" r="2.6" fill="none" stroke="#ffe6c7" stroke-width="1.4"/></svg>CAPTURE PHOTO</div>
+                    </div>
+                </div>
             </div>
 
             <!-- ===================== VIBRATION MONITOR (V12) ===================== -->
@@ -1424,46 +1452,46 @@
 
             <!-- ===================== SCREEN TIMEOUT + THEMES ===================== -->
             <div id="screen-timeout" class="screen">
-                <div class="title-stripe" style="left: 5px; top: 5px; width: 90px; background-color: #00968C;">TIMEOUTS</div>
+                <div class="title-stripe" style="left: 5px; top: 5px; width: 90px;">TIMEOUTS</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-brightness')">X</div>
 
-                <!-- DIM row -->
-                <div class="gfx-text" style="left: 15px; top: 58px; color: var(--text-disabled); font-size: 11px;">SCREEN DIM</div>
-                <div class="gfx-btn" style="left: 20px; top: 68px; width: 40px; height: 36px;
-                     background: #780000; font-size: 20px;" onclick="adjTimeout('dim',-1)">-</div>
-                <div id="val-dim" class="timeout-val" style="top: 80px; font-size: 14px; color: var(--accent-green);">2m</div>
-                <div class="gfx-btn" style="left: 180px; top: 68px; width: 40px; height: 36px;
-                     background: #006400; font-size: 20px;" onclick="adjTimeout('dim',1)">+</div>
-
-                <!-- SLEEP row -->
-                <div class="gfx-text" style="left: 15px; top: 130px; color: var(--text-disabled); font-size: 11px;">AUTO SLEEP</div>
-                <div class="gfx-btn" style="left: 20px; top: 140px; width: 40px; height: 36px;
-                     background: #780000; font-size: 20px;" onclick="adjTimeout('sleep',-1)">-</div>
-                <div id="val-sleep" class="timeout-val" style="top: 150px; font-size: 14px; color: var(--accent-magenta);">5m</div>
-                <div class="gfx-btn" style="left: 180px; top: 140px; width: 40px; height: 36px;
-                     background: #006400; font-size: 20px;" onclick="adjTimeout('sleep',1)">+</div>
-
-                <!-- Tint / intensity label + slider -->
-                <div class="gfx-text" style="left: 15px; top: 179px; color: var(--text-disabled); font-size: 11px;">TINT:</div>
-                <div id="tint-track" onmousedown="startSlider(event,'tint')" ontouchstart="startSlider(event,'tint')">
-                    <div id="tint-fill" style="width:50%;"></div>
-                    <div id="tint-center"></div>
+                <div class="mn-card" style="top: 42px;">
+                    <div class="mn-k">SCREEN DIM <span class="mn-kr">30 s &ndash; 30 m</span></div>
+                    <div class="mn-field">
+                        <div class="mn-nudge mn-blue" data-nudge="dim" data-dir="-1" title="Sooner (hold to repeat)">&minus;</div>
+                        <select id="val-dim" class="mn-input mn-select" onchange="setTimeoutMs('dim', +this.value)" title="Dim the screen after"></select>
+                        <div class="mn-nudge mn-blue" data-nudge="dim" data-dir="1" title="Later (hold to repeat)">+</div>
+                    </div>
                 </div>
 
-                <!-- Theme swatches: CLASSIC, MIDNIGHT, FOREST, DAYLIGHT -->
-                <div id="swatch-0" class="theme-swatch active" style="left: 12px;  background:#0080F8;" onclick="setTheme(0)">
-                    <span style="color:white; font-size:14px; font-weight:bold;">C</span>
-                </div>
-                <div id="swatch-1" class="theme-swatch" style="left: 68px;  background:#181490;" onclick="setTheme(1)">
-                    <span style="color:white; font-size:14px; font-weight:bold;">M</span>
-                </div>
-                <div id="swatch-2" class="theme-swatch" style="left: 124px; background:#00FF00;" onclick="setTheme(2)">
-                    <span style="color:black; font-size:14px; font-weight:bold;">F</span>
-                </div>
-                <div id="swatch-3" class="theme-swatch" style="left: 180px; background:#B8BCB8;" onclick="setTheme(3)">
-                    <span style="color:black; font-size:14px; font-weight:bold;">D</span>
+                <div class="mn-card" style="top: 108px;">
+                    <div class="mn-k">AUTO SLEEP <span class="mn-kr">1 &ndash; 60 m &middot; after dim</span></div>
+                    <div class="mn-field">
+                        <div class="mn-nudge mn-orange" data-nudge="sleep" data-dir="-1" title="Sooner (hold to repeat)">&minus;</div>
+                        <select id="val-sleep" class="mn-input mn-select" onchange="setTimeoutMs('sleep', +this.value)" title="Sleep the screen after"></select>
+                        <div class="mn-nudge mn-orange" data-nudge="sleep" data-dir="1" title="Later (hold to repeat)">+</div>
+                    </div>
                 </div>
 
+                <div class="mn-card" style="top: 174px; height: 50px;">
+                    <div class="mn-k">TINT <span id="tint-val" class="mn-kr">0</span></div>
+                    <div class="mn-slider mn-tint" id="tint-track" onmousedown="startSlider(event,'tint')" ontouchstart="startSlider(event,'tint')"
+                         ondblclick="setTint(50)" title="Theme intensity — double-click to centre">
+                        <div id="tint-fill" class="mn-slider-fill" style="width:50%;"></div>
+                        <div id="tint-center"></div>
+                        <div id="tint-thumb" class="mn-slider-thumb" style="left:50%;"></div>
+                    </div>
+                </div>
+
+                <div class="mn-card" style="top: 232px; height: 76px;">
+                    <div class="mn-k">THEME <span id="theme-name" class="mn-kr">CLASSIC</span></div>
+                    <div class="mn-swatches">
+                        <div id="swatch-0" class="theme-swatch active" style="background:#0080F8;" onclick="setTheme(0)" title="Classic"><span>C</span></div>
+                        <div id="swatch-1" class="theme-swatch" style="background:#181490;" onclick="setTheme(1)" title="Midnight"><span>M</span></div>
+                        <div id="swatch-2" class="theme-swatch" style="background:#00FF00; color:#000;" onclick="setTheme(2)" title="Forest"><span>F</span></div>
+                        <div id="swatch-3" class="theme-swatch" style="background:#B8BCB8; color:#000;" onclick="setTheme(3)" title="Daylight"><span>D</span></div>
+                    </div>
+                </div>
             </div>
 
             <!-- ===================== MEMORY & INFO ===================== -->
@@ -4248,7 +4276,6 @@
         if (id === 'screen-ota')         otaReset();
         if (id === 'screen-autoremote')  ntfyScreenInit();
         if (id === 'screen-sensorinfo')  { document.getElementById('sensorinfo-help').style.display='none'; refreshSensorInfoUI(); }
-        if (id === 'screen-fovinfo')     updateFovInfoUI();
         if (id === 'screen-calgraph')    { state.calGraphSel = null; updateFovInfoUI(); drawCalGraph(); }
         if (id === 'screen-memory')      updateMemoryUI();
         if (id === 'screen-diag')        updateDiagUI();
@@ -8533,6 +8560,46 @@
             g.fillText(txt, bx + 6, mT + 5);
         }
     }
+    // Main-screen VIBE CHECK wave as a live meter — mirrors the firmware's
+    // drawMainVibWave() and its VIB_METER_* constants. Fill = max(tonal
+    // prominence `vtp` (strongest ~1 s-smoothed V+H spectral line above the
+    // spectrum's median + 3σ, log 0.03 mg empty → 0.15 mg yellow → 1.5 mg
+    // full), band RMS above the ~2 mg IMU noise floor (→ 8 mg full)); STRONG
+    // reads full. Colour draws along the wave path, green → yellow → red.
+    // Hover the button for the raw numbers (tuning).
+    let _vibWaveEma = 0, _vibWaveTipMs = 0;
+    function vibMainWaveTick() {
+        const el = document.getElementById('vib-live-wave');
+        if (!el) return;
+        const TONE_LO = 0.03, TONE_MOD = 0.15, TONE_HI = 1.5, RMS_LO = 2.0, RMS_HI = 8.0;
+        const span = Math.log(TONE_HI / TONE_LO), modT = Math.log(TONE_MOD / TONE_LO) / span;
+        const mg   = Math.max(state.vibRms || 0, state.vibHoriz || 0);
+        const tone = state.vibTone || 0;
+        const st   = state.vibState || 0;
+        const tTone = tone <= TONE_LO ? 0 : Math.log(tone / TONE_LO) / span;
+        const tRms  = mg   <= RMS_LO  ? 0 : Math.log(mg / RMS_LO) / Math.log(RMS_HI / RMS_LO);
+        // Idle wiggle tail (VIB_METER_IDLE_*): raw peak−median 0.03..0.18 mg → 0..20 %.
+        const tIdle = Math.max(0, Math.min(1, ((state.vibToneRaw || 0) - 0.03) / 0.15)) * 0.20;
+        let t = Math.min(1, Math.max(tTone, tRms, tIdle));
+        if (st >= 2) t = 1;
+        _vibWaveEma += 0.12 * (t - _vibWaveEma);          // ~30 Hz telemetry → ~0.3 s settle
+        const now = performance.now();
+        if (now - _vibWaveTipMs > 250) {
+            _vibWaveTipMs = now;
+            const btn = document.getElementById('btn-vib');
+            if (btn) btn.title = `Vibration Analyzer\ntone ${tone.toFixed(2)} mg above floor+3σ (raw ${(state.vibToneRaw || 0).toFixed(2)}) · RMS V ${(state.vibRms || 0).toFixed(1)} / H ${(state.vibHoriz || 0).toFixed(1)} mg\n` +
+                                 `meter ${Math.round(_vibWaveEma * 100)}% · ${['CALM', 'MODERATE', 'STRONG'][st] || 'CALM'}`;
+        }
+        const f = _vibWaveEma, cl = u => Math.max(0, Math.min(1, u));
+        const mix = (a, b, u) => Math.round(a + (b - a) * cl(u));
+        let rgb;
+        if (f < modT) { const u = (f - modT / 2) / (modT / 2); rgb = [mix(61, 255, u), mix(219, 204, u), mix(122, 0, u)]; }
+        else          { const u = (f - modT) / (1 - modT);     rgb = [255, mix(204, 68, u), mix(0, 68, u)]; }
+        el.setAttribute('stroke-dasharray', `${(f * 100).toFixed(1)} 100`);
+        el.style.visibility = f <= 0.005 ? 'hidden' : '';  // a 0-length round-cap dash still draws a dot
+        el.setAttribute('stroke', `rgb(${rgb.join(',')})`);
+    }
+
     function vibUpdateReadout() {
         const stIdx = state.vibState || 0;
         const st = ['CALM', 'MODERATE', 'STRONG'][stIdx] || 'CALM';
@@ -8817,7 +8884,7 @@
     }
 
     // Don't clobber a field the user is typing in when telemetry echoes back.
-    function _skSetField(el, text) {
+    function _mnSetField(el, text) {
         if (el && document.activeElement !== el && el.value !== text) el.value = text;
     }
 
@@ -8831,7 +8898,7 @@
 
     function updateStackCalcUI() {
         document.getElementById('val-calc-obj').innerHTML =
-            OBJ_LABEL[state.obj] + ' <span class="sk-na">NA ' + NA_TABLE[state.obj].toFixed(2) + '</span>';
+            OBJ_LABEL[state.obj] + ' <span class="mn-na">NA ' + NA_TABLE[state.obj].toFixed(2) + '</span>';
 
         const sel = document.getElementById('val-step');
         if (sel.options.length !== STEP_TABLE.length) {
@@ -8840,7 +8907,7 @@
         }
         if (+sel.value !== state.stepIndex) sel.value = String(state.stepIndex);
         document.getElementById('sk-step-idx').innerText = (state.stepIndex + 1) + ' / ' + STEP_TABLE.length;
-        _skSetField(document.getElementById('val-imgs'), String(state.imgs));
+        _mnSetField(document.getElementById('val-imgs'), String(state.imgs));
 
         const stepVal = STEP_TABLE[state.stepIndex];
         const NA = NA_TABLE[state.obj];
@@ -8883,7 +8950,7 @@
         document.getElementById('time-val-step').innerText  = stepVal.toFixed(3);
         document.getElementById('time-val-depth').innerText = depth.toFixed(1);
         document.getElementById('time-val-imgs').innerText  = state.imgs;
-        _skSetField(document.getElementById('val-secstep'), state.secStep.toFixed(1));
+        _mnSetField(document.getElementById('val-secstep'), state.secStep.toFixed(1));
 
         const total = state.imgs * state.secStep;
         document.getElementById('val-totaltime').innerText = _fmtDuration(total);
@@ -8906,7 +8973,8 @@
         }
     }
 
-    // Nudge buttons + scroll wheel for the STACK CALC / TIME fields. Press = one
+    // Nudge buttons + scroll wheel for the .mn-* menu fields (STACK CALC / TIME,
+    // TIMEOUTS; the wheel also steps the BRIGHTNESS / TINT sliders). Press = one
     // step; hold = repeat after 380 ms, and the images / seconds nudges speed up
     // (×10 after ~1.5 s of repeating) so a long hold crosses a big range. Wheel
     // over a field steps it by one. Sends are throttled; the trailing send
@@ -8916,6 +8984,15 @@
             step: (dir, big) => setStepIndex(state.stepIndex + dir, true),
             imgs: (dir, big) => setImgs(state.imgs + dir * (big ? 10 : 1), true),
             sec:  (dir, big) => setSecStep(state.secStep + dir * (big ? 1.0 : 0.1), true),
+            dim:  (dir)      => adjTimeout('dim',   dir, true),
+            sleep:(dir)      => adjTimeout('sleep', dir, true),
+            // wheel-only: sliders step 1 % (shift = 10 %)
+            brightness: (dir, big) => { state.brightness = Math.max(1, Math.min(255, state.brightness + dir * (big ? 26 : 3)));
+                                        sendCommandThrottled('brightness', state.brightness); updateBrightnessUI(); updateSettingsUI(); },
+            led:  (dir, big) => { if (!state.ledEnabled) return;
+                                  state.ledDuty = Math.max(0, Math.min(127, state.ledDuty + dir * (big ? 13 : 1)));
+                                  sendCommandThrottled('ledDuty', state.ledDuty); updateBrightnessUI(); applyTriggerVisuals(); },
+            tint: (dir, big) => setTint(state.tintPct + dir * (big ? 10 : 1)),
         };
         let timer = null, heldEl = null;
         function stop() {
@@ -8924,7 +9001,7 @@
             heldEl = null;
         }
         document.addEventListener('pointerdown', e => {
-            const el = e.target.closest && e.target.closest('.sk-nudge');
+            const el = e.target.closest && e.target.closest('.mn-nudge');
             if (!el || e.button > 0) return;
             e.preventDefault();
             stop();
@@ -8943,12 +9020,17 @@
         ['pointerup', 'pointercancel', 'blur'].forEach(t => window.addEventListener(t, stop));
         document.addEventListener('pointerout', e => { if (heldEl && e.target === heldEl) stop(); });
 
-        const WHEEL = { 'val-step': 'step', 'val-imgs': 'imgs', 'val-secstep': 'sec' };
+        const WHEEL = { 'val-step': 'step', 'val-imgs': 'imgs', 'val-secstep': 'sec',
+                        'val-dim': 'dim', 'val-sleep': 'sleep', 'screen-slider': 'brightness',
+                        'settings-slider': 'brightness',
+                        'led-slider': 'led', 'tint-track': 'tint' };
+        const WHEEL_SEL = Object.keys(WHEEL).map(id => '#' + id).join(',');
         document.addEventListener('wheel', e => {
-            const k = WHEEL[e.target.id];
+            const el = e.target.closest && e.target.closest(WHEEL_SEL);
+            const k = el && WHEEL[el.id];
             if (!k || Math.abs(e.deltaY) < 1) return;
             e.preventDefault();
-            if (document.activeElement === e.target && e.target.tagName === 'INPUT') e.target.blur();
+            if (document.activeElement === el && el.tagName === 'INPUT') el.blur();
             NUDGE[k](e.deltaY < 0 ? 1 : -1, e.shiftKey);
         }, { passive: false });
     })();
@@ -9477,7 +9559,7 @@
     function updateSettingsUI() {
         const pct = Math.round(state.brightness / 255 * 100);
         const w   = pct + '%';
-        document.getElementById('settings-bright-pct').innerText  = pct + '%';
+        _mnSetField(document.getElementById('settings-bright-pct'), String(pct));
         document.getElementById('settings-slider-fill').style.width = w;
         document.getElementById('settings-slider-thumb').style.left = w;
     }
@@ -9485,36 +9567,42 @@
     function updateBrightnessUI() {
         const sPct = Math.round(state.brightness / 255 * 100);
         const lPct = Math.round(state.ledDuty / 127 * 100);
-        const sw   = sPct + '%';
-        const lw   = lPct + '%';
+        const on   = !!state.ledEnabled;
 
-        document.getElementById('bright-screen-pct').innerText  = sPct + '%';
-        document.getElementById('screen-slider-fill').style.width = sw;
-        document.getElementById('screen-slider-thumb').style.left = sw;
+        _mnSetField(document.getElementById('bright-screen-pct'), String(sPct));
+        document.getElementById('screen-slider-fill').style.width = sPct + '%';
+        document.getElementById('screen-slider-thumb').style.left = sPct + '%';
 
-        document.getElementById('bright-led-pct').innerText     = state.ledEnabled ? lPct + '%' : '--';
-        document.getElementById('bright-led-pct').style.color   = state.ledEnabled ? '#A800F8' : '#787878';
+        const lIn = document.getElementById('bright-led-pct');
+        lIn.disabled = !on;
+        _mnSetField(lIn, on ? String(lPct) : '');
+        lIn.placeholder = on ? '' : 'off';
+        document.getElementById('led-slider').classList.toggle('mn-off', !on);
+        document.getElementById('led-slider-fill').style.width = lPct + '%';
+        document.getElementById('led-slider-thumb').style.left = lPct + '%';
+        document.getElementById('btn-led-toggle').classList.toggle('on', on);
+    }
 
-        const fill  = document.getElementById('led-slider-fill');
-        const thumb = document.getElementById('led-slider-thumb');
-        const tog   = document.getElementById('btn-led-toggle');
-
-        if (state.ledEnabled) {
-            fill.style.background  = '#A800F8';
-            fill.style.width       = lw;
-            thumb.style.left       = lw;
-            thumb.style.display    = 'block';
-            tog.innerText          = 'ON';
-            tog.style.background   = '#00FF00';
-            tog.style.color        = '#000';
-        } else {
-            fill.style.background  = '#333';
-            fill.style.width       = '100%';
-            thumb.style.display    = 'none';
-            tog.innerText          = 'OFF';
-            tog.style.background   = '#780000';
-            tog.style.color        = '#FFF';
+    // Typed percentage → the same device units the sliders send
+    // (brightness 1..255, ledDuty 0..127).
+    function setBrightPct(type, v, srcEl) {
+        const pct = Math.max(0, Math.min(100, Math.round(parseFloat(v))));
+        if (isFinite(pct)) {
+            if (type === 'brightness') {
+                state.brightness = Math.max(1, Math.round(pct * 2.55));
+                sendCommand('brightness', state.brightness);
+                updateSettingsUI();
+            } else if (state.ledEnabled) {
+                state.ledDuty = Math.round(pct * 1.27);
+                sendCommand('ledDuty', state.ledDuty);
+                applyTriggerVisuals();
+            }
         }
+        const el = srcEl || document.getElementById(type === 'brightness' ? 'bright-screen-pct' : 'bright-led-pct');
+        el.value = '';                       // force the rewrite below even while focused
+        el.blur();
+        updateBrightnessUI();
+        updateSettingsUI();
     }
 
     function toggleLed() {
@@ -9535,16 +9623,32 @@
     // — bg / text / accent tokens all live in CSS for single-source-of-truth.
     const THEME_CLASSES = ['theme-classic', 'theme-midnight', 'theme-forest', 'theme-daylight'];
 
-    function adjTimeout(type, dir) {
+    // One setter for every dim/sleep edit (dropdown, nudge, wheel). Keeps
+    // sleep strictly after dim by moving the OTHER value, as the device does.
+    function setTimeoutMs(type, ms, throttled) {
+        if (!isFinite(ms)) return updateTimeoutUI();
         if (type === 'dim') {
-            state.dimMs = Math.max(DIM_MIN, Math.min(DIM_MAX, state.dimMs + dir * DIM_STEP));
-            if (state.dimMs >= state.sleepMs) state.sleepMs = state.dimMs + SLEEP_STEP;
+            state.dimMs = Math.max(DIM_MIN, Math.min(DIM_MAX, Math.round(ms / DIM_STEP) * DIM_STEP));
+            if (state.dimMs >= state.sleepMs)
+                state.sleepMs = Math.min(SLEEP_MAX, Math.ceil((state.dimMs + 1) / SLEEP_STEP) * SLEEP_STEP);
         } else {
-            state.sleepMs = Math.max(SLEEP_MIN, Math.min(SLEEP_MAX, state.sleepMs + dir * SLEEP_STEP));
+            state.sleepMs = Math.max(SLEEP_MIN, Math.min(SLEEP_MAX, Math.round(ms / SLEEP_STEP) * SLEEP_STEP));
             if (state.sleepMs <= state.dimMs) state.dimMs = Math.max(DIM_MIN, state.sleepMs - DIM_STEP);
         }
-        sendCommand('dimMs', state.dimMs);
-        sendCommand('sleepMs', state.sleepMs);
+        const send = throttled ? sendCommandThrottled : sendCommand;
+        send('dimMs', state.dimMs);
+        send('sleepMs', state.sleepMs);
+        updateTimeoutUI();
+    }
+
+    function adjTimeout(type, dir, throttled) {
+        if (type === 'dim') setTimeoutMs('dim',   state.dimMs   + dir * DIM_STEP,   throttled);
+        else                setTimeoutMs('sleep', state.sleepMs + dir * SLEEP_STEP, throttled);
+    }
+
+    function setTint(v) {
+        state.tintPct = Math.max(0, Math.min(100, Math.round(v)));
+        sendCommandThrottled('tint', state.tintPct);
         updateTimeoutUI();
     }
 
@@ -9565,6 +9669,8 @@
         document.querySelectorAll('.theme-swatch').forEach((el, i) => {
             el.classList.toggle('active', i === idx);
         });
+        const nm = document.getElementById('theme-name');
+        if (nm) nm.innerText = (THEME_CLASSES[idx] || THEME_CLASSES[0]).slice(6).toUpperCase();
         // Re-apply tint brightness (filter survives the class swap but cheap)
         _applyTintBrightness();
     }
@@ -9589,11 +9695,23 @@
         return m === 0 ? r + 's' : r === 0 ? m + 'm' : m + 'm ' + r + 's';
     }
 
+    // Fill a timeout dropdown once with its fixed steps; a value off the grid
+    // (older firmware constants) gets its own option rather than a blank box.
+    function _fillTimeoutSelect(sel, min, max, step, cur) {
+        if (!sel.options.length)
+            for (let ms = min; ms <= max; ms += step) sel.add(new Option(fmtMs(ms), ms));
+        if (![...sel.options].some(o => +o.value === cur)) sel.add(new Option(fmtMs(cur), cur));
+        if (+sel.value !== cur) sel.value = String(cur);
+    }
+
     function updateTimeoutUI() {
-        document.getElementById('val-dim').innerText   = fmtMs(state.dimMs);
-        document.getElementById('val-sleep').innerText = fmtMs(state.sleepMs);
+        _fillTimeoutSelect(document.getElementById('val-dim'),   DIM_MIN,   DIM_MAX,   DIM_STEP,   state.dimMs);
+        _fillTimeoutSelect(document.getElementById('val-sleep'), SLEEP_MIN, SLEEP_MAX, SLEEP_STEP, state.sleepMs);
         const pct = state.tintPct + '%';
-        document.getElementById('tint-fill').style.width = pct;
+        document.getElementById('tint-fill').style.width  = pct;
+        document.getElementById('tint-thumb').style.left  = pct;
+        const d = state.tintPct - 50;
+        document.getElementById('tint-val').innerText = d === 0 ? 'NEUTRAL' : (d > 0 ? 'VIVID +' + d : 'DIM ' + d);
         _applyTintBrightness();   // live preview as slider is dragged
     }
 
@@ -9798,15 +9916,11 @@
         const isCustom = state.isCustomCalib;
         const g = (id) => document.getElementById(id);
 
-        const stEl = g('fovinfo-status');
-        if (stEl) { stEl.innerText = 'Status: ' + (isCustom ? 'CUSTOM CAL' : 'FACTORY DEFAULT'); stEl.style.color = isCustom ? '#00FFFF' : '#ADFF2F'; }
-        if (g('fovinfo-slope'))     g('fovinfo-slope').innerText     = slope !== null ? slope.toFixed(5)        : '—';
-        if (g('fovinfo-intercept')) g('fovinfo-intercept').innerText = intc  !== null ? intc.toFixed(4)         : '—';
-        if (g('fovinfo-err'))  { g('fovinfo-err').innerText  = err !== null ? err.toFixed(4) + ' mm' : '—';
-                                  g('fovinfo-err').style.color = err !== null ? (err < 0.05 ? '#00FF00' : '#FFA500') : '#787878'; }
-        if (g('fovinfo-r2'))   { g('fovinfo-r2').innerText   = r2  !== null ? r2.toFixed(4)          : '—';
-                                  g('fovinfo-r2').style.color  = r2  !== null ? (r2  > 0.99 ? '#00FF00' : '#FFA500') : '#787878'; }
-        if (g('fovinfo-photowidth')) g('fovinfo-photowidth').innerText = state.photoWidth + ' px';
+        const stTxt = g('calgraph-status-txt');
+        if (stTxt) {
+            stTxt.innerText = isCustom ? 'CUSTOM CAL' : 'FACTORY CAL';
+            g('calgraph-status').style.color = isCustom ? 'var(--accent-green)' : '#FF4040';   // device colours
+        }
         // sync cal graph legend
         if (g('calgraph-r2'))        g('calgraph-r2').innerText        = r2    !== null ? r2.toFixed(4)    : '—';
         if (g('calgraph-slope'))     g('calgraph-slope').innerText     = slope !== null ? slope.toFixed(5) : '—';
@@ -10626,7 +10740,7 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    // ── Calibration point list (CALIB INFO → POINTS) ─────────────────────────
+    // ── Calibration point list (CAL GRAPH → POINTS) ─────────────────────────
     // Two views: CURRENT (the live calibration — the factory 13 when no custom
     // cal is loaded) and FACTORY (always the hard-coded reference). FACTORY
     // pixels use the reference's own scale (0.40 mm × 6960 px) since FACTORY_FOV
@@ -13739,7 +13853,7 @@
     }
     // After a successful import, read the device's re-fit back and show it so the
     // numbers can be validated. DONE dismisses the device's CAL_SUCCESS screen
-    // (nav is allowed out of it) and shows CALIB INFO on both sides.
+    // (nav is allowed out of it) and shows the CAL GRAPH on both sides.
     async function calioShowSuccess(name) {
         const el = document.getElementById('calio-status');
         document.getElementById('calio-gh-list').style.display = 'none';
@@ -13764,11 +13878,11 @@
             'border:1px solid #2a7a4a;font-size:11px;">DONE</div>';
     }
     function calioSuccessDone() {
-        // Dismiss the device CAL_SUCCESS and land BOTH sides on CALIB INFO.
+        // Dismiss the device CAL_SUCCESS and land BOTH sides on the CAL GRAPH.
         // switchScreen() shows it on the web and sends the nav, so they stay in
         // sync (a bare nav would leave the dashboard behind on the CALIBRATOR).
         calioClose();
-        switchScreen('screen-fovinfo');
+        switchScreen('screen-calgraph');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -15248,6 +15362,9 @@
         if (data.vh  !== undefined) state.vibHoriz = data.vh;
         if (data.vw  !== undefined) state.vibWait  = data.vw;
         if (data.vst !== undefined) state.vibState = data.vst;
+        if (data.vtp !== undefined) state.vibTone  = data.vtp / 100;   // tonal prominence above floor + 3σ, mg
+        if (data.vtr !== undefined) state.vibToneRaw = data.vtr / 100; // above the bare median (tuning)
+        if (data.vr !== undefined || data.vh !== undefined || data.vst !== undefined || data.vtp !== undefined) vibMainWaveTick();
         if (data.vrh !== undefined) state.vibLock  = data.vrh;
         if (data.vcw !== undefined) state.vibCur   = data.vcw;
         if (data.vsh !== undefined) {
@@ -15527,7 +15644,7 @@
         if (data.fitDemarc    !== undefined) { state.fitDemarc    = data.fitDemarc;    fovInfoDirty = true; }
         if (data.calPoints    !== undefined) { state.calPoints    = data.calPoints;    updateCalSettingsUI(); }
         if (fovInfoDirty) {
-            if (state.screen === 'screen-fovinfo' || state.screen === 'screen-calgraph') updateFovInfoUI();
+            if (state.screen === 'screen-calgraph') updateFovInfoUI();
         }
         // ── Cal graph points (device sends full array after custom calibration) ──
         if (data.calGraphPoints !== undefined) {

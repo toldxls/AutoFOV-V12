@@ -632,7 +632,6 @@ static const ScreenMapEntry kScreenMap[] = {
     { SCREEN_TIMEOUT,      "screen-timeout"    },
     { SENSOR_INFO,         "screen-sensorinfo" },
     { MEM_INFO,            "screen-memory"     },
-    { FOV_INFO,            "screen-fovinfo"    },
     { CAL_GRAPH,           "screen-calgraph"   },
     { ABOUT,               "screen-about"      },
     { WIFI_INFO,           "screen-wifiinfo"   },
@@ -1120,7 +1119,7 @@ void wifiLoop() {
             const uint32_t id = slot.load(std::memory_order_acquire);
             if (!id || !wsClientReady(id, now)) continue;
             if (!sb) {
-                char frame[512];
+                char frame[640];   // 512 + headroom (vtp added 9/16/26; TOF target list shares the frame)
                 size_t n = buildFastTelemFrame(frame, sizeof frame);
                 if (!n) break;                                   // truncated — drop this frame
                 sb = std::make_shared<std::vector<uint8_t>>(frame, frame + n);
@@ -3269,6 +3268,7 @@ static void handleWifiCommand(const char* key, const char* val) {
                 currentMode      = m;
                 preSleepMode     = m;
                 lastModeChangeMs = millis();         // arm the touch-transition guard
+                if (m == CAL_GRAPH) seedFactoryPointsIfNeeded();   // same entry as the TFT tap
                 redrawCurrentScreen();
             }
             lastSyncedMode = currentMode;            // suppress the echo broadcast
@@ -3700,6 +3700,8 @@ static size_t buildFastTelemFrame(char* buf, size_t cap) {
     fmtF(f1, sizeof f1, roundf(vibDominant.load() / 10.0f * 10.0f) / 10.0f, 1);
     fmtF(f2, sizeof f2, roundf((float)vibBandRms.load()   / 100.0f * 10.0f) / 10.0f, 1);
     fmtF(f3, sizeof f3, roundf((float)vibHorizRms.load()  / 100.0f * 10.0f) / 10.0f, 1);
+    put(",\"vtp\":%d,\"vtr\":%d", (int)vibTonePeak.load(),   // tonal prominence above floor+3σ, mg × 100 (VIBE CHECK meter)
+        (int)vibTonePeakRaw.load());                            // above the bare median (tuning readout)
     put(",\"vd\":%s,\"vr\":%s,\"vh\":%s,\"vw\":%d,\"vst\":%d,\"vcw\":%d,\"vsh\":%d,\"sp\":%d",
         f1, f2, f3, (int)vibSuggestedWait.load(), (int)vibState.load(),
         (int)vibCurrentWaitMs,                       // controller WAIT setting

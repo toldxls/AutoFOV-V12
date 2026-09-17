@@ -460,9 +460,33 @@ PSRAMCanvas16 objSprite(240, 67);
 // within +-VIB_TONAL_BIN_TOL bins for VIB_TONAL_FRAMES consecutive frames,
 // promote CALM -> MODERATE.  Hann coherent gain + the 4/N FFT scaling already
 // applied below mean dst[domBin] in deci-mg IS the peak sinusoid amplitude.
-#define VIB_TONAL_PEAK_MG  0.5f    // dominant-bin peak amplitude, mg
+// 0.5 → 0.2 (9/16/26): a running dryer held a stable 26 Hz peak of ~0.35-0.4 mg
+// (V 1.1 / H 1.5 mg RMS) and read CALM; the 3-frame same-bin requirement is
+// what keeps random noise-floor peaks of that height from promoting.
+#define VIB_TONAL_PEAK_MG  0.2f    // dominant-bin peak amplitude, mg
 #define VIB_TONAL_FRAMES   3       // consecutive FFT frames of stability needed
 #define VIB_TONAL_BIN_TOL  1       // allow +-1 bin (~+-0.8 Hz) drift per frame
+// Main-screen VIBE CHECK meter (drawMainVibWave + web vibMainWaveTick).
+// Fill = max(tonal prominence, broadband RMS above the IMU noise floor):
+//   prominence VIB_METER_TONE_LO → empty, VIB_METER_TONE_MOD → the MODERATE
+//   tick, VIB_METER_TONE_HI → full (log); RMS counts only above
+//   VIB_METER_RMS_LO (≈ sensor floor) up to VIB_RMS_STRONG. Provisional —
+//   tune from the dashboard tooltip readout (dryer on vs off).
+#define VIB_TONE_ALPHA       0.30f   // per-hop EMA (~3.25 hops/s → τ ≈ 1 s)
+#define VIB_TONE_K_SIGMA     3.0f    // noise-bin excursion subtracted from the peak
+// v1 (peak − median) read 0.08-0.20 mg on a calm bench (9/16/26); these apply
+// to the σ-subtracted value, where calm ≈ 0. Dryer not yet re-measured.
+#define VIB_METER_TONE_LO    0.03f   // mg
+#define VIB_METER_TONE_MOD   0.15f   // mg
+#define VIB_METER_TONE_HI    1.50f   // mg
+#define VIB_METER_RMS_LO     2.00f   // mg
+// Idle "wiggle" tail: the raw (peak − median) value, noisy by nature, maps
+// VIB_METER_IDLE_LO..HI onto 0..VIB_METER_IDLE_MAX of the fill, so a calm
+// bench shows a small live green tail instead of a dead-flat meter. Stays
+// below the green→yellow blend (which starts at half the tick).
+#define VIB_METER_IDLE_LO    0.03f   // mg raw
+#define VIB_METER_IDLE_HI    0.18f   // mg raw
+#define VIB_METER_IDLE_MAX   0.20f   // fraction of the wave (green ends at ~0.21)
 // VIB_SPECTRUM screen geometry.
 #define VIB_PLOT_X       4
 #define VIB_PLOT_Y       82
@@ -786,14 +810,12 @@ Button btnObj20x(X_POS_20X, Y_POS, BOX_SIZE, BOX_SIZE, "20x", MUTED_20X, TFT_WHI
 // matching the tiny built-in 6x8 font used by "TOF int".
 // x=155, y=2, w=44, h=40 leaves a 7px gap before the gear's left cog (~x=206).
 Button btnFovInfo(152, 2, 44, 40);   // label drawn manually
-// CALIB INFO bottom row: GRAPH (left) + POINTS (right). POINTS opens the
-// read-only calibration-point list (CAL_REVIEW with calReviewReadOnly).
-Button btnInfoBack(15, 270, 100, 40, "GRAPH", TFT_BLACK, 0xF81F, 1, true);
-Button btnInfoPoints(125, 270, 100, 40, "POINTS", TFT_BLACK, COLOR_BLUEGREEN, 1, true);
+// CAL_GRAPH bottom-right: POINTS opens the read-only calibration-point list
+// (CAL_REVIEW with calReviewReadOnly). Sits under the x tick labels (y<=296);
+// the "Distance (mm)" title is shifted left to make room.
+Button btnGraphPoints(168, 298, 68, 21, "POINTS", TFT_BLACK, COLOR_BLUEGREEN, 1, true);
 // Centered BACK for the read-only point list (drawn only when calReviewReadOnly).
 Button btnPointsBack(60, 265, 120, 40, "BACK", TFT_BLACK, TFT_WHITE, 1, true);
-Button btnInfoClose(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true); // X close calib info
-Button btnInfoGraph(170, 4, 62, 26, "GRAPH", TFT_BLACK, 0xF81F, 1, true); // top-right of calib info
 Button btnGraphBack(205, 2, 33, 33, "X", 0x4208, COLOR_RED, 2, true);  // X close, top-right
 
 // --- BRIGHTNESS_SETTINGS screen ---
@@ -1125,7 +1147,6 @@ int stackCalcSelection = 0;
 enum DisplayMode { 
   MAIN, CAL_SETTINGS, CAL_RUN, CAL_SAMPLING, CAL_SUCCESS, 
   CAL_CONFIRM, APP_SETTINGS, STACK_CALC, STACK_TIME,
-  FOV_INFO,           // V17:  FOV calibration info screen
   CAL_REVIEW,         // V17:  review/edit captured calibration points
   BRIGHTNESS_SETTINGS,// V17b: screen+LED brightness controls
   SENSOR_INFO,        // V17b: TOF sensor details + sleep toggle
@@ -1150,9 +1171,9 @@ int calibSelection = 0;
 // V17: review screen state
 int reviewSelected = -1;
 int reviewScrollOffset = 0;
-// When true, CAL_REVIEW is a read-only viewer opened from the CALIB INFO screen
+// When true, CAL_REVIEW is a read-only viewer opened from the CAL_GRAPH screen
 // (no active calibration session): RETAKE/FINISH are hidden and BACK returns to
-// CALIB INFO instead of resuming capture.
+// the graph instead of resuming capture.
 bool calReviewReadOnly = false;
 const int REVIEW_VISIBLE_ROWS = 6;
 const int REVIEW_ROW_HEIGHT = 26;
@@ -1512,6 +1533,9 @@ std::atomic<uint32_t> i2cErrCount{0};
 std::atomic<uint32_t> vibDominant{0};      // dominant frequency, Hz × 10
 std::atomic<uint32_t> vibBandRms{0};       // in-band VERTICAL RMS accel, mg × 100
 std::atomic<uint32_t> vibHorizRms{0};      // V12: horizontal-plane RMS accel, mg × 100
+std::atomic<uint32_t> vibTonePeak{0};      // strongest smoothed V+H spectral peak above the
+                                           // noise floor + 3σ (MAD), mg × 100 (main-screen meter)
+std::atomic<uint32_t> vibTonePeakRaw{0};   // same peak above the bare median, mg × 100 (tuning readout)
 std::atomic<uint32_t> vibState{0};         // 0 = calm, 1 = moderate, 2 = strong
 std::atomic<uint32_t> vibSuggestedWait{0}; // advisory settle wait, ms
 std::atomic<uint32_t> vibSpecSeq{0};       // bumped each time a new FFT spectrum is published
@@ -1815,8 +1839,6 @@ bool wifiRequestRestart();                 // 8/22/26: deferred warm restart (re
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Forward reference needed: handleCalGraphTouch calls drawFovInfoUI before its fwd decl
-void drawFovInfoUI();
 void centerStaticText(const char* txt, int y, uint8_t size);
 
 // V17b: CAL_GRAPH — scatter plot of calibration points + regression line
@@ -1826,8 +1848,10 @@ void centerStaticText(const char* txt, int y, uint8_t size);
 //   x=29:     Y axis line
 //   x=30..191: plot area
 //   x=192..239: legend (stats)
+//   top-left: calibration status (CUSTOM CAL / FACTORY CAL) — the old CALIB
+//             INFO page's only unique line; that page is gone, this is the entry
 //   top-right (x=205..238, y=2..35): X close button (drawn first so plot doesn't overwrite)
-//   bottom (pB+4..pB+20): X axis title "Distance (mm)"
+//   bottom: X axis title "Distance (mm)" (left of centre) + POINTS button (right)
 //   pT=40 (room above for close btn), pB=290
 // ─────────────────────────────────────────────────────────────────────────────
 void drawCalGraphUI() {
@@ -1839,6 +1863,17 @@ void drawCalGraphUI() {
   // nPoints — the latter is the target count for the *next* calibration and
   // can exceed the filled slots if the user edits "Cal Points" in CAL_SETTINGS.
   int n = constrain(pointsCaptured, 0, 20);
+
+  // ── Status — top-left, colour coded (green-yellow custom, red factory) ──
+  setSmoothFont(1);
+  {
+    uint16_t stCol = isCustomCalib ? COLOR_GREENYELLOW : COLOR_RED;
+    tft.fillCircle(12, 18, 4, stCol);
+    tft.setTextColor(stCol);
+    tft.setCursor(22, 24);
+    tft.print(isCustomCalib ? "CUSTOM CAL" : "FACTORY CAL");
+  }
+
   if (n <= 0) {
     btnGraphBack.draw(tft);
     setSmoothFont(1);
@@ -1934,7 +1969,9 @@ void drawCalGraphUI() {
   tft.setTextColor(themedText(COLOR_LIGHTGREY));
   const char* xTitle = "Distance (mm)";
   int xTitleW = strlen(xTitle) * 6;
-  tft.setCursor(pL + (pW - xTitleW) / 2, pB + 22); tft.print(xTitle);
+  // Centred in the span left of the POINTS button, not the full plot width.
+  tft.setCursor(pL + (btnGraphPoints.x - 4 - pL - xTitleW) / 2, pB + 22); tft.print(xTitle);
+  btnGraphPoints.draw(tft);
 
   // ── Regression curve (pixel-space cal → FOV = fovAt() is a 1/x curve) ──
   {
@@ -2031,9 +2068,35 @@ void drawCalGraphUI() {
   tft.drawRect(lbx, lby, lbw, lbh, 0x4208); // border last so rows don't erase it
 }
 
+void drawCalReviewUI();
+// Seed the factory points into the plot/list arrays when no custom cal is
+// loaded. nPoints (the next-cal target) is left alone — viewing the graph or
+// the list shouldn't change a setting.
+void seedFactoryPointsIfNeeded() {
+  if (isCustomCalib) return;
+  pointsCaptured = FACTORY_N;   // V11 fix: CAL_GRAPH bounds the plot by this
+  for (int i = 0; i < FACTORY_N; i++) {
+    distPoints[i] = FACTORY_DIST[i];
+    fovPoints[i]  = FACTORY_FOV[i];
+  }
+}
+
+void openCalGraph() {
+  seedFactoryPointsIfNeeded();
+  currentMode = CAL_GRAPH; drawCalGraphUI();
+}
+
 void handleCalGraphTouch(TS_Point p) {
   if (btnGraphBack.contains(p.x, p.y)) {
-    currentMode = FOV_INFO; drawFovInfoUI();
+    currentMode = MAIN; drawMainScreen(); return;
+  }
+  // POINTS — read-only point list; BACK returns here.
+  if (pointsCaptured > 0 && btnGraphPoints.contains(p.x, p.y)) {
+    seedFactoryPointsIfNeeded();
+    calReviewReadOnly = true;
+    reviewSelected = -1;
+    reviewScrollOffset = 0;
+    currentMode = CAL_REVIEW; drawCalReviewUI(); return;
   }
 }
 
@@ -2760,7 +2823,6 @@ void saveVibPrefs() {
 void drawSuccessScreen();
 void drawStackCalcUI();
 void drawStackTimeUI();
-void drawFovInfoUI();        // V17
 void drawCalReviewUI();      // V17
 void refreshCalSettingsValues(bool force = false);
 void refreshPixelValue(int p, bool force = false);
@@ -2791,7 +2853,6 @@ void handleCalConfirmTouch(TS_Point p);
 void handleCalSuccessTouch(TS_Point p);
 void handleStackCalcTouch(TS_Point p, int adj);
 void handleStackTimeTouch(TS_Point p, int adj);
-void handleFovInfoTouch(TS_Point p);       // V17
 void drawCalGraphUI();                     // V17b: calibration scatter plot
 void handleCalGraphTouch(TS_Point p);      // V17b
 void handleCalReviewTouch(TS_Point p);     // V17
@@ -4583,7 +4644,6 @@ void redrawCurrentScreen() {
     case STACK_TIME:         drawStackTimeUI(); break;
     case CAL_CONFIRM:        drawConfirmUI(); break;
     case CAL_SUCCESS:        drawSuccessScreen(); break;
-    case FOV_INFO:           drawFovInfoUI(); break;
     case CAL_REVIEW:         drawCalReviewUI(); break;
     case BRIGHTNESS_SETTINGS:drawBrightnessSettingsUI(); break;
     case SENSOR_INFO:        drawSensorInfoUI(); break;
@@ -5664,6 +5724,46 @@ void vibTask(void *pvParameters) {
       float horizMg = sqrtf((float)(sumSqH / VIB_FFT_SIZE)) * VIB_MG_PER_LSB;
       vibHorizRms.store((uint32_t)lroundf(horizMg * 100.0f));
 
+      // ── Main-screen meter input: tonal prominence. The band RMS (~1-1.5 mg)
+      // is mostly the IMU's own noise floor and barely moves when a dryer
+      // starts; the dryer shows as one spectral line. Per bin, smooth the
+      // combined V+H amplitude over ~1 s (averaging shrinks the noise bins'
+      // scatter but not a steady tone), then take the strongest bin above the
+      // spectrum's MEDIAN — a floor measured across frequency, not time, so a
+      // tone that runs for minutes is never absorbed into it (vibBaseV/H are
+      // time EMAs and would be).
+      {
+        static float toneEma[VIB_FFT_BINS];
+        static float toneScratch[VIB_FFT_BINS];
+        static bool  tonePrimed = false;
+        const uint16_t *dH = vibSpecH[specSeq & 1];
+        const int b0 = VIB_DISP_MIN_BIN;               // skip DC / sub-2.4 Hz drift
+        float peak = 0.0f;
+        for (int b = b0; b < VIB_FFT_BINS; b++) {
+          float v = (float)dst[b], h = (float)dH[b];
+          float a = sqrtf(v * v + h * h);              // deci-mg
+          toneEma[b] = tonePrimed ? toneEma[b] + (a - toneEma[b]) * VIB_TONE_ALPHA : a;
+          toneScratch[b - b0] = toneEma[b];
+          if (toneEma[b] > peak) peak = toneEma[b];
+        }
+        tonePrimed = true;
+        int n = VIB_FFT_BINS - b0;
+        std::nth_element(toneScratch, toneScratch + n / 2, toneScratch + n);
+        float med = toneScratch[n / 2];
+        // The tallest of ~250 noise bins sits a few σ above the median by
+        // chance, and wanders frame to frame (calm read 0.08-0.2 mg). Subtract
+        // that expected excursion: σ from the MAD across frequency (robust — a
+        // tone or two can't inflate it), threshold median + VIB_TONE_K_SIGMA·σ.
+        // Pure noise then clamps to ~0; a real line stands clear.
+        for (int i = 0; i < n; i++) toneScratch[i] = fabsf(toneScratch[i] - med);
+        std::nth_element(toneScratch, toneScratch + n / 2, toneScratch + n);
+        float sigma = 1.4826f * toneScratch[n / 2];
+        float promRaw = (peak - med) / 10.0f;                              // mg
+        float prom    = (peak - med - VIB_TONE_K_SIGMA * sigma) / 10.0f;   // mg
+        vibTonePeakRaw.store((uint32_t)lroundf((promRaw > 0 ? promRaw : 0) * 100.0f));
+        vibTonePeak.store((uint32_t)lroundf((prom > 0 ? prom : 0) * 100.0f));
+      }
+
       // ── V12.6: deep-history envelope — one entry of 4 × u16 per hop while a
       // stack is recording: {vRms mg×100, hRms mg×100, vDisp nm, hDisp nm}.
       // Displacement is the true broadband per-bin double integration
@@ -6193,8 +6293,8 @@ void setup() {
 
   // V11 fix: pre-load factory calibration points into distPoints/fovPoints
   // when no custom calibration exists. Previously these arrays were only
-  // populated when the user entered FOV_INFO and tapped GRAPH; navigating
-  // directly to CAL_GRAPH on a factory boot plotted uninitialised memory.
+  // populated on the way into the graph; navigating directly to CAL_GRAPH
+  // (e.g. a web nav) on a factory boot plotted uninitialised memory.
   if (!isCustomCalib) {
     // Factory cal IS the firmware's built-in default. Force the current default
     // coefficients so a stale persisted factory save (e.g. from a dev build that
@@ -6345,7 +6445,6 @@ void wakeScreen() {
       case STACK_TIME:   drawStackTimeUI(); break;
       case CAL_CONFIRM:  drawConfirmUI(); break;
       case CAL_SUCCESS:  drawSuccessScreen(); break;
-      case FOV_INFO:            drawFovInfoUI(); break;
       case CAL_REVIEW:          drawCalReviewUI(); break;
       case BRIGHTNESS_SETTINGS: drawBrightnessSettingsUI(); break;
       case SENSOR_INFO:         drawSensorInfoUI(); break;
@@ -7140,7 +7239,6 @@ void loop() {
           case CAL_SUCCESS:         handleCalSuccessTouch(p); break;
           case STACK_CALC:          handleStackCalcTouch(p, adj); break;
           case STACK_TIME:          handleStackTimeTouch(p, adj); break;
-          case FOV_INFO:            handleFovInfoTouch(p); break;
           case CAL_REVIEW:          handleCalReviewTouch(p); break;
           case BRIGHTNESS_SETTINGS: handleBrightnessSettingsTouch(p, adj); break;
           case SENSOR_INFO:         handleSensorInfoTouch(p); break;
@@ -7246,6 +7344,11 @@ void loop() {
     if (currentMode == MAIN) {
       updateDisplay();
       drawSignalHealthBar(lastStatus, lastMCPS, 44, 14, false);   // y 14..26: centred on the VIBE wave baseline (y=20)
+      static unsigned long lastVibWaveMs = 0;
+      if ((unsigned long)(millis() - lastVibWaveMs) >= 100) {   // live VIBE CHECK level, ~10 Hz
+        lastVibWaveMs = millis();
+        drawMainVibWave(false);
+      }
     }
     lastDisplayUpdate = millis();
   }
@@ -7284,7 +7387,7 @@ void handleMainTouch(TS_Point p) {
   // into the dead space before the gear icon).
   if (p.x >= btnFovInfo.x && p.x < btnFovInfo.x + btnFovInfo.w &&
       p.y >= btnFovInfo.y && p.y < btnFovInfo.y + btnFovInfo.h) {
-    currentMode = FOV_INFO; drawFovInfoUI(); return;
+    openCalGraph(); return;   // the graph IS the calib info screen now
   }
   // V11: tap on the calib/version block (bottom-left) opens the ABOUT screen.
   // Box drawn in drawMainScreen at x=2..96, y=283..317.
@@ -7490,45 +7593,9 @@ void handleStackTimeTouch(TS_Point p, int adj) {
   }
 }
 
-// V17: FOV INFO touch handler — single button, just go back
-void handleFovInfoTouch(TS_Point p) {
-  // X close button — top-right
-  if (btnInfoClose.contains(p.x, p.y)) {
-    currentMode = MAIN; drawMainScreen(); return;
-  }
-  // GRAPH button at bottom (btnInfoBack repurposed) OR the old top-right GRAPH button
-  if (btnInfoBack.contains(p.x, p.y) || btnInfoGraph.contains(p.x, p.y)) {
-    if (!isCustomCalib) {
-      nPoints = FACTORY_N;
-      pointsCaptured = FACTORY_N;   // V11 fix: CAL_GRAPH bounds the plot by this
-      for (int i = 0; i < FACTORY_N; i++) {
-        distPoints[i] = FACTORY_DIST[i];
-        fovPoints[i]  = FACTORY_FOV[i];
-      }
-    }
-    currentMode = CAL_GRAPH; drawCalGraphUI(); return;
-  }
-  // POINTS button — open the read-only point list. Seed the factory points so
-  // the list is populated on the factory default. Unlike GRAPH, we leave nPoints
-  // (the Cal Points target) alone — viewing the list shouldn't change a setting.
-  if (btnInfoPoints.contains(p.x, p.y)) {
-    if (!isCustomCalib) {
-      pointsCaptured = FACTORY_N;
-      for (int i = 0; i < FACTORY_N; i++) {
-        distPoints[i] = FACTORY_DIST[i];
-        fovPoints[i]  = FACTORY_FOV[i];
-      }
-    }
-    calReviewReadOnly = true;
-    reviewSelected = -1;
-    reviewScrollOffset = 0;
-    currentMode = CAL_REVIEW; drawCalReviewUI(); return;
-  }
-}
-
 // V17: CAL_REVIEW touch handler
 void handleCalReviewTouch(TS_Point p) {
-  // Read-only viewer (opened from CALIB INFO): scroll + BACK only. No row
+  // Read-only viewer (opened from CAL_GRAPH POINTS): scroll + BACK only. No row
   // selection, retake, or finalize — there is no active calibration session.
   if (calReviewReadOnly) {
     if (btnReviewUp.contains(p.x, p.y)) {
@@ -7543,7 +7610,7 @@ void handleCalReviewTouch(TS_Point p) {
     }
     if (btnPointsBack.contains(p.x, p.y)) {
       calReviewReadOnly = false;
-      currentMode = FOV_INFO; drawFovInfoUI();
+      currentMode = CAL_GRAPH; drawCalGraphUI();
     }
     return;
   }
@@ -7965,6 +8032,69 @@ void drawCorrectionTags() {
   tft.print(buf);
 }
 
+// VIBE CHECK wave (main screen, x 105..135, baseline y=20) as a live meter.
+// The wave (amplitude growing left → right) is drawn dim and fills with colour LEFT → RIGHT in
+// proportion to the vibration level, like a progress bar — see the
+// VIB_METER_* constants (tonal prominence or above-floor RMS; STRONG = full).
+// VIB_METER_TONE_MOD is where the colour reaches yellow. Colour is
+// continuous: green → yellow at the tick → red at full. Drawn into a small
+// canvas and blitted so the ~10 Hz refresh doesn't flicker; redraws only when
+// the quantized fill changes (force = full-screen repaint).
+void drawMainVibWave(bool force) {
+  static GFXcanvas16* cv = nullptr;
+  static int lastLvl = -1;
+  static float ema = 0.0f;
+  const int X0 = 105, Y0 = 12, W = 32, H = 17, BASE = 20 - Y0, N = 30;
+
+  float worstMg = (float)std::max(vibBandRms.load(std::memory_order_relaxed),
+                                  vibHorizRms.load(std::memory_order_relaxed)) / 100.0f;
+  float toneMg  = (float)vibTonePeak.load(std::memory_order_relaxed) / 100.0f;
+  const float span = logf(VIB_METER_TONE_HI / VIB_METER_TONE_LO);
+  const float modT = logf(VIB_METER_TONE_MOD / VIB_METER_TONE_LO) / span;   // ≈ 0.38
+  float tTone = (toneMg <= VIB_METER_TONE_LO) ? 0.0f : logf(toneMg / VIB_METER_TONE_LO) / span;
+  float tRms  = (worstMg <= VIB_METER_RMS_LO) ? 0.0f
+              : logf(worstMg / VIB_METER_RMS_LO) / logf(VIB_RMS_STRONG / VIB_METER_RMS_LO);
+  int st  = (int)vibState.load(std::memory_order_relaxed);
+  float rawMg = (float)vibTonePeakRaw.load(std::memory_order_relaxed) / 100.0f;
+  float tIdle = constrain((rawMg - VIB_METER_IDLE_LO) / (VIB_METER_IDLE_HI - VIB_METER_IDLE_LO), 0.0f, 1.0f)
+              * VIB_METER_IDLE_MAX;
+  float t = std::max(std::max(tTone, tRms), tIdle);
+  if (st >= 2) t = 1.0f;                           // STRONG always reads full
+  t = constrain(t, 0.0f, 1.0f);
+  ema += 0.35f * (t - ema);                      // ~10 Hz calls → ~0.3 s settle
+  int lvl = (int)roundf(ema * N);                // one step per wave column
+  if (!force && lvl == lastLvl) return;
+  lastLvl = lvl;
+
+  if (!cv) { cv = new GFXcanvas16(W, H); if (!cv) return; }
+  bool day = (currentThemeIndex == THEME_DAYLIGHT_IDX);
+  const uint16_t dimCol  = day ? 0x8D33 : 0x22C7;   // unfilled wave (#8aa69a / #1f5a3a)
+  const uint16_t baseCol = 0x19C6;                  // #1f3a33 faint baseline
+  // Continuous colour at the fill level: #3ddb7a → #ffcc00 (at modT) → #ff4444.
+  float f = lvl / (float)N, r, g, b;
+  auto mix = [](float a, float c, float u) { return a + (c - a) * constrain(u, 0.0f, 1.0f); };
+  if (f < modT) { float u = (f - modT * 0.5f) / (modT * 0.5f);   // stays green for the first half
+    r = mix(61, 255, u); g = mix(219, 204, u); b = mix(122, 0, u); }
+  else { float u = (f - modT) / (1.0f - modT);
+    r = 255; g = mix(204, 68, u); b = mix(0, 68, u); }
+  uint16_t liveCol = ((uint16_t)((int)r >> 3) << 11) | ((uint16_t)((int)g >> 2) << 5) | ((int)b >> 3);
+  if (day) liveCol = scaleColor565(liveCol, 2, 3);  // darker ink on the light background
+
+  cv->fillScreen(THEME_BG);
+  cv->drawFastHLine(0, BASE, N + 1, baseCol);
+  int prevx = 0, prevy = BASE;
+  for (int i = 1; i <= N; i++) {
+    float amp = 7.0f * (i / 30.0f);             // grows left → right, with the fill
+    int y = BASE - (int)roundf(amp * sinf(i * 0.85f));
+    bool filled = (i <= lvl);
+    uint16_t col = filled ? liveCol : dimCol;
+    cv->drawLine(prevx, prevy, i, y, col);
+    if (filled) cv->drawLine(prevx, prevy + 1, i, y + 1, col);   // filled part 2 px
+    prevx = i; prevy = y;
+  }
+  tft.drawRGBBitmap(X0, Y0, cv->getBuffer(), W, H);
+}
+
 void drawMainScreen() {
   tft.fillScreen(THEME_BG);
   updateObjectiveButtons();
@@ -8006,39 +8136,38 @@ void drawMainScreen() {
   {
     const uint16_t vibCol  = (currentThemeIndex == THEME_DAYLIGHT_IDX)
                                ? 0x03E0 : 0x3ECF;   // #3ddb7a, daylight-darkened
-    const uint16_t vibBase = 0x19C6;                // #1f3a33 faint baseline
     tft.setFont(); tft.setTextSize(1);
     tft.setTextColor(vibCol);
     tft.setCursor(108, 3);  tft.print("VIBE");       // 24 px wide → centered on x=120
     tft.setCursor(105, 31); tft.print("CHECK");      // 30 px wide → centered on x=120
-    // Decaying ring-down wave between the two labels (baseline y=20).
-    tft.drawFastHLine(105, 20, 31, vibBase);
-    int prevx = 105, prevy = 20;
-    for (int i = 1; i <= 30; i++) {
-      int x = 105 + i;
-      float amp = 7.0f * (1.0f - (i - 1) / 30.0f);   // 7 px → ~0, left-to-right decay
-      int y = 20 - (int)roundf(amp * sinf(i * 0.85f));
-      tft.drawLine(prevx, prevy, x, y, vibCol);
-      prevx = x; prevy = y;
-    }
+    drawMainVibWave(true);                           // static envelope + live level overlay
   }
 
-// V17b: FOV Info button — tightened text spacing.
-  // V11: now bracketed by twin bullet dots on each side for visual symmetry.
-  // The whole text block also shifted 4px left so the right-side dot doesn't
-  // crowd the gear icon at x≈190+. Gap between each dot and the nearest text
-  // edge is preserved at ~3px (matching the original left-dot spacing).
-  // Button: x=152 y=2 w=44 h=40 (centre x=174, centre y=22).
-  // "FOV"  18px wide → startX = 161 (was 165)
-  // "Info" 24px wide → startX = 158 (was 162)
-  // Bullets centred vertically at y=21, horizontally at x=155 and x=185.
-  tft.fillRect(btnFovInfo.x, btnFovInfo.y, btnFovInfo.w, btnFovInfo.h, THEME_BG);
-  tft.setFont(); tft.setTextSize(1); tft.setTextColor(themedText(0xC81F));
-  tft.setCursor(161, 12); tft.print("FOV");
-  // Twin bullets — one left, one right of the FOV/Info stack.
-  tft.fillCircle(155, 22, 1, 0xC81F);
-  tft.fillCircle(185, 22, 1, 0xC81F);
-  tft.setCursor(158, 25); tft.print("Info");
+// FOV Info button (x=152 y=2 w=44 h=40) → CAL_GRAPH. A mini calibration plot:
+  // grey axes, 2 px magenta 1/x fit curve, green fit points + one orange
+  // outlier, "FOV" upper-right. Same pixel geometry as the web #btn-fov-info SVG.
+  {
+    const int ox = btnFovInfo.x, oy = btnFovInfo.y;
+    const uint16_t axisCol  = themedText(COLOR_DARKGREY);
+    const uint16_t curveCol = themedText(0xC81F);
+    tft.fillRect(ox, oy, btnFovInfo.w, btnFovInfo.h, THEME_BG);
+    // Compact (≈22 px tall, y 10..31) to match the VIBE CHECK stack; "FOV"
+    // tucks into the empty upper-right above the flat tail of the curve.
+    tft.drawFastVLine(ox + 9, oy + 11, 21, axisCol);
+    tft.drawFastHLine(ox + 9, oy + 31, 28, axisCol);
+    static const uint8_t CY[13] = { 13, 17, 20, 22, 24, 25, 26, 27, 27, 28, 28, 29, 29 };
+    for (int i = 1; i < 13; i++) {
+      int x0 = ox + 11 + 2 * (i - 1), x1 = ox + 11 + 2 * i;
+      tft.drawLine(x0, oy + CY[i - 1], x1, oy + CY[i], curveCol);
+      tft.drawLine(x0 + 1, oy + CY[i - 1], x1 + 1, oy + CY[i], curveCol);
+    }
+    tft.fillCircle(ox + 13, oy + 17, 1, 0x4F4F);   // #48e878 fit points
+    tft.fillCircle(ox + 18, oy + 23, 1, 0x4F4F);
+    tft.fillCircle(ox + 25, oy + 27, 1, 0x4F4F);
+    tft.fillCircle(ox + 34, oy + 26, 1, 0xFC47);   // #ff8a3d outlier
+    tft.setFont(); tft.setTextSize(1); tft.setTextColor(curveCol);
+    tft.setCursor(ox + 22, oy + 10); tft.print("FOV");
+  }
 
   // Main-screen CALIBRATE button — draw manually with the local FreeSans7pt7b
   // font instead of going through Button::draw / setSmoothFont. Keeps the rest
@@ -8467,107 +8596,6 @@ void refreshStackTimeValues(bool force) {
   }
 }
 
-// V17: FOV calibration info screen
-void drawFovInfoUI() {
-  tft.fillScreen(THEME_BG);
-  drawLeftBoxedText("CALIB INFO", 5, 5, COLOR_DARKBLUE);
-
-  setSmoothFont(1);
-
-  char buf[32];
-
-  // Status line — top, color coded
-  tft.setTextColor(isCustomCalib ? COLOR_GREENYELLOW : COLOR_RED);
-  const char* statusTxt = isCustomCalib ? "Status: CUSTOM CAL" : "Status: FACTORY DEFAULT";
-  int16_t x1, y1; uint16_t w, h;
-  tft.getTextBounds(statusTxt, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor((240 - w) / 2 - x1, 60);
-  tft.print(statusTxt);
-
-  // Linear fit values
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 95);
-  tft.print("Slope:");
-  tft.setTextColor(themedText(TFT_WHITE));
-  snprintf(buf, sizeof(buf), "%.5f", CTRLX);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 95);
-  tft.print(buf);
-
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 120);
-  tft.print("Intercept:");
-  tft.setTextColor(themedText(TFT_WHITE));
-  snprintf(buf, sizeof(buf), "%.4f", CTRLY);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 120);
-  tft.print(buf);
-
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 145);
-  tft.print("Base Err:");
-  // R² color: green if good, yellow if mediocre, red if bad
-  // CALIB_ERROR is the std error of the fit in mm — smaller is better.
-  uint16_t errCol = TFT_WHITE;
-  if (isCustomCalib) {
-    if      (CALIB_ERROR < 0.02f) errCol = COLOR_PUREGREEN;
-    else if (CALIB_ERROR < 0.05f) errCol = COLOR_YELLOW;
-    else                          errCol = COLOR_ORANGE;
-  }
-  tft.setTextColor(errCol);
-  snprintf(buf, sizeof(buf), "%.4f mm", CALIB_ERROR);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 145);
-  tft.print(buf);
-
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 170);
-  tft.print("R-Squared:");
-  uint16_t r2Col = TFT_WHITE;
-  if (isCustomCalib) {
-    if      (CALIB_R2 > 0.995f) r2Col = COLOR_PUREGREEN;
-    else if (CALIB_R2 > 0.98f)  r2Col = COLOR_YELLOW;
-    else                        r2Col = COLOR_ORANGE;
-  }
-  tft.setTextColor(r2Col);
-  snprintf(buf, sizeof(buf), "%.4f", CALIB_R2);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 170);
-  tft.print(buf);
-
-  // Inputs used
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 200);
-  tft.print("Photo Width:");
-  tft.setTextColor(themedText(TFT_WHITE));
-  snprintf(buf, sizeof(buf), "%d px", (int)sensorWidthPixels);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 200);
-  tft.print(buf);
-
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 225);
-  tft.print("Demarc:");
-  tft.setTextColor(themedText(TFT_WHITE));
-  snprintf(buf, sizeof(buf), "%.2f mm", demarcationDist);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 225);
-  tft.print(buf);
-
-  tft.setTextColor(themedText(COLOR_LIGHTGREY));
-  tft.setCursor(20, 250);
-  tft.print("Cal Points:");
-  tft.setTextColor(themedText(TFT_WHITE));
-  snprintf(buf, sizeof(buf), "%d", nPoints);
-  tft.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor(225 - w - x1, 250);
-  tft.print(buf);
-
-  btnInfoClose.draw(tft);   // X close top-right
-  btnInfoBack.draw(tft);    // GRAPH button (bottom-left)
-  btnInfoPoints.draw(tft);  // POINTS button (bottom-right) → read-only point list
-}
-
 // V17: calibration point review/edit screen
 void drawCalReviewUI() {
   tft.fillScreen(THEME_BG);
@@ -8634,7 +8662,7 @@ void drawCalReviewUI() {
     }
   }
 
-  // Action buttons. Read-only viewer (from CALIB INFO) shows just BACK; the
+  // Action buttons. Read-only viewer (from CAL_GRAPH) shows just BACK; the
   // editable review shows RETAKE / FINISH / BACK.
   if (calReviewReadOnly) {
     btnPointsBack.draw(tft);

@@ -8,7 +8,7 @@ import gzip, hashlib, os, re, shutil, subprocess, tempfile
 
 # ── Version ───────────────────────────────────────────────────────────────────
 VERSION_MAJOR = 12
-VERSION_MINOR = 6   # bump manually for milestone releases
+VERSION_MINOR = 7   # bump manually for milestone releases
 # Patch counter resets to 0 at each minor bump. Set VERSION_PATCH_BASE to the
 # FIRMWARE commit count at the bump commit so patch = firmware_count - base.
 # "Firmware commits" = commits that touch any of FIRMWARE_PATHS (below) — the
@@ -40,7 +40,7 @@ VERSION_MINOR = 6   # bump manually for milestone releases
 # hardware-CDC serial + PSRAM rings headroom, terser/zopfli embed pipeline.
 # 2026-08-22: base rebased 228 -> 324 at the 12.6 bump (324 firmware commits at
 # v12.5.96 = v12.6.0).
-VERSION_PATCH_BASE = 324
+VERSION_PATCH_BASE = 348
 # Paths whose commits change the shipped binary — the version counts ONLY
 # these. ONE single-quoted line: drift-check.sh and release.sh sed it out of
 # this file (same trick as VERSION_*), so keep the format.
