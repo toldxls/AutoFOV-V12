@@ -393,6 +393,71 @@
            top:6/8px the rows ship with. */
         .stack-row .gfx-text { top: 50% !important; transform: translateY(-50%); }
 
+        /* Web STACK CALC / STACK TIME — the TOF TARGETS green panel family
+           (#0a1f1a fill, #2a7a6a rule, #3ddb7a live) with blue / orange nudge
+           buttons for variety. Cards are fixed-dark on every theme, like
+           .tof-stats. Values edit in place; .sk-nudge buttons hold-to-repeat. */
+        .sk-card { position: absolute; left: 12px; width: 216px; height: 60px; box-sizing: border-box;
+                   padding: 6px 7px 7px; border-radius: 5px;
+                   background: linear-gradient(180deg, #0c2620 0%, #081813 100%);
+                   border: 1px solid #2a7a6a; box-shadow: inset 0 1px 0 rgba(160,255,220,0.07); }
+        .sk-k  { display: flex; justify-content: space-between; align-items: baseline;
+                 font-size: 8px; font-weight: bold; letter-spacing: 0.12em; color: #7ab4a2; line-height: 1; }
+        .sk-kr { font-weight: normal; letter-spacing: 0.04em; color: #4f7d70; }
+        .sk-field { display: flex; gap: 5px; margin-top: 5px; height: 32px; }
+        .sk-input { flex: 1 1 auto; min-width: 0; height: 100%; box-sizing: border-box; margin: 0;
+                    background: #061512; border: 1px solid #1f3a33; border-radius: 4px;
+                    color: #eafff6; font: bold 17px monospace; text-align: center; text-align-last: center;
+                    padding: 0 4px; outline: none; cursor: text;
+                    -moz-appearance: textfield; appearance: textfield;
+                    transition: border-color 90ms ease-out, box-shadow 90ms ease-out; }
+        .sk-input::-webkit-outer-spin-button,
+        .sk-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .sk-input:hover { border-color: #2a7a6a; }
+        .sk-input:focus { border-color: #3ddb7a; box-shadow: 0 0 0 1px rgba(61,219,122,0.35), 0 0 8px rgba(61,219,122,0.25); }
+        .sk-select { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 16px;
+                     background: #061512 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%233ddb7a'/%3E%3C/svg%3E") no-repeat right 7px center; }
+        .sk-select option { background: #0a1f1a; color: #cfe7df; font-size: 13px; }
+        .sk-nudge { flex: 0 0 34px; height: 100%; box-sizing: border-box; border-radius: 4px;
+                    display: flex; align-items: center; justify-content: center; cursor: pointer;
+                    font: bold 19px/1 system-ui, sans-serif; user-select: none; -webkit-user-select: none;
+                    touch-action: none; transition: filter 60ms ease-out, transform 60ms ease-out;
+                    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -2px 3px rgba(0,0,0,0.3); }
+        .sk-nudge.sk-blue   { background: linear-gradient(180deg, #2a5fa4, #173b6e); border: 1px solid #74b9ff; color: #dbeeff; }
+        .sk-nudge.sk-orange { background: linear-gradient(180deg, #a3590d, #6e3a05); border: 1px solid #ffab3d; color: #ffe6c7; }
+        .sk-nudge:hover  { filter: brightness(1.15); }
+        .sk-nudge.held   { filter: brightness(1.45); transform: scale(0.94); }
+        .sk-chip { position: absolute; height: 20px; padding: 0 7px; box-sizing: border-box; border-radius: 10px;
+                   display: flex; align-items: center; gap: 4px; white-space: nowrap;
+                   background: #0a1f1a; border: 1px solid #2a7a6a; color: #3ddb7a;
+                   font: bold 9px monospace; letter-spacing: 0.02em; }
+        .sk-chip .sk-na { color: #7ab4a2; font-weight: normal; }
+        .sk-stats .tof-stat { background: linear-gradient(180deg, #0c2620 0%, #081813 100%); border-color: #1f5a4c; }
+        .sk-stats .tof-stat .k, .sk-stats .tof-stat .u { color: #7ab4a2; }
+        .sk-stats .tof-stat .v { color: #eafff6; }
+        .sk-tap { cursor: pointer; }
+        .sk-tap:hover .tof-stat { border-color: #2a7a6a; }
+        .sk-meter { position: absolute; left: 12px; width: 216px; height: 6px; border-radius: 3px;
+                    background: #061512; border: 1px solid #1f3a33; box-sizing: border-box; overflow: hidden; }
+        .sk-meter-fill { height: 100%; width: 0; border-radius: 3px; transition: width 140ms ease-out, background 140ms; }
+        .sk-meter-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(207,231,223,0.35); }
+        .sk-go { justify-content: flex-start; padding-left: 40px; }
+        .sk-go-time { margin-left: auto; font: bold 13px monospace; color: #ffc27a;
+                      text-shadow: 0 0 6px rgba(255,160,60,0.35); }
+        .sk-meas { position: absolute; left: 12px; width: 216px; height: 24px; display: flex;
+                   align-items: center; justify-content: space-between; gap: 6px;
+                   font-size: 10px; color: var(--text-disabled); }
+        .sk-meas span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sk-use { position: static; flex: 0 0 auto; width: 42px; height: 22px; font-size: 10px; }
+        .sk-result { position: absolute; left: 12px; width: 216px; height: 104px; box-sizing: border-box;
+                     padding: 10px 8px; border-radius: 6px; text-align: center;
+                     display: flex; flex-direction: column; justify-content: center; gap: 8px;
+                     background: radial-gradient(120% 90% at 50% 0%, #3a2408 0%, #1a1206 55%, #0d0a05 100%);
+                     border: 1px solid #b86a14; box-shadow: inset 0 1px 0 rgba(255,200,130,0.12), 0 0 12px rgba(255,140,40,0.12); }
+        .sk-result .sk-k { color: #e0a060; }
+        .sk-total  { font: bold 28px/1 monospace; color: #FFA500; text-shadow: 0 0 10px rgba(255,165,0,0.35); }
+        .sk-finish { font-size: 10px; color: #c89a64; min-height: 10px; }
+
         /* Tap-to-edit calibrator rows: draw an inset, rounded "input field" box
            behind the label+value so the row reads as editable at rest, not just
            on press. Done with ::before/::after (pointer-events:none) so no child
@@ -811,33 +876,61 @@
             </div>
 
             <!-- ===================== STACK CALC ===================== -->
+            <!-- Web layout diverges from the TFT on purpose: the device keeps its
+                 row-select + ◄◄ ◄ ► ►► steppers (no keyboard); here the values are
+                 edited in place — step size from its fixed table (dropdown, nudge
+                 chevrons, or scroll), image count typed. Same commands either way
+                 (stepIndex / imgs), so the two stay in lock-step. -->
             <div id="screen-stackcalc" class="screen">
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 110px;">STACK CALC</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-settings')">X</div>
-                <div id="val-calc-obj" class="gfx-text" style="right: 44px; top: 12px; color: var(--accent-green); font-size: 11px;">OBJ: 20x</div>
+                <div id="val-calc-obj" class="sk-chip" style="right: 40px; top: 9px;">20x</div>
 
-                <div class="stack-row" style="top: 45px;" onclick="setStackSel(0)">
-                    <div id="lbl-step" class="gfx-text" style="left: 10px; top: 8px; color: var(--accent-green); font-size: 12px;">Step Size:</div>
-                    <div id="val-step" class="gfx-text" style="left: 115px; top: 6px; font-size: 16px; color: var(--text-primary);">0.468 um</div>
-                </div>
-                <div class="stack-row" style="top: 78px;" onclick="setStackSel(1)">
-                    <div id="lbl-imgs" class="gfx-text" style="left: 10px; top: 8px; color: var(--text-primary); font-size: 12px;">Images:</div>
-                    <div id="val-imgs" class="gfx-text" style="left: 115px; top: 6px; font-size: 16px; color: var(--text-primary);">128</div>
-                </div>
-
-                <div id="val-dof"     class="gfx-text" style="left: 10px; top: 110px; color: var(--text-primary); font-size: 11px;">DOF: 3.118 um</div>
-                <div id="val-depth"   class="gfx-text" style="left: 10px; top: 142px; color: var(--text-disabled); font-size: 11px;">Stack Depth: 59.4 um</div>
-                <div id="val-overlap" class="gfx-text" style="left: 10px; top: 174px; color: #00FF00; font-size: 11px;">Overlap: 85%</div>
-
-                <div class="adj-row" style="top: 207px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjStack(-2)">◄◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjStack(-1)">◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjStack(1)">►</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjStack(2)">►►</div>
+                <div class="sk-card" style="top: 42px;">
+                    <div class="sk-k">STEP SIZE <span id="sk-step-idx" class="sk-kr">6 / 23</span></div>
+                    <div class="sk-field">
+                        <div class="sk-nudge sk-blue" data-nudge="step" data-dir="-1" title="Smaller step (hold to repeat)">&#8249;</div>
+                        <select id="val-step" class="sk-input sk-select" onchange="setStepIndex(+this.value)"
+                                title="Step size — the rail's fixed table"></select>
+                        <div class="sk-nudge sk-blue" data-nudge="step" data-dir="1" title="Larger step (hold to repeat)">&#8250;</div>
+                    </div>
                 </div>
 
-                <div class="gfx-btn" style="left: 40px; top: 258px; width: 160px; height: 50px;
-                     background: #0000CD; font-size: 12px;" onclick="switchScreen('screen-stacktime')">TIME CALC</div>
+                <div class="sk-card" style="top: 108px;">
+                    <div class="sk-k">IMAGES <span class="sk-kr">2 &ndash; 50000</span></div>
+                    <div class="sk-field">
+                        <div class="sk-nudge sk-orange" data-nudge="imgs" data-dir="-1" title="One fewer (hold to repeat, speeds up)">&minus;</div>
+                        <input id="val-imgs" class="sk-input" type="number" inputmode="numeric" min="2" max="50000" step="1"
+                               onchange="setImgs(this.value)" onkeydown="if(event.key==='Enter')this.blur()"
+                               onfocus="this.select()" title="Type the image count">
+                        <div class="sk-nudge sk-orange" data-nudge="imgs" data-dir="1" title="One more (hold to repeat, speeds up)">+</div>
+                    </div>
+                </div>
+
+                <div class="tof-stats sk-stats" style="top: 176px;">
+                    <div class="tof-stat"><div class="k">DOF</div>
+                         <div class="v"><span id="val-dof">—</span><span class="u">&micro;m</span></div></div>
+                    <div class="tof-stat"><div class="k">DEPTH</div>
+                         <div class="v"><span id="val-depth">—</span><span class="u">&micro;m</span></div></div>
+                    <div class="tof-stat"><div class="k">OVERLAP</div>
+                         <div class="v"><span id="val-overlap">—</span><span class="u">%</span></div></div>
+                </div>
+                <!-- Overlap gauge: step vs DOF. Green ≥30%, amber 0–30%, red = gaps. -->
+                <div class="sk-meter" style="top: 238px;" title="Frame-to-frame DOF overlap">
+                    <div id="sk-overlap-fill" class="sk-meter-fill"></div>
+                    <div class="sk-meter-tick" style="left: 30%;"></div>
+                </div>
+
+                <div class="gfx-btn btn-tof btn-steel sk-go" style="top: 258px; height: 48px;"
+                     onclick="switchScreen('screen-stacktime')" title="Sec/step and total run time">
+                    <svg style="position:absolute;left:12px;" width="20" height="20" viewBox="0 0 20 20">
+                        <circle cx="10" cy="11" r="7" fill="#0d2748" stroke="#9fd0ff" stroke-width="1.5"/>
+                        <path d="M10 7v4.3l2.8 1.8" fill="none" stroke="#ffb35c" stroke-width="1.7" stroke-linecap="round"/>
+                        <path d="M8 2.6h4" stroke="#9fd0ff" stroke-width="1.6" stroke-linecap="round"/>
+                    </svg>
+                    <span>TIME CALC</span>
+                    <span id="sk-go-time" class="sk-go-time">—</span>
+                </div>
             </div>
 
             <!-- ===================== STACK TIME ===================== -->
@@ -845,27 +938,41 @@
                 <div class="title-stripe" style="left: 5px; top: 5px; width: 110px;">STACK TIME</div>
                 <div class="gfx-btn btn-close-x" onclick="goBack('screen-stackcalc')">X</div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 58px; color: var(--text-disabled);">Step: <span id="time-val-step">0.468</span> um</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 76px; color: var(--text-disabled);">Depth: <span id="time-val-depth">59.4</span> um</div>
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 94px; color: var(--text-disabled);">IMGS: <span id="time-val-imgs">128</span></div>
-
-                <div class="gfx-text" style="left: 10px; top: 124px; color: var(--accent-green);">Sec/Step:</div>
-                <div id="val-secstep" class="gfx-text" style="left: 115px; top: 122px; font-size: 16px; color: var(--text-primary);">2.0 s</div>
-
-                <div class="adj-row" style="top: 155px;">
-                    <div class="gfx-btn btn-adj" style="left: 10px; background-color: #780000;" onclick="adjTime(-2)">◄◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 65px; background-color: var(--text-disabled);" onclick="adjTime(-1)">◄</div>
-                    <div class="gfx-btn btn-adj" style="left: 120px; background-color: var(--text-disabled);" onclick="adjTime(1)">►</div>
-                    <div class="gfx-btn btn-adj" style="left: 175px; background-color: #006400;" onclick="adjTime(2)">►►</div>
+                <!-- The stack being timed — tap to go back and change it. -->
+                <div class="tof-stats sk-stats sk-tap" style="top: 42px;" onclick="goBack('screen-stackcalc')"
+                     title="Edit the stack in STACK CALC">
+                    <div class="tof-stat"><div class="k">STEP</div>
+                         <div class="v"><span id="time-val-step">—</span><span class="u">&micro;m</span></div></div>
+                    <div class="tof-stat"><div class="k">DEPTH</div>
+                         <div class="v"><span id="time-val-depth">—</span><span class="u">&micro;m</span></div></div>
+                    <div class="tof-stat"><div class="k">IMAGES</div>
+                         <div class="v"><span id="time-val-imgs">—</span></div></div>
                 </div>
 
-                <div class="gfx-text" style="width: 240px; text-align: center; top: 224px; color: var(--accent-magenta);">Calculated Stack Time</div>
-                <div id="val-totaltime" class="gfx-text" style="width: 240px; text-align: center; top: 244px; color: #FFA500; font-size: 16px;">4m 16s</div>
+                <div class="sk-card" style="top: 106px;">
+                    <div class="sk-k">SEC / STEP <span class="sk-kr">0.1 &ndash; 60 s</span></div>
+                    <div class="sk-field">
+                        <div class="sk-nudge sk-orange" data-nudge="sec" data-dir="-1" title="−0.1 s (hold to repeat, speeds up)">&minus;</div>
+                        <input id="val-secstep" class="sk-input" type="number" inputmode="decimal" min="0.1" max="60" step="0.1"
+                               onchange="setSecStep(this.value)" onkeydown="if(event.key==='Enter')this.blur()"
+                               onfocus="this.select()" title="Type seconds per step">
+                        <div class="sk-nudge sk-orange" data-nudge="sec" data-dir="1" title="+0.1 s (hold to repeat, speeds up)">+</div>
+                    </div>
+                </div>
 
-                <!-- V12.3: measured sec/step from the last completed stack. Auto-applies
-                     to Sec/Step on >=30 s drift; this line shows the source. -->
-                <div id="time-measured" class="gfx-text" style="width: 240px; text-align: center; top: 282px; color: var(--text-disabled); font-size: 11px;">Measured: run a stack to set</div>
+                <!-- V12.3: measured sec/step from the last completed stack. The device
+                     auto-applies it to Sec/Step on >=30 s drift; USE applies it now. -->
+                <div class="sk-meas" style="top: 172px;">
+                    <span id="time-measured">Measured: run a stack to set</span>
+                    <div id="time-meas-use" class="gfx-btn btn-steel sk-use" onclick="useMeasuredStep()"
+                         title="Set Sec/Step to the measured value">USE</div>
+                </div>
 
+                <div class="sk-result" style="top: 204px;">
+                    <div class="sk-k" style="justify-content: center;">CALCULATED STACK TIME</div>
+                    <div id="val-totaltime" class="sk-total">—</div>
+                    <div id="time-finish" class="sk-finish"></div>
+                </div>
             </div>
 
             <!-- ===================== FOV INFO ===================== -->
@@ -4013,7 +4120,6 @@
     let state = {
         screen: 'screen-main',
         obj: 3,               // 1=5x 2=10x 3=20x
-        stackSelMode: 0,      // 0=step 1=imgs
         stepIndex: 2,
         imgs: 128,
         secStep: 3.3,
@@ -8687,50 +8793,88 @@
     // ─────────────────────────────────────────────────────────────────────────
     // STACK CALC
     // ─────────────────────────────────────────────────────────────────────────
-    function setStackSel(mode) { state.stackSelMode = mode; updateStackCalcUI(); }
+    // Web edits in place (the device keeps its row-select arrow steppers). Every
+    // path — dropdown, typed value, nudge button, scroll wheel — lands in one
+    // setter that clamps to the firmware's ranges and sends the same command.
+    const IMGS_MIN = 2, IMGS_MAX = 50000, SEC_MIN = 0.1, SEC_MAX = 60.0;
 
-    function adjStack(adj) {
-        if (state.stackSelMode === 0) {
-            const delta = Math.abs(adj) >= 2 ? Math.sign(adj) * 2 : Math.sign(adj);
-            state.stepIndex = Math.max(0, Math.min(STEP_TABLE.length - 1, state.stepIndex + delta));
-            sendCommand('stepIndex', state.stepIndex);
-        } else {
-            const delta = Math.abs(adj) >= 2 ? Math.sign(adj) * 10 : Math.sign(adj);
-            state.imgs = Math.max(2, Math.min(50000, state.imgs + delta));
-            sendCommand('imgs', state.imgs);
-        }
+    function setStepIndex(i, throttled) {
+        i = Math.max(0, Math.min(STEP_TABLE.length - 1, Math.round(i)));
+        if (!isFinite(i)) return updateStackCalcUI();
+        state.stepIndex = i;
+        (throttled ? sendCommandThrottled : sendCommand)('stepIndex', i);
         updateStackCalcUI();
     }
 
+    function setImgs(v, throttled) {
+        v = Math.round(parseFloat(v));
+        if (isFinite(v)) {
+            state.imgs = Math.max(IMGS_MIN, Math.min(IMGS_MAX, v));
+            (throttled ? sendCommandThrottled : sendCommand)('imgs', state.imgs);
+        }
+        document.getElementById('val-imgs').value = String(state.imgs);   // show the clamp / revert a bad entry
+        updateStackCalcUI();
+    }
+
+    // Don't clobber a field the user is typing in when telemetry echoes back.
+    function _skSetField(el, text) {
+        if (el && document.activeElement !== el && el.value !== text) el.value = text;
+    }
+
+    function _fmtDuration(total) {
+        total = Math.round(total);
+        const h = Math.floor(total / 3600); total %= 3600;
+        const m = Math.floor(total / 60);
+        const s = total % 60;
+        return h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+    }
+
     function updateStackCalcUI() {
-        document.getElementById('val-calc-obj').innerText = 'OBJ: ' + OBJ_LABEL[state.obj];
-        document.getElementById('lbl-step').style.color = state.stackSelMode === 0 ? '#ADFF2F' : '#FFF';
-        document.getElementById('lbl-imgs').style.color = state.stackSelMode === 1 ? '#A800F8' : '#FFF';
+        document.getElementById('val-calc-obj').innerHTML =
+            OBJ_LABEL[state.obj] + ' <span class="sk-na">NA ' + NA_TABLE[state.obj].toFixed(2) + '</span>';
+
+        const sel = document.getElementById('val-step');
+        if (sel.options.length !== STEP_TABLE.length) {
+            sel.innerHTML = STEP_TABLE.map((v, i) =>
+                `<option value="${i}">${v.toFixed(3)} µm</option>`).join('');
+        }
+        if (+sel.value !== state.stepIndex) sel.value = String(state.stepIndex);
+        document.getElementById('sk-step-idx').innerText = (state.stepIndex + 1) + ' / ' + STEP_TABLE.length;
+        _skSetField(document.getElementById('val-imgs'), String(state.imgs));
 
         const stepVal = STEP_TABLE[state.stepIndex];
-        document.getElementById('val-step').innerText = stepVal.toFixed(3) + ' um';
-        document.getElementById('val-imgs').innerText = state.imgs;
-
         const NA = NA_TABLE[state.obj];
         const dof = 0.55 / (NA * NA);
         const depth = (state.imgs - 1) * stepVal;
         const overlap = ((dof - stepVal) / dof) * 100;
+        const olColor = overlap < 0 ? '#ff4d4d' : overlap < 30 ? '#FFA500' : '#3ddb7a';
 
-        document.getElementById('val-dof').innerText   = 'DOF: ' + dof.toFixed(3) + ' um';
-        document.getElementById('val-depth').innerText = 'Stack Depth: ' + depth.toFixed(1) + ' um';
+        document.getElementById('val-dof').innerText   = dof.toFixed(3);
+        document.getElementById('val-depth').innerText = depth.toFixed(1);
         const olEl = document.getElementById('val-overlap');
-        olEl.innerText    = 'Overlap: ' + overlap.toFixed(0) + '%';
-        olEl.style.color  = overlap < 0 ? '#FF0000' : overlap < 30 ? '#FFA500' : '#00FF00';
+        olEl.innerText   = overlap.toFixed(0);
+        olEl.style.color = olColor;
+        const fill = document.getElementById('sk-overlap-fill');
+        fill.style.width      = Math.max(overlap < 0 ? 100 : 0, Math.min(100, overlap)) + '%';
+        fill.style.background = olColor;
+        document.getElementById('sk-go-time').innerText = _fmtDuration(state.imgs * state.secStep);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // STACK TIME
     // ─────────────────────────────────────────────────────────────────────────
-    function adjTime(adj) {
-        const step = Math.abs(adj) >= 2 ? 1.0 : 0.1;
-        state.secStep = Math.max(0.1, Math.min(60.0, +(state.secStep + Math.sign(adj) * step).toFixed(1)));
-        sendCommand('secStep', state.secStep);
+    function setSecStep(v, throttled) {
+        v = parseFloat(v);
+        if (isFinite(v)) {
+            state.secStep = Math.max(SEC_MIN, Math.min(SEC_MAX, +v.toFixed(1)));
+            (throttled ? sendCommandThrottled : sendCommand)('secStep', state.secStep);
+        }
+        document.getElementById('val-secstep').value = state.secStep.toFixed(1);
         updateStackTimeUI();
+    }
+
+    function useMeasuredStep() {
+        if (state.measStep > 0) setSecStep(state.measStep);
     }
 
     function updateStackTimeUI() {
@@ -8739,24 +8883,75 @@
         document.getElementById('time-val-step').innerText  = stepVal.toFixed(3);
         document.getElementById('time-val-depth').innerText = depth.toFixed(1);
         document.getElementById('time-val-imgs').innerText  = state.imgs;
-        document.getElementById('val-secstep').innerText    = state.secStep.toFixed(1) + ' s';
+        _skSetField(document.getElementById('val-secstep'), state.secStep.toFixed(1));
 
-        let total = Math.round(state.imgs * state.secStep);
-        const h = Math.floor(total / 3600); total %= 3600;
-        const m = Math.floor(total / 60);
-        const s = total % 60;
-        document.getElementById('val-totaltime').innerText =
-            h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+        const total = state.imgs * state.secStep;
+        document.getElementById('val-totaltime').innerText = _fmtDuration(total);
+        document.getElementById('sk-go-time').innerText    = _fmtDuration(total);
+        const done = new Date(Date.now() + total * 1000);
+        document.getElementById('time-finish').innerText =
+            'done ≈ ' + done.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+            (total >= 86400 ? ' (+' + Math.floor(total / 86400) + 'd)' : '') + ' if started now';
 
         const measEl = document.getElementById('time-measured');
+        const useEl  = document.getElementById('time-meas-use');
         if (state.measStep > 0) {
             measEl.innerText = `Measured: ${state.measStep.toFixed(1)} s/step (${state.measSh} sh)`;
             measEl.style.color = 'var(--accent-cyan)';
+            useEl.style.display = Math.abs(state.measStep - state.secStep) >= 0.05 ? '' : 'none';
         } else {
             measEl.innerText = 'Measured: run a stack to set';
             measEl.style.color = 'var(--text-disabled)';
+            useEl.style.display = 'none';
         }
     }
+
+    // Nudge buttons + scroll wheel for the STACK CALC / TIME fields. Press = one
+    // step; hold = repeat after 380 ms, and the images / seconds nudges speed up
+    // (×10 after ~1.5 s of repeating) so a long hold crosses a big range. Wheel
+    // over a field steps it by one. Sends are throttled; the trailing send
+    // always lands the final value.
+    (function () {
+        const NUDGE = {
+            step: (dir, big) => setStepIndex(state.stepIndex + dir, true),
+            imgs: (dir, big) => setImgs(state.imgs + dir * (big ? 10 : 1), true),
+            sec:  (dir, big) => setSecStep(state.secStep + dir * (big ? 1.0 : 0.1), true),
+        };
+        let timer = null, heldEl = null;
+        function stop() {
+            clearTimeout(timer); timer = null;
+            if (heldEl) heldEl.classList.remove('held');
+            heldEl = null;
+        }
+        document.addEventListener('pointerdown', e => {
+            const el = e.target.closest && e.target.closest('.sk-nudge');
+            if (!el || e.button > 0) return;
+            e.preventDefault();
+            stop();
+            heldEl = el; el.classList.add('held');
+            haptic(BTN_HAPTIC_MS);
+            const fn = NUDGE[el.dataset.nudge], dir = +el.dataset.dir;
+            let n = 0;
+            fn(dir, false);
+            const tick = () => {
+                n++;
+                fn(dir, n > 18);
+                timer = setTimeout(tick, n > 18 ? 110 : 75);
+            };
+            timer = setTimeout(tick, 380);
+        });
+        ['pointerup', 'pointercancel', 'blur'].forEach(t => window.addEventListener(t, stop));
+        document.addEventListener('pointerout', e => { if (heldEl && e.target === heldEl) stop(); });
+
+        const WHEEL = { 'val-step': 'step', 'val-imgs': 'imgs', 'val-secstep': 'sec' };
+        document.addEventListener('wheel', e => {
+            const k = WHEEL[e.target.id];
+            if (!k || Math.abs(e.deltaY) < 1) return;
+            e.preventDefault();
+            if (document.activeElement === e.target && e.target.tagName === 'INPUT') e.target.blur();
+            NUDGE[k](e.deltaY < 0 ? 1 : -1, e.shiftKey);
+        }, { passive: false });
+    })();
 
     // ─────────────────────────────────────────────────────────────────────────
     // CALIBRATOR SETTINGS
