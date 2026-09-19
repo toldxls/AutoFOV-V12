@@ -5293,6 +5293,13 @@ void vibTask(void *pvParameters) {
   // every pass costs more (in basis-discontinuity sidebands) than it earns.
   const float VIB_BASIS_REFRESH_COS = 0.9994f;   // ≈ 2°
   uint32_t newSamples = 0;         // samples drained since the last FFT
+  // Fresh samples still owed before the next FFT may run — set to a full
+  // window at boot and on every IMU wake so no spectrum is ever computed over
+  // a splice of pre-power-down ring samples and new ones (the old dcG and the
+  // re-primed one differ by the LP/HP-mode offset, and that step reads as a
+  // strong low-frequency line on the meter).
+  uint32_t warmup     = VIB_FFT_SIZE;
+  bool     tonePrimed = false;     // toneEma[] holds a live value (reset on wake)
   uint32_t specSeq    = 0;
   uint32_t lastPrint  = millis();
   // Narrowband-tonal tracker — see VIB_TONAL_* constants. Holds the previous
@@ -5377,32 +5384,50 @@ void vibTask(void *pvParameters) {
     // log). 12.5 Hz low-power is ~26 µA; FIFO stays bypassed so no batching.
     // Re-arm exactly like imuSetup() on wake, with the 30 ms filter-settle
     // delay taken with the I²C mutex released.
+    // Either transition commits its state ONLY once every register write went
+    // through; a missed mutex (loop() holds it ~100 ms across a TOF re-lock
+    // stop/config/start) leaves the flag alone so the next 30 ms pass retries.
+    // Flipping the flag regardless used to leave the accel at 12.5 Hz with the
+    // FIFO batching — those samples were then processed as 416 Hz, so every
+    // frequency was 33x low and the meter read a strong "tone" for as long as
+    // the IMU stayed awake.
     bool wantOff = vibAutoOff.load(std::memory_order_acquire);
     if (wantOff && !imuPoweredDown) {
+      bool ok = false;
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
-        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);     // FIFO → bypass (stop batching)
-        lsm.setAccelDataRate(LSM6DS_RATE_12_5_HZ);    // idle: temp sensor stays alive
+        ok = imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);  // FIFO → bypass (stop batching)
+        lsm.setAccelDataRate(LSM6DS_RATE_12_5_HZ);       // idle: temp sensor stays alive
         xSemaphoreGive(i2cMutex);
       }
-      imuPoweredDown = true;
-      vibBandRms.store(0, std::memory_order_relaxed);     // publish "off" to UI/telemetry
-      vibHorizRms.store(0, std::memory_order_relaxed);
-      vibDominant.store(0, std::memory_order_relaxed);
-      vibState.store(0, std::memory_order_relaxed);
+      if (ok) {
+        imuPoweredDown = true;
+        vibBandRms.store(0, std::memory_order_relaxed);     // publish "off" to UI/telemetry
+        vibHorizRms.store(0, std::memory_order_relaxed);
+        vibDominant.store(0, std::memory_order_relaxed);
+        vibState.store(0, std::memory_order_relaxed);
+        vibTonePeak.store(0, std::memory_order_relaxed);    // VIBE CHECK meter input —
+        vibTonePeakRaw.store(0, std::memory_order_relaxed); // was left frozen while off
+      }
     } else if (!wantOff && imuPoweredDown) {
+      bool ok = false;
       if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
         lsm.setAccelDataRate(LSM6DS_RATE_416_HZ);
         xSemaphoreGive(i2cMutex);
+        vTaskDelay(pdMS_TO_TICKS(30));                  // filter settle, mutex released
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
+          ok = imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);  // bypass → flush stale samples
+          delayMicroseconds(200);
+          ok = imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x06) && ok;   // back to continuous
+          xSemaphoreGive(i2cMutex);
+        }
       }
-      vTaskDelay(pdMS_TO_TICKS(30));                  // filter settle, mutex released
-      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50))) {
-        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x00);     // bypass → flush stale samples
-        delayMicroseconds(200);
-        imuWriteReg(LSM6DS_REG_FIFO_CTRL4, 0x06);     // back to continuous
-        xSemaphoreGive(i2cMutex);
+      if (ok) {
+        imuPoweredDown = false;
+        newSamples = 0; dcPrimed = false; basisInited = false;   // re-prime cleanly
+        warmup = VIB_FFT_SIZE; tonePrimed = false;               // no splice spectrum
+      } else {
+        Serial.println("[vib] IMU wake: I2C busy — retrying");
       }
-      imuPoweredDown = false;
-      newSamples = 0; dcPrimed = false; basisInited = false;   // re-prime cleanly
     }
     // V12.6: sample the LSM6DSOX die temperature ~1 Hz as the TOF-comp ambient
     // proxy. Direct OUT_TEMP register read (no FIFO interference); the IMU
@@ -5543,7 +5568,9 @@ void vibTask(void *pvParameters) {
     }
 
     // ── Run an FFT once enough fresh samples have arrived ──
-    if (newSamples >= VIB_HOP) {
+    // After boot / wake the whole 512-sample window must be fresh first.
+    if (warmup && newSamples >= warmup) { warmup = 0; newSamples = VIB_HOP; }
+    if (!warmup && newSamples >= VIB_HOP) {
       newSamples = 0;
       // Copy the most recent VIB_FFT_SIZE samples, oldest-first.
       uint32_t start = (vibRawHead + VIB_RAW_LEN - VIB_FFT_SIZE) % VIB_RAW_LEN;
@@ -5735,7 +5762,6 @@ void vibTask(void *pvParameters) {
       {
         static float toneEma[VIB_FFT_BINS];
         static float toneScratch[VIB_FFT_BINS];
-        static bool  tonePrimed = false;
         const uint16_t *dH = vibSpecH[specSeq & 1];
         const int b0 = VIB_DISP_MIN_BIN;               // skip DC / sub-2.4 Hz drift
         float peak = 0.0f;
