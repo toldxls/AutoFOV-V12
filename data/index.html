@@ -5085,7 +5085,7 @@
     async function vibRepFetchCore() {
         let fresh = null, freshBuf = null;
         try {
-            const r = await calioAuthedFetch('/vibhist', { cache: 'no-store' });
+            const r = await calioAuthedFetch('/vibhist', { cache: 'no-store', timeoutMs: 8000 });
             if (r.ok) { freshBuf = await r.arrayBuffer(); fresh = vibRepParse(freshBuf); }
         } catch (e) {}
         if (fresh && fresh.frames.length > 0) {
@@ -5198,7 +5198,9 @@
     async function vibtestPoll() {
         clearTimeout(_vibtestTimer);
         try {
-            const r = await calioAuthedFetch('/vibtest', { cache: 'no-store' });
+            // Timer-driven: never pops the login box (a reboot rotates the token
+            // under an open panel), and never hangs on a device that is down.
+            const r = await calioAuthedFetch('/vibtest', { cache: 'no-store', silent: true, timeoutMs: 3000 });
             if (r.ok) vibtestState = await r.json();
         } catch (e) { /* transient — keep last */ }
         vibtestRender();
@@ -10140,7 +10142,7 @@
         if (status) { status.innerText = 'Loading…'; status.style.color = 'var(--text-disabled)'; }
         let s;
         try {
-            const r = await calioAuthedFetch('/diag', { cache: 'no-store' });
+            const r = await calioAuthedFetch('/diag', { cache: 'no-store', timeoutMs: 5000 });
             if (!r.ok) throw new Error('HTTP ' + r.status);
             s = await r.json();
         } catch (e) {
@@ -10789,6 +10791,11 @@
     async function calioAuthedFetch(path, opts) {
         opts = opts || {};
         opts.headers = Object.assign({ 'X-AutoFOV-Token': csrfToken }, opts.headers || {});
+        // timeoutMs → a FRESH AbortSignal per attempt. A caller-supplied
+        // AbortSignal.timeout() has long expired by the time the user finishes
+        // typing a password, so the post-login retry below would reject at once.
+        const arm = () => { if (opts.timeoutMs) opts.signal = AbortSignal.timeout(opts.timeoutMs); };
+        arm();
         let r = await fetch(wifiBase + path, opts);
         if (r.status === 401 || r.status === 403) {
             // Background timers must fail QUIETLY: after a reboot rotates the
@@ -15082,7 +15089,7 @@
         paint();
         if (skipFetch) return;
         const st = g('wsd-status'); if (st) st.innerText = '';
-        calioAuthedFetch('/diag', { cache: 'no-store' })
+        calioAuthedFetch('/diag', { cache: 'no-store', timeoutMs: 5000 })
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(j => { _wsdDiag = j; if (state.screen === 'screen-wsdiag') paint(); })
             .catch(e => { if (st && state.screen === 'screen-wsdiag') st.innerText = 'device counters unavailable (' + e.message + ')'; });
@@ -15501,7 +15508,7 @@
         const now = Date.now();
         if (now - wsResyncMs < 5000 || !wifiBase || !csrfToken) return;
         wsResyncMs = now;
-        calioAuthedFetch('/state', { cache: 'no-store', silent: true, signal: AbortSignal.timeout(3000) })
+        calioAuthedFetch('/state', { cache: 'no-store', silent: true, timeoutMs: 3000 })
             .then(r => r.ok ? r.json() : null).then(j => { if (j) applyFullState(j); }).catch(() => {});
     }
 
