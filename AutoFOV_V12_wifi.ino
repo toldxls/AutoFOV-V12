@@ -2450,18 +2450,24 @@ static void startFullServer() {
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
             if (!apiAuthed(req)) { req->send(403, "text/plain", "Forbidden"); return; }
             if (total > 4096)    { req->send(400, "text/plain", "Payload too large"); return; }
-            // Accumulate chunks. Body callbacks for one request are serialised on
-            // the AsyncTCP task, and a calibration import is a rare manual action,
-            // so a single static buffer is sufficient (no concurrent imports).
-            static String body;
-            if (index == 0) body = "";
-            body.reserve(total + 1);
-            body.concat((const char*)data, len);
+            // Accumulate per REQUEST (_tempObject, freed by the request's
+            // destructor) — a shared static buffer let two uploads interleave
+            // their segments and both fail as "Bad JSON".
+            if (total == 0)      { req->send(400, "text/plain", "Empty body"); return; }
+            if (!req->_tempObject) req->_tempObject = calloc(1, 4097);
+            if (!req->_tempObject) { req->send(500, "text/plain", "OOM"); return; }
+            char* body = (char*)req->_tempObject;
+            if (index + len <= 4096) memcpy(body + index, data, len);
             if (index + len < total) return;            // wait for the final chunk
+            body[total] = '\0';
 
+            // One import at a time: the staged struct belongs to Core 1 from the
+            // moment the fence goes up until calApply has copied it out.
+            if (pendingCalibReady.load(std::memory_order_acquire)) {
+                req->send(409, "text/plain", "An import is already being applied"); return;
+            }
             DynamicJsonDocument doc(4096);
-            DeserializationError err = deserializeJson(doc, body);
-            body = String();                            // free early
+            DeserializationError err = deserializeJson(doc, (const char*)body);
             if (err) { req->send(400, "text/plain", "Bad JSON"); return; }
             if (strcmp(doc["fmt"] | "", "autofov-calib") != 0) {
                 req->send(400, "text/plain", "Not an AutoFOV calibration"); return;
@@ -2478,12 +2484,15 @@ static void startFullServer() {
                 pts.isNull() || pts.size() < 2 || pts.size() > 20) {
                 req->send(400, "text/plain", "Out-of-range calibration"); return;
             }
-            pendingCalib.width  = width;
-            pendingCalib.demarc = demarc;
-            pendingCalib.n      = 0;
-            strncpy(pendingCalib.name, doc["name"] | "", sizeof(pendingCalib.name) - 1);
-            pendingCalib.name[sizeof(pendingCalib.name) - 1] = '\0';
-            pendingCalib.ambC = doc["ambC"] | 0.0f;   // provenance round-trip (0 = unknown)
+            // Stage into a LOCAL and publish only once every point validated — a
+            // rejected file used to leave its first few points in pendingCalib.
+            PendingCalib pc;
+            pc.width  = width;
+            pc.demarc = demarc;
+            pc.n      = 0;
+            strncpy(pc.name, doc["name"] | "", sizeof(pc.name) - 1);
+            pc.name[sizeof(pc.name) - 1] = '\0';
+            pc.ambC = doc["ambC"] | 0.0f;   // provenance round-trip (0 = unknown)
             for (JsonObject p : pts) {
                 float d = p["dist"] | NAN;
                 float f = p["fov"]  | NAN;
@@ -2493,10 +2502,11 @@ static void startFullServer() {
                     f < 0.001f || f > 200.0f) {
                     req->send(400, "text/plain", "Out-of-range point"); return;
                 }
-                pendingCalib.dist[pendingCalib.n] = d;
-                pendingCalib.fov[pendingCalib.n]  = f;
-                pendingCalib.n++;
+                pc.dist[pc.n] = d;
+                pc.fov[pc.n]  = f;
+                pc.n++;
             }
+            pendingCalib = pc;
             pendingCalibReady.store(true, std::memory_order_release);
 
             WifiCmd cmd;
@@ -3264,6 +3274,9 @@ static void handleWifiCommand(const char* key, const char* val) {
     } else if (strcmp(key, "calApply") == 0) {
         if (isLocalCalActive()) return;        // TFT mid-capture owns the arrays
         if (!pendingCalibReady.load(std::memory_order_acquire)) return;
+        // Snapshot, THEN drop the fence: everything below reads the copy, so a
+        // new POST /calib can restage while finalizeCalibration() runs.
+        const PendingCalib pendingCalib = ::pendingCalib;
         int n = pendingCalib.n;
         if (n < 2 || n > 20) { pendingCalibReady.store(false, std::memory_order_relaxed); return; }
         sensorWidthPixels = pendingCalib.width;  settings.sensorWidth = sensorWidthPixels;
