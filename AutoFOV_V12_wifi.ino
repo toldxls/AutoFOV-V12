@@ -3475,7 +3475,14 @@ static void handleWifiCommand(const char* key, const char* val) {
         // vibNameSafe enforces [A-Za-z0-9_-]{1,30} so the eventual
         // snprintf("/vibsig/%s.bin", val) in vibSigFinishCapture() can never
         // escape the directory.
-        if (vibNameSafe(val, false)) {
+        // A NEW name past VIB_SIG_MAX is refused: vibSigScan() lists only the
+        // first 12, so extra files were invisible and undeletable on the TFT
+        // while still eating LittleFS blocks. Re-capturing an existing name is fine.
+        char sigPath[48];
+        snprintf(sigPath, sizeof sigPath, "/vibsig/%s.bin", val);
+        if (vibNameSafe(val, false) && vibSigCount >= VIB_SIG_MAX && !LittleFS.exists(sigPath)) {
+            Serial.printf("[vib] vibCapture rejected: %d signatures already stored\n", VIB_SIG_MAX);
+        } else if (vibNameSafe(val, false)) {
             strncpy(vibSigCaptureName, val, sizeof(vibSigCaptureName) - 1);
             vibSigCaptureName[sizeof(vibSigCaptureName) - 1] = '\0';
             for (int b = 0; b < VIB_FFT_BINS; b++) {
