@@ -9195,12 +9195,29 @@
     function calRunToggleHelp(){ const h=document.getElementById('calrun-help');
         h.style.display=(h.style.display==='block')?'none':'block'; }
 
+    // A web RESET ALL parks the device's NVS calibration backup instead of
+    // erasing it (only the reset on the device's own screen erases). While the
+    // device is on the factory cal and a backup exists, this same button is the
+    // undo: RESTORE CAL.
+    const calCanRestore = () => !state.isCustomCalib && (state.calBackup | 0) > 0;
+    function calResetBtnSync() {
+        const btn = document.getElementById('btn-reset-all');
+        if (!btn || btn.dataset.busy) return;
+        btn.innerText = calCanRestore() ? 'RESTORE CAL' : 'RESET ALL';
+        btn.title = calCanRestore()
+            ? 'Bring back the ' + state.calBackup + '-point calibration kept in the device backup'
+            : 'Back to the factory calibration (the custom one stays in the device backup)';
+    }
     function resetAll() {
-        showConfirm('Reset ALL calibration data?\nThis cannot be undone.', () => {
+        const restore = calCanRestore();
+        showConfirm(restore
+            ? 'Restore the ' + state.calBackup + '-point calibration from the device backup?'
+            : 'Reset to the factory calibration?\nYour custom calibration stays in the device backup —\nthis button becomes RESTORE CAL.', () => {
             const btn = document.getElementById('btn-reset-all');
-            btn.innerText = 'RESETTING…';
-            setTimeout(() => { btn.innerText = 'RESET ALL'; }, 800);
-            sendCommand('resetAll', 1);
+            btn.dataset.busy = '1';
+            btn.innerText = restore ? 'RESTORING…' : 'RESETTING…';
+            setTimeout(() => { delete btn.dataset.busy; calResetBtnSync(); }, 800);
+            sendCommand(restore ? 'calRestore' : 'resetAll', 1);
         });
     }
 
@@ -15981,7 +15998,9 @@
                 el.innerText   = state.isCustomCalib ? 'CALIB: LOADED' : 'CALIB: DEFAULT';
                 el.style.color = state.isCustomCalib ? '#ADFF2F' : '#FFA500';
             }
+            calResetBtnSync();
         }
+        if (data.calBackup !== undefined) { state.calBackup = data.calBackup | 0; calResetBtnSync(); }
 
         // ── Calibration fit results (FOV info screen) ──
         let fovInfoDirty = false;

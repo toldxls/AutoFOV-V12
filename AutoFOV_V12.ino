@@ -957,6 +957,17 @@ struct CalibBackup {
   float    dist[20];
   float    fov[20];
 };
+// Points held in the NVS backup (0 = none) — mirrored here so the state JSON
+// (built on the AsyncTCP task) never opens NVS. The dashboard turns RESET ALL
+// into RESTORE CAL while this is non-zero and the device is on the factory cal.
+std::atomic<uint32_t> calibBackupPts{0};
+// A web resetAll PARKS the backup ("parked" key) instead of erasing it: one
+// stray command — or a stolen session token — must not be able to destroy a
+// calibration for good. A parked backup is never auto-restored at boot (the
+// reset was deliberate); only the explicit calRestore command brings it back.
+// The reset on the device's own screen still erases it.
+static int  restoreCalibBackup(bool includeParked);   // 1 restored, 0 nothing to restore, -1 invalid
+static void parkCalibBackup();
 
 // ─── V12.5: field-resilience state (boot-loop rollback + reset diagnostics) ───
 // RTC_NOINIT RAM survives a warm reset (SW reset, panic, task/interrupt WDT,
@@ -6301,33 +6312,28 @@ void setup() {
   // calib fields in "calib". Validation mirrors POST /calib (never trusts a
   // stored slope). On any failure we simply stay factory.
   if (calibWasReset) {
-    CalibBackup b = {0};
-    Preferences bp;
-    bp.begin("calibbak", true);   // read-only
-    size_t bl = bp.getBytes("bak", &b, sizeof(b));
-    bp.end();
-    bool ok = (bl == sizeof(b) && b.magic == CALIBBAK_MAGIC &&
-               b.n >= 2 && b.n <= 20 &&
-               b.width >= 100.0f && b.width <= 30000.0f &&
-               b.demarc >= 0.01f && b.demarc <= 5.0f);
-    for (int i = 0; ok && i < b.n; i++)
-      if (!isfinite(b.dist[i]) || !isfinite(b.fov[i]) || b.fov[i] <= 1e-4f) ok = false;
-    if (ok) {
-      sensorWidthPixels = b.width;  demarcationDist = b.demarc;
-      nPoints = b.n; pointsCaptured = b.n;
-      for (int i = 0; i < b.n; i++) { distPoints[i] = b.dist[i]; fovPoints[i] = b.fov[i]; }
-      finalizeCalibration();   // re-fit + re-save "calib" under the NEW magic
+    int r = restoreCalibBackup(/*includeParked=*/false);   // re-fit + re-save "calib" under the NEW magic
+    if (r > 0) {
       currentMode = MAIN;      // finalizeCalibration()→drawSuccessScreen() set CAL_SUCCESS
-      Serial.printf("[calib] restored %d pts from NVS calibbak after reset\n", (int)b.n);
       // 8/22/26: tell the user — this used to be a Serial line only.
-      { char sub[40]; snprintf(sub, sizeof sub, "%d pts from backup - check FOV", (int)b.n);
+      { char sub[40]; snprintf(sub, sizeof sub, "%d pts from backup - check FOV", (int)pointsCaptured);
         raiseMainBanner("CAL RESTORED", sub, COLOR_DARKBLUE, 20000); }
-    } else if (bl > 0) {
+    } else if (r < 0) {
       Serial.println("[calib] calibbak present but invalid — staying factory");
       raiseMainBanner("CAL RESET", "backup invalid - factory FOV, recal", COLOR_MAROON, 30000);
     } else {
       raiseMainBanner("CAL RESET", "no backup - factory FOV, recalibrate", COLOR_MAROON, 30000);
     }
+  }
+  // Publish whether a backup exists (parked or live) for the dashboard.
+  {
+    CalibBackup b = {0};
+    Preferences bp;
+    bp.begin("calibbak", true);
+    size_t bl = bp.getBytes("bak", &b, sizeof(b));
+    bp.end();
+    calibBackupPts.store((bl == sizeof(b) && b.magic == CALIBBAK_MAGIC && b.n >= 2 && b.n <= 20)
+                         ? (uint32_t)b.n : 0, std::memory_order_relaxed);
   }
 
   // V11 fix: pre-load factory calibration points into distPoints/fovPoints
@@ -7835,7 +7841,9 @@ static void saveCalibBackup() {
   Preferences p;
   p.begin("calibbak", false);
   p.putBytes("bak", &b, sizeof(b));
+  p.remove("parked");            // a fresh calibration is live again, not parked
   p.end();
+  calibBackupPts.store((uint32_t)n, std::memory_order_relaxed);
   Serial.printf("[calib] backup saved (%d pts) to NVS calibbak\n", n);
 }
 // Drop the backup — the current cal is the built-in default (nothing custom to
@@ -7845,6 +7853,40 @@ static void clearCalibBackup() {
   p.begin("calibbak", false);
   p.clear();
   p.end();
+  calibBackupPts.store(0, std::memory_order_relaxed);
+}
+// Web resetAll: keep the backup but mark it parked (see the calibBackupPts note).
+static void parkCalibBackup() {
+  Preferences p;
+  p.begin("calibbak", false);
+  if (p.isKey("bak")) p.putUChar("parked", 1);
+  p.end();
+}
+// Load + validate the backup and re-apply it through finalizeCalibration()
+// (never trusts a stored slope — validation mirrors POST /calib). Boot passes
+// includeParked=false: a deliberately parked backup stays parked.
+static int restoreCalibBackup(bool includeParked) {
+  CalibBackup b = {0};
+  Preferences bp;
+  bp.begin("calibbak", true);   // read-only
+  size_t bl = bp.getBytes("bak", &b, sizeof(b));
+  bool parked = bp.getUChar("parked", 0) != 0;
+  bp.end();
+  if (bl == 0 || (parked && !includeParked)) return 0;
+  bool ok = (bl == sizeof(b) && b.magic == CALIBBAK_MAGIC &&
+             b.n >= 2 && b.n <= 20 &&
+             b.width >= 100.0f && b.width <= 30000.0f &&
+             b.demarc >= 0.01f && b.demarc <= 5.0f);
+  for (int i = 0; ok && i < b.n; i++)
+    if (!isfinite(b.dist[i]) || !isfinite(b.fov[i]) || b.fov[i] <= 1e-4f) ok = false;
+  if (!ok) return -1;
+  sensorWidthPixels = b.width;  settings.sensorWidth = sensorWidthPixels;
+  demarcationDist   = b.demarc; settings.demarcation = demarcationDist;
+  nPoints = b.n; pointsCaptured = b.n;
+  for (int i = 0; i < b.n; i++) { distPoints[i] = b.dist[i]; fovPoints[i] = b.fov[i]; }
+  finalizeCalibration();        // re-fit + NVS save; re-saves the backup, which un-parks it
+  Serial.printf("[calib] restored %d pts from NVS calibbak\n", (int)b.n);
+  return 1;
 }
 
 void finalizeCalibration(bool fromCapture) {

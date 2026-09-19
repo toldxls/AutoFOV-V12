@@ -3265,6 +3265,15 @@ static void handleWifiCommand(const char* key, const char* val) {
         String out; buildFullStateJson(out);
         wsServer.textAll(out);
 
+    // ── Restore the NVS calibration backup (the undo for a web resetAll) ─────
+    } else if (strcmp(key, "calRestore") == 0) {
+        if (isLocalCalActive()) return;        // TFT mid-capture owns the arrays
+        if (restoreCalibBackup(/*includeParked=*/true) > 0) {
+            lastCalibName[0] = '\0';
+            String out; buildFullStateJson(out);
+            wsServer.textAll(out);
+        }
+
     // ── Reset to factory calibration ─────────────────────────────────────────
     //    NOTE: we manually restore defaults rather than calling finalizeCalibration()
     //    to avoid setting isCustom=1 and showing the TFT success screen.
@@ -3298,7 +3307,10 @@ static void handleWifiCommand(const char* key, const char* val) {
         preferences.begin("calib", false);
         preferences.putBytes("settings", &settings, sizeof(CalibData));
         preferences.end();
-        clearCalibBackup();   // V12.5 (F4): deliberate reset — drop the custom backup
+        // PARK the backup rather than erase it (the TFT reset still erases):
+        // a web command must not be able to lose a calibration for good.
+        // calRestore below brings it back; boot never auto-restores a parked one.
+        parkCalibBackup();
         if (currentMode == CAL_SETTINGS) refreshCalSettingsValues(true);
         // Push updated calibration state to all HTML clients
         String out; buildFullStateJson(out);
@@ -3629,6 +3641,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
 
     // ── Calibration fit ───────────────────────────────────────────────────────
     doc["isCustomCalib"] = isCustomCalib ? 1 : 0;
+    doc["calBackup"]     = (int)calibBackupPts.load(std::memory_order_relaxed);   // pts in the NVS backup (0 = none) → RESTORE CAL
     doc["fovSlope"]      = roundf(CTRLX * 1e6f) / 1e6f;   // 6 dp — slope is ~0.000xxx
     doc["fovIntercept"]  = roundf(CTRLY * 1000.0f) / 1000.0f;
     // 5 dp: a near-perfect pixel-space fit (R²≈0.9991, RMSE≈0.0060) must not get
