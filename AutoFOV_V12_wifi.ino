@@ -194,6 +194,7 @@ static std::atomic<bool>    g_staConnecting{false};
 // creds — so a transient handshake failure can't permanently strand the device.
 static uint32_t             fallbackPortalMs = 0;
 static const uint32_t       FALLBACK_PORTAL_TIMEOUT_MS = 180000UL;   // 3 min
+static const uint8_t        FALLBACK_PORTAL_MAX_RETRIES = 5;         // then stay in the portal
 static uint32_t        lastFastTelemMs     = 0;
 static uint32_t        lastSlowTelemMs     = 0;
 static uint32_t        lastVibPushMs       = 0;       // V12: vibration spectrum stream timer
@@ -1027,9 +1028,23 @@ void wifiLoop() {
         // again and returns here. Skipped while a client IS connected (the friend
         // is mid-reconfigure) and for the normal no-creds boot portal
         // (fallbackPortalMs == 0).
+        // Capped: a GENUINELY wrong saved password fails again every time, and the
+        // uncapped loop rebooted every ~3.5 min for ever — a diag-ring entry and a
+        // trend checkpoint per boot (~400 flash writes a day), the ring showing
+        // nothing else. After FALLBACK_PORTAL_MAX_RETRIES the portal just stays
+        // up. The count lives in RTC RAM: a successful connect, new credentials or
+        // a power-cycle clears it.
+        if (fallbackPortalMs &&
+            (uint32_t)(millis() - fallbackPortalMs) > FALLBACK_PORTAL_TIMEOUT_MS &&
+            WiFi.softAPgetStationNum() == 0 &&
+            g_rtc.portalRetries >= FALLBACK_PORTAL_MAX_RETRIES) {
+            Serial.println("[WiFi] fallback portal idle — retry budget spent, staying in setup");
+            fallbackPortalMs = 0;
+        }
         if (fallbackPortalMs &&
             (uint32_t)(millis() - fallbackPortalMs) > FALLBACK_PORTAL_TIMEOUT_MS &&
             WiFi.softAPgetStationNum() == 0) {
+            g_rtc.portalRetries++;
             Serial.println("[WiFi] fallback portal idle — rebooting to retry saved WiFi");
             tofTrendCheckpoint("portal-retry");
 
@@ -1433,6 +1448,7 @@ static void startPortalMode() {
             wifiPrefs.remove("bssid");
             wifiPrefs.remove("chan");
             wifiPrefs.end();
+            g_rtc.portalRetries = 0;      // new credentials — fresh retry budget
 
             req->send_P(200, "text/html", PORTAL_SAVED_HTML);
             restartPendingMs = millis();   // wifiLoop() reboots once flushed
@@ -1513,6 +1529,7 @@ static void staConnectTask(void* arg) {
 
     if (connected) {
         wifiConnected = true;
+        g_rtc.portalRetries = 0;          // the saved credentials work
         Serial.printf("[WiFi] Connected!  IP: %s  RSSI: %d dBm  ch %d\n",
                       WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(),
                       WiFi.channel());

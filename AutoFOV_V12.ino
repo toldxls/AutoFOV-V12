@@ -987,7 +987,9 @@ struct RtcResilience {
   uint32_t sentinel;          // == RTC_RESIL_SENTINEL once initialised
   uint32_t bootCount;         // F1: consecutive un-healthy boots (reset after 30 s uptime)
   uint8_t  rollbackAttempted; // F1: partition already flipped this streak (anti-ping-pong)
-  uint8_t  _pad[3];
+  uint8_t  portalRetries;     // F5: consecutive fallback-portal "reboot and retry the saved WiFi"
+                              //     cycles (was _pad[0], always 0 — layout unchanged)
+  uint8_t  _pad[2];
   uint32_t lastUptimeSec;     // F2: snapshot updated ~5 s in loop(), read next boot
   uint32_t lastMinHeap;       // F2: snapshot (KB) updated with lastUptimeSec
   uint32_t pendingReasonCode; // F2: synthetic reason to fold into the ring next boot (0 = none)
