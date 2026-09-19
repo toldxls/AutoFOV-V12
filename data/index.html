@@ -10797,7 +10797,9 @@
         // typing a password, so the post-login retry below would reject at once.
         const arm = () => { if (opts.timeoutMs) opts.signal = AbortSignal.timeout(opts.timeoutMs); };
         arm();
-        let r = await fetch(wifiBase + path, opts);
+        wsFetchInFlight++;
+        let r;
+        try { r = await fetch(wifiBase + path, opts); } finally { wsFetchInFlight--; }
         if (r.status === 401 || r.status === 403) {
             // Background timers must fail QUIETLY: after a reboot rotates the
             // token, a closed-panel poll must not spawn a spontaneous login
@@ -14027,6 +14029,7 @@
                 down: (d.down === null || d.down === undefined || !isFinite(d.down)) ? null : +d.down,
                 gap: isFinite(d.gap) && d.gap > 0 ? +d.gap : 0,
                 bg: !!d.bg,
+                ctx: typeof d.ctx === 'string' ? d.ctx.replace(/[^\w .:+-]/g, '').slice(0, 80) : '',
                 why: WS_WHYS.includes(d.why) ? d.why : '' }));
         } catch (e) { return []; }
     }
@@ -14045,6 +14048,10 @@
     let wsTickMs         = Date.now();   // last run of the 1 s tick (visible tab only)
     let wsLastMsgMs      = 0;   // last WebSocket message of any kind
     let wsForceClose     = null;   // closes the CURRENT socket from the dead-link check
+    let wsVisChangeMs    = 0;      // last visibilitychange (either direction)
+    let wsLastCmd        = '-', wsLastCmdMs = 0;   // last sendCommand key other than the 1 Hz ping
+    let wsFetchInFlight  = 0;      // calioAuthedFetch requests outstanding
+    document.addEventListener('visibilitychange', () => { wsVisChangeMs = Date.now(); });
     let wsWakeOnOpen     = false;  // next onopen sends the activity beacon (user-initiated connects only)
     function wsDropWhy(ev, forced) {
         if (forced) return forced;
@@ -14063,7 +14070,15 @@
                           // minute after 5 min hidden), so the 6 s dead-link check can't
                           // run and the DEVICE's 16-18 s close gets there first — that
                           // reads 'link died' for what a visible tab calls 'went silent'.
-                          bg: document.hidden, why: wsDropWhy(ev, forced) });
+                          bg: document.hidden, why: wsDropWhy(ev, forced),
+                          // What the page was doing — for COPY only. An instant 1006 on
+                          // a live socket (no silence first) has no visible cause from JS,
+                          // so correlate: screen, s since the tab last changed visibility,
+                          // last command + its age, requests in flight.
+                          ctx: (state.screen || '').replace('screen-', '') +
+                               ' vis' + (wsVisChangeMs ? ((now - wsVisChangeMs) / 1000).toFixed(1) : '-') +
+                               ' cmd:' + wsLastCmd + '+' + (wsLastCmdMs ? ((now - wsLastCmdMs) / 1000).toFixed(1) : '-') +
+                               ' req' + wsFetchInFlight });
         if (wsDrops.length > 50) wsDrops.length = 50;
         wsDropsSave();
     }
@@ -15122,7 +15137,7 @@
         const lines = ['AutoFOV socket drops (' + wsDrops.filter(wsIsDrop).length + ', + ' + wsDrops.filter(d => !wsIsDrop(d)).length + ' ridden-out freezes)'];
         if (_wsdDiag) lines.push('device: ws disconnects ' + (_wsdDiag.wsDisconnects || 0) + ', ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
         wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code, d.why) +
-            (d.why === 'freeze' ? '  for ' + fmtDown(d.down) : '  down ' + fmtDown(d.down) + (d.gap ? '  after ' + fmtDown(d.gap) + ' silent' : '')) + (d.bg ? '  [tab hidden]' : '') + (d.clean ? '  clean' : '')));
+            (d.why === 'freeze' ? '  for ' + fmtDown(d.down) : '  down ' + fmtDown(d.down) + (d.gap ? '  after ' + fmtDown(d.gap) + ' silent' : '')) + (d.bg ? '  [tab hidden]' : '') + (d.clean ? '  clean' : '') + (d.ctx ? '  {' + d.ctx + '}' : '')));
         const text = lines.join('\n');
         const st = document.getElementById('wsd-status');
         const done = () => { if (st) st.innerText = 'copied'; };
@@ -15532,6 +15547,7 @@
 
     async function sendCommand(key, val) {
         if (key === 'reboot' || key === 'otaRollback') wsExpectRebootMs = Date.now();   // → drop log says 'reboot'
+        if (key !== 'ping') { wsLastCmd = String(key).slice(0, 16); wsLastCmdMs = Date.now(); }
         const payload = JSON.stringify({ [key]: val });
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(payload);
