@@ -7137,6 +7137,13 @@ void loop() {
   }
 
   static bool activelyTouching = false;
+  // Press-edge latch: a plain button tap is dispatched ONCE per press. Without
+  // it a finger held past the 150 ms debounce re-dispatched every 150 ms — a
+  // ~160 ms press on MEM_INFO's REBOOT armed "SURE?" and then confirmed it,
+  // the LED / sensor-sleep toggles flipped twice, IR START resent. Cleared on
+  // finger lift. The adj strips (hold-to-repeat), sliders and the info-overlay
+  // drag deliberately bypass it.
+  static bool pressConsumed = false;
   bool isTouched = false;
   TS_Point p;
   
@@ -7163,6 +7170,7 @@ void loop() {
         if (currentMode == WIFI_TIPS || currentMode == RECOVERY_HELP || currentMode == CALIB_HELP) infoDragActive = false;
         activelyTouching = false;
         adjFingerLifted = true;   // tell adj logic the finger genuinely lifted
+        pressConsumed = false;
       }
       touchDetected = false;
       xSemaphoreGive(i2cMutex);
@@ -7174,6 +7182,11 @@ void loop() {
     
     if (isScreenSleep) {
       wakeScreen();
+      // The finger that woke the panel must not also land on the screen it
+      // just repainted (on WIFI_INFO that was FORGET, which has no confirm).
+      pressConsumed   = true;
+      lastTouchTime   = millis();
+      lastModeChangeMs = millis();
       return;
     }
     
@@ -7256,6 +7269,11 @@ void loop() {
           }
         }
 
+        // Repeat only for hold-to-repeat inputs (adj strip, info drag); a
+        // plain button press fires once until the finger lifts.
+        bool repeatable = (adj != 0) || isInfoDrag;
+        if (!pressConsumed || repeatable) {
+        pressConsumed = true;
         switch (currentMode) {
           case MAIN:                handleMainTouch(p); break;
           case APP_SETTINGS:        handleAppSettingsTouch(p); break;
@@ -7282,6 +7300,7 @@ void loop() {
           case RECOVERY_HELP:      handleInfoTextTouch(p); break;
           case CALIB_HELP:         handleInfoTextTouch(p); break;
           default: break;
+        }
         }
       }
       // If this touch caused a screen change, arm the transition guard so the
