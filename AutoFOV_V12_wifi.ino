@@ -2685,6 +2685,18 @@ static void startFullServer() {
                 if (req->_tempObject) *(uint8_t*)req->_tempObject = OTA_REQ_ABORTED;
             };
 
+            // index restarts at 0 for EVERY file part. A second part in an already
+            // authenticated request used to re-run the whole pre-flight: its
+            // nonce is spent, so it 409'd and left the first part's Updater
+            // session / otaInProgress hanging until the 30 s watchdog.
+            if (!index && req->_tempObject && *(uint8_t*)req->_tempObject == OTA_REQ_AUTHED) {
+                if (otaBufMode) otaBufFree(); else if (Update.isRunning()) Update.abort();
+                if (otaShaActive) { mbedtls_sha256_free(&otaShaCtx); otaShaActive = false; }
+                otaInProgress = false; otaLastChunkMs = 0;
+                markAborted();
+                req->send(400, "text/plain", "One firmware file per upload");
+                return;
+            }
             if (!index) {
                 // Right Host + per-boot session token + the device password
                 // re-typed here (challenge-response, so the password never
