@@ -15037,6 +15037,11 @@
     let initRetryTimer = null, initRetryN = 0;
     async function connectWifi() {
         wsGen++;                       // orphan any reconnect probe already in flight
+        // …and let a LATER disconnectWifi()/signOut()/connectWifi() orphan this
+        // call: each await below can outlive a DISCONNECT tap, and carrying on
+        // reopened the socket (or armed the retry timer) a few seconds after
+        // the user had asked for the link to stay down.
+        const myGen = wsGen;
         if (initRetryTimer) { clearTimeout(initRetryTimer); initRetryTimer = null; }
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         reconnectAttempts = 0;
@@ -15056,37 +15061,45 @@
             // Log in to obtain the session token (cached across WS reconnects;
             // only re-requested here on a full connectWifi() cycle or a 403).
             if (!csrfToken && !(await doLogin())) {
+                if (myGen !== wsGen) return;
                 status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
                 updateWifiZone(false);
                 return;
             }
+            if (myGen !== wsGen) return;
             let r = await fetch(wifiBase + '/state', {
                 signal: AbortSignal.timeout(3000),
                 headers: { 'X-AutoFOV-Token': csrfToken }
             });
+            if (myGen !== wsGen) return;
             if (r.status === 401 || r.status === 403) {
                 // Token rejected (device rebooted / rotated it, or signed out) —
                 // drop the stale cached token and re-login once.
                 csrfToken = '';
                 ls.del('afovToken');
                 if (!(await doLogin())) {
+                    if (myGen !== wsGen) return;
                     status.innerText = 'WiFi: LOGIN REQUIRED'; status.style.color = '#FFA500';
                     updateWifiZone(false);
                     return;
                 }
+                if (myGen !== wsGen) return;
                 r = await fetch(wifiBase + '/state', {
                     signal: AbortSignal.timeout(3000),
                     headers: { 'X-AutoFOV-Token': csrfToken }
                 });
+                if (myGen !== wsGen) return;
             }
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
+            if (myGen !== wsGen) return;
             applyFullState(data);
             status.innerText = 'WiFi: CONNECTED'; status.style.color = '#00FF00';
             updateWifiZone(true);
             initRetryN = 0;
             openWebSocket(wifiIP);
         } catch (e) {
+            if (myGen !== wsGen) return;     // superseded — not this call's failure to report or retry
             status.innerText = 'WiFi: FAILED — ' + e.message; status.style.color = '#FF0000';
             updateWifiZone(false);
             // Auto-retry with backoff (3s → 6s → 12s → 24s → 30s cap). Login
