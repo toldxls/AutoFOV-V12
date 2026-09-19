@@ -214,6 +214,10 @@ static TaskHandle_t otaFlushTask = nullptr;   // Core-1 buffer -> flash writer
 // stall watchdog and disconnect only after a RETRY has taken over the buffer
 // globals — without the check it would free the retry's buffer mid-receive.
 static uint32_t     otaUploadGen = 0;
+// Per-request state byte kept in AsyncWebServerRequest::_tempObject by the
+// /ota upload handler and read by its completion handler (see the handlers).
+static const uint8_t OTA_REQ_AUTHED  = 1;   // first chunk passed every gate
+static const uint8_t OTA_REQ_ABORTED = 2;   // upload handler already answered
 // Async flash result for the buffered path.  The buffered /ota returns 200 as
 // soon as the body is received (before the flash runs), so the flush task's
 // outcome can't ride that response — the dashboard polls GET /ota-status instead
@@ -2484,10 +2488,22 @@ static void startFullServer() {
     httpServer.on("/ota", HTTP_POST,
         // Completion handler — called after the last upload chunk.
         [](AsyncWebServerRequest* req) {
-            // If the upload handler already responded (auth fail / abort), bail.
-            // _tempObject is a small heap flag the framework free()s for us, so
-            // it must be malloc'd — never a literal pointer like (void*)1.
-            if (req->_tempObject != nullptr) return;
+            // _tempObject is a 1-byte per-request state the framework free()s
+            // for us (so it must be malloc'd — never a literal pointer like
+            // (void*)1): OTA_REQ_AUTHED once the upload handler's first chunk
+            // passed every gate, OTA_REQ_ABORTED once it has already answered.
+            // The library calls this completion handler for EVERY POST /ota,
+            // file part or not — a bodiless POST never runs the upload handler,
+            // so without a positive marker it used to fall through to the
+            // "upload succeeded" path below and reboot the device with no
+            // token or password checked (and, mid-upload, spawn the flush task
+            // on a half-filled buffer).  No marker = nothing was authenticated.
+            uint8_t st = req->_tempObject ? *(uint8_t*)req->_tempObject : 0;
+            if (st == OTA_REQ_ABORTED) return;
+            if (st != OTA_REQ_AUTHED) {
+                req->send(400, "text/plain", "No firmware file");
+                return;
+            }
             if (otaBufMode) {
                 // Buffered path: the whole .bin is in PSRAM now.  Ack immediately,
                 // then flush to flash on a Core-1 task once this socket closes, so
@@ -2510,8 +2526,8 @@ static void startFullServer() {
                 req->send(resp);
                 if (!started) {
                     Serial.println("[OTA] flush task create failed — staying on current fw");
-                    otaBufFree();
-                    otaInProgress = false; otaLastChunkMs = 0;
+                    // A live flush task owns the buffer — never free it under it.
+                    if (!otaFlushTask) { otaBufFree(); otaInProgress = false; otaLastChunkMs = 0; }
                 }
                 return;
             }
@@ -2538,10 +2554,11 @@ static void startFullServer() {
             // this, an auth-failed first chunk still saw later Update.write()
             // calls (no-ops since Update.begin never ran) and produced a second
             // response in the completion handler.
-            if (req->_tempObject != nullptr) return;
+            if (req->_tempObject && *(uint8_t*)req->_tempObject == OTA_REQ_ABORTED) return;
 
             auto markAborted = [req]() {
                 if (req->_tempObject == nullptr) req->_tempObject = malloc(1);
+                if (req->_tempObject) *(uint8_t*)req->_tempObject = OTA_REQ_ABORTED;
             };
 
             if (!index) {
@@ -2565,6 +2582,14 @@ static void startFullServer() {
                     req->send(409, "text/plain", "A flash is already in progress");
                     return;
                 }
+                // Every gate passed — mark the request so the completion handler
+                // knows this upload was authenticated (see its comment).
+                req->_tempObject = malloc(1);
+                if (!req->_tempObject) {
+                    req->send(500, "text/plain", "Out of memory");
+                    return;                           // no marker → completion 400s
+                }
+                *(uint8_t*)req->_tempObject = OTA_REQ_AUTHED;
                 // Pre-flight cleanup — runs on Core 0, the ONLY safe place to
                 // touch Update.h / mbedtls.  A previous OTA abandoned mid-
                 // upload (browser tab closed) leaves the Updater "running"
