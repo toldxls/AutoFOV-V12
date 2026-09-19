@@ -9593,13 +9593,24 @@
     //   never wake an auto-slept sensor. Coarsely throttled — a beacon never
     //   needs the slider-grade 100 ms cadence — and sendCommand() no-ops when the
     //   socket is closed, so it costs nothing while disconnected.
+    //   Opening the dashboard is use too. With "keep me signed in" a page load
+    //   involves no click at all, so an IMU that had auto-powered-down stayed
+    //   off: the main-screen VIBE meter sat dead (its inputs are zeroed while
+    //   the IMU is off) until the first tap anywhere. So a USER-initiated
+    //   connect (page load, login, RECONNECT — see connectWifi → ws.onopen) and
+    //   coming back to the tab beacon as well. The automatic reconnect loop
+    //   does NOT: an unattended open tab must not keep the IMU awake.
     let _lastActivityBeacon = 0;
-    document.addEventListener('pointerdown', () => {
+    function activityBeacon() {
         const now = Date.now();
         if (now - _lastActivityBeacon < 5000) return;   // at most one every 5 s
         _lastActivityBeacon = now;
         sendCommand('activity', 1);
-    }, { passive: true });
+    }
+    document.addEventListener('pointerdown', activityBeacon, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && ws && ws.readyState === WebSocket.OPEN) activityBeacon();
+    });
 
     function updateSettingsUI() {
         const pct = Math.round(state.brightness / 255 * 100);
@@ -13995,6 +14006,7 @@
     let wsTickMs         = Date.now();   // last run of the 1 s tick (visible tab only)
     let wsLastMsgMs      = 0;   // last WebSocket message of any kind
     let wsForceClose     = null;   // closes the CURRENT socket from the dead-link check
+    let wsWakeOnOpen     = false;  // next onopen sends the activity beacon (user-initiated connects only)
     function wsDropWhy(ev, forced) {
         if (forced) return forced;
         const ov = document.getElementById('ota-reboot-overlay');
@@ -15097,6 +15109,7 @@
             status.innerText = 'WiFi: CONNECTED'; status.style.color = '#00FF00';
             updateWifiZone(true);
             initRetryN = 0;
+            wsWakeOnOpen = true;       // a person opened this link — wake an auto-slept IMU
             openWebSocket(wifiIP);
         } catch (e) {
             if (myGen !== wsGen) return;     // superseded — not this call's failure to report or retry
@@ -15321,6 +15334,7 @@
         ws.onopen = () => {
             opened = true;
             wsLastMsgMs = Date.now();
+            if (wsWakeOnOpen) { wsWakeOnOpen = false; _lastActivityBeacon = 0; activityBeacon(); }
             reconnectAttempts = 0;
             wsDropReopened();
             if (state.screen === 'screen-wsdiag') updateWsDiagUI(true);
