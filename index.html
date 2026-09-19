@@ -11,9 +11,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AutoFOV V12 — USB Recovery Flash</title>
-  <!-- Pinned major version. ESP Web Tools drives esptool-js over WebSerial. -->
+  <!-- Pinned to an EXACT version (npm versions are immutable): "@10" floated to
+       whatever 10.x was published last, on the page that writes the bootloader.
+       Bump deliberately, after testing a flash. ESP Web Tools drives esptool-js over WebSerial. -->
   <script type="module"
-          src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+          src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js"></script>
   <style>
     :root { color-scheme: dark; }
     body  { margin: 0; background: #0e1418; color: #c8d4da;
