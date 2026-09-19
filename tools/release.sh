@@ -46,6 +46,16 @@ if [ -n "$DIRTY" ]; then
     exit 1
 fi
 
+# Release from main only. manifest.json records HEAD as the source commit and
+# the same-version guard diffs against it on the next release — a commit that
+# lives only on a feature branch (or is later rebased away) makes that guard
+# skip itself silently, and the GitHub Release tag would point at nothing.
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" != "main" ]; then
+    echo "ERROR: releases are cut from main (on '$BRANCH')."
+    exit 1
+fi
+
 # ── Step 1: build (embeds HTML + compiles) ───────────────────────────────────
 echo "=== Step 1: build ==="
 bash tools/build.sh
@@ -120,7 +130,20 @@ if [ -n "$OLDWT" ]; then
 fi
 git worktree prune 2>/dev/null || true
 
-git fetch origin gh-pages:refs/remotes/origin/gh-pages 2>/dev/null || true
+# A failed fetch must stop the release once the branch exists remotely: carrying
+# on rebuilt gh-pages from a STALE remote-tracking ref and force-pushed over
+# whatever was really there. (ls-remote tells "no such branch yet" — the
+# bootstrap case — apart from "couldn't reach origin".)
+if ! git fetch origin gh-pages:refs/remotes/origin/gh-pages 2>/dev/null; then
+    if ! REMOTE_HEADS=$(git ls-remote --heads origin gh-pages); then
+        echo "ERROR: cannot reach origin — not publishing from a stale gh-pages ref."
+        exit 1
+    elif [ -n "$REMOTE_HEADS" ]; then
+        echo "ERROR: origin has a gh-pages branch but fetching it failed."
+        exit 1
+    fi
+fi
+GHP_LEASE=$(git rev-parse -q --verify refs/remotes/origin/gh-pages || true)   # empty = bootstrap
 if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
     # Remote branch exists — reset the local gh-pages to match it (the main
     # tree never commits there, so a hard reset is always correct).
@@ -149,9 +172,17 @@ cp web/recovery.html "$WT/index.html"   # served at the Pages site root
 # library files (*.json, README) — NOT photo subfolders that may live under
 # calibrations/ locally as test backups (gitignored on main; would otherwise
 # bloat gh-pages by hundreds of MB).
-[ -d calibrations ] && mkdir -p "$WT/calibrations" && \
-  find calibrations -maxdepth 1 -type f \( -name '*.json' -o -name '*.md' \) \
-    -exec cp {} "$WT/calibrations/" \;
+# TRACKED files only (git ls-files): `find` also picked up the gitignored
+# calibrations/tofdbg-*.json sensor dumps — ignored files never trip the
+# dirty-tree check above — and published them on every release. The folder is
+# rebuilt from scratch, so strays from earlier releases drop off gh-pages too.
+if [ -d calibrations ]; then
+    rm -rf "${WT:?}/calibrations"; mkdir -p "$WT/calibrations"
+    git ls-files -z -- 'calibrations/*.json' 'calibrations/*.md' | while IFS= read -r -d '' f; do
+        case "${f#calibrations/}" in */*) continue;; esac   # top level only
+        cp "$f" "$WT/calibrations/"
+    done
+fi
 
 cat > "$WT/manifest.json" <<EOF
 { "version": "$VERSION", "sha256": "$SHA", "bin": "firmware.bin", "commit": "$(git rev-parse HEAD)" }
@@ -191,6 +222,13 @@ else
     read -r ans
 fi
 if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+    # main goes up BEFORE gh-pages: manifest.json names HEAD as its source
+    # commit, so that commit has to exist on origin by the time the release is
+    # live. It used to be pushed afterwards, and a failure there only warned.
+    if ! git push origin main; then
+        echo "ERROR: git push origin main failed — nothing published."
+        exit 1
+    fi
     (
       cd "$WT"
       git commit -qm "release v$VERSION"
@@ -218,7 +256,13 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
       set -e
       # Force needed after a prune (history rewrite); a no-prune push is a
       # fast-forward so -f is harmless. Content is guaranteed correct by the gate.
-      git push -f origin gh-pages
+      # With a lease on the tip fetched above: if gh-pages moved on origin
+      # since, stop instead of overwriting it.
+      if [ -n "$GHP_LEASE" ]; then
+          git push --force-with-lease=gh-pages:"$GHP_LEASE" origin gh-pages
+      else
+          git push origin gh-pages
+      fi
     )
     # Deploy via the Actions workflow (Pages Source must be "GitHub Actions").
     # Replaces the legacy branch auto-deploy, which kept failing on GitHub's
