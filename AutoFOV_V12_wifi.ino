@@ -1008,25 +1008,31 @@ void wifiLoop() {
         // during the connect window: spurious drop-count, "Connection lost" spam,
         // and an indicator redraw ~1000×/s).
         if (g_staConnecting.load(std::memory_order_acquire)) return;
-        if (millis() - lastReconnectMs >= RECONNECT_INTERVAL_MS) {
+        // Notice the link coming back on EVERY pass — only the manual
+        // WiFi.reconnect() kick waits for the 30 s timer. The recovery check
+        // used to sit inside that timer, which is re-armed at the moment of the
+        // drop: a 2 s beacon blip that the core's auto-reconnect healed in 3 s
+        // still muted telemetry and the command drain for the full 30 s, the
+        // 1 Hz pings silted up the 16-deep queue (real commands dropped), and
+        // the dashboard's dead-link check closed the silent socket repeatedly.
+        if (WiFi.status() == WL_CONNECTED) {
             lastReconnectMs = millis();
-            if (WiFi.status() == WL_CONNECTED) {
-                wifiConnected = true;
-                Serial.printf("[WiFi] Reconnected: %s\n",
-                              WiFi.localIP().toString().c_str());
-                if (currentMode == MAIN) drawWifiIndicator();   // patched3: update header
-                // Catch the case where the initial staConnectTask attempt
-                // failed and this is the first time we've actually had an IP
-                // in this session — without it, mDNS would stay unregistered
-                // for the rest of the boot.
-                ensureMdns();
-                ensureSntp();
-                String out; buildFullStateJson(out, false);    // reconnect: skip calGraphPoints
-                wsServer.textAll(out);
-            } else {
-                Serial.println("[WiFi] Attempting reconnect…");
-                WiFi.reconnect();
-            }
+            wifiConnected = true;
+            Serial.printf("[WiFi] Reconnected: %s\n",
+                          WiFi.localIP().toString().c_str());
+            if (currentMode == MAIN) drawWifiIndicator();   // patched3: update header
+            // Catch the case where the initial staConnectTask attempt
+            // failed and this is the first time we've actually had an IP
+            // in this session — without it, mDNS would stay unregistered
+            // for the rest of the boot.
+            ensureMdns();
+            ensureSntp();
+            String out; buildFullStateJson(out, false);    // reconnect: skip calGraphPoints
+            wsServer.textAll(out);
+        } else if (millis() - lastReconnectMs >= RECONNECT_INTERVAL_MS) {
+            lastReconnectMs = millis();
+            Serial.println("[WiFi] Attempting reconnect…");
+            WiFi.reconnect();
         }
         return;
     }
