@@ -270,7 +270,11 @@ static Preferences     wifiPrefs;
 // AutoRemote / stack-done HTTP notify URL (empty = disabled).
 // ntfy.sh topic for stack-complete push notification (plain HTTP, no TLS).
 // Stored in NVS "wifi" namespace, key "ntfy".
-static String ntfyTopic = "";
+// Fixed buffer, never reallocated: buildFullStateJson() reads it on the
+// AsyncTCP task while the Core-1 ntfyTopic command writes it — a String
+// assignment frees the old buffer under that reader. A torn read of a
+// NUL-terminated char array is harmless; a freed one is not.
+static char   ntfyTopic[65] = {0};   // validated: [A-Za-z0-9_-]{0,64}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMAND QUEUE
@@ -778,7 +782,8 @@ void wifiSetup() {
     String pass     = wifiPrefs.getString("pass",  "");
     String staticIP = wifiPrefs.getString("ip",    "");
     String gateway  = wifiPrefs.getString("gw",    "");
-    ntfyTopic       = wifiPrefs.getString("ntfy",  "");
+    { String t = wifiPrefs.getString("ntfy", "");
+      strncpy(ntfyTopic, t.c_str(), sizeof(ntfyTopic) - 1); ntfyTopic[sizeof(ntfyTopic) - 1] = 0; }
     String savedOta = wifiPrefs.getString("otapw", "");
     String savedDev = wifiPrefs.getString("devpw", "");
     wifiPrefs.end();
@@ -3452,15 +3457,16 @@ static void handleWifiCommand(const char* key, const char* val) {
             Serial.println("[NTFY] invalid topic rejected");
             return;
         }
-        ntfyTopic = candidate;
+        strncpy(ntfyTopic, candidate.c_str(), sizeof(ntfyTopic) - 1);
+        ntfyTopic[sizeof(ntfyTopic) - 1] = 0;
         wifiPrefs.begin("wifi", false);
-        wifiPrefs.putString("ntfy", ntfyTopic);
+        wifiPrefs.putString("ntfy", candidate);
         wifiPrefs.end();
-        Serial.printf("[NTFY] topic set: %s\n", ntfyTopic.c_str());
+        Serial.printf("[NTFY] topic set: %s\n", ntfyTopic);
 
     } else if (strcmp(key, "ntfyTest") == 0) {
-        if (ntfyTopic.length() > 0) {
-            NtfyMsg* msg = new NtfyMsg{ ntfyTopic, "AutoFOV test" };
+        if (ntfyTopic[0]) {
+            NtfyMsg* msg = new NtfyMsg{ String(ntfyTopic), "AutoFOV test" };
             if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) == pdPASS)
                 Serial.println("[NTFY] test fired");
             else { Serial.println("[NTFY] task create failed"); delete msg; }
@@ -3640,7 +3646,7 @@ static void buildFullStateJson(String& out, bool includeCalGraph) {
     // ── WiFi ─────────────────────────────────────────────────────────────────
     doc["wifiSSID"]   = WiFi.SSID();
     doc["wifiRSSI"]   = (int)WiFi.RSSI();
-    doc["ntfyTopic"]  = ntfyTopic;
+    doc["ntfyTopic"]  = (const char*)ntfyTopic;
     // The login/OTA password is NEVER serialized here. The dashboard no longer
     // needs it (the user types it at login, and again to flash); the default is
     // shown on the device's WiFi Info screen. Whether a custom one is set is the
@@ -4012,11 +4018,11 @@ void wifiNotifyStackComplete() {
         String out; serializeJson(doc, out);
         wsServer.textAll(out);
     }
-    if (ntfyTopic.length() > 0) {
+    if (ntfyTopic[0]) {
         int errCentimm = (int)sensorErrInt.load(std::memory_order_acquire);
         char buf[64];
         snprintf(buf, sizeof(buf), "Stack finished \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
-        NtfyMsg* msg = new NtfyMsg{ ntfyTopic, String(buf) };
+        NtfyMsg* msg = new NtfyMsg{ String(ntfyTopic), String(buf) };
         if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) != pdPASS) {
             Serial.println("[NTFY] task create failed — push dropped");
             delete msg;                                    // the task would have freed it
