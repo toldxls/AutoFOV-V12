@@ -10354,8 +10354,7 @@
         // every manifest look newer) — exclude it so there's no false glow in
         // the gap before the first telemetry frame arrives.
         const running = state.buildVersion;
-        const realUpdate = !!(ghManifest && running && running !== '—' &&
-                              semverCmp(ghManifest.version, running) > 0);
+        const realUpdate = ghReleaseIsNewer(ghManifest, running);
         const calib = document.getElementById('calib-block');
         if (calib) calib.classList.toggle('update-avail', realUpdate);
         const btn = document.getElementById('about-update-btn');
@@ -14674,6 +14673,16 @@
     // can't make the device offer a phantom downgrade. Patch numbers are
     // monotonically increasing in this repo's normal flow (git commit count)
     // so this ordering is meaningful as long as history isn't rewritten.
+    // Is the published release something this device should be offered? Strictly
+    // newer — or the SAME number while the device runs a dirty dev build
+    // (BUILD_COMMIT ends in '+': embed_html.py stamps uncommitted trees as the
+    // NEXT version). Without the second clause a device flashed with a dev
+    // build read "Up to date" for ever once the real release of that number shipped.
+    function ghReleaseIsNewer(m, running) {
+        if (!m || !running || running === '—') return false;
+        const c = semverCmp(m.version, running);
+        return c > 0 || (c === 0 && /\+$/.test(state.buildCommit || ''));
+    }
     function semverCmp(a, b) {
         const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
         const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
@@ -14691,7 +14700,7 @@
         const running = state.buildVersion || '';
         // Only "available" when the manifest is strictly newer — a local build
         // ahead of the last release must NOT read as an offered downgrade.
-        if (ghManifest && running && semverCmp(ghManifest.version, running) > 0) {
+        if (ghReleaseIsNewer(ghManifest, running)) {
             ghPhase = 'available';
             ghSetButton('UPDATE TO v' + ghManifest.version, true, '#0a5a2a');
         } else if (ghManifest) {
@@ -14723,7 +14732,7 @@
             ghManifest = m;
             const running = state.buildVersion || '';
             const cmp = running ? semverCmp(m.version, running) : 1;
-            if (cmp > 0) {
+            if (cmp > 0 || ghReleaseIsNewer(m, running)) {
                 // Manifest is strictly newer than what's running → real update.
                 // "Running" is already shown above the status line, so the
                 // message doesn't need to repeat it.
