@@ -2641,8 +2641,11 @@ static void startFullServer() {
                 // doesn't reboot, which the dashboard's reboot-overlay /ping poll
                 // reports as "device never went offline — may have been rejected".)
                 bool started = !otaFlushTask &&
+                    // Priority 1 = loopTask's own: the two time-slice. At 4 the
+                    // flush starved loop() for the whole flash (touch, TFT and the
+                    // deferred-restart check dead, only the 15 s TWDT bounding it).
                     xTaskCreatePinnedToCore(otaFlushTaskFn, "otaFlush", 6144, NULL,
-                                            4, &otaFlushTask, 1) == pdPASS;
+                                            1, &otaFlushTask, 1) == pdPASS;
                 AsyncWebServerResponse* resp = req->beginResponse(
                     started ? 200 : 500, "text/plain",
                     started ? "OK" : "Could not start flash — try again");
