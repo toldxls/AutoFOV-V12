@@ -10807,6 +10807,7 @@
             csrfToken = ''; ls.del('afovToken');
             if (await doLogin()) {
                 opts.headers['X-AutoFOV-Token'] = csrfToken;
+                arm();
                 r = await fetch(wifiBase + path, opts);
             }
         }
