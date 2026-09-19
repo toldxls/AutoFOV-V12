@@ -332,6 +332,13 @@ struct NtfyMsg {
     String topic;
     String body;
 };
+// ntfyTasks alive right now. Each is a 4 KB stack + HTTPClient + a socket for up
+// to ~9 s when ntfy.sh is unreachable, and ntfyTest used to spawn one per command
+// with no limit. The spawner counts up before xTaskCreate (and back down if it
+// fails); the task counts down as it exits. TEST is refused while any push is in
+// flight; a real stack-complete push gets a little headroom so a TEST tapped at
+// the wrong moment can't swallow it.
+static std::atomic<int> ntfyInFlight{0};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTIVE PORTAL HTML  (served in AP mode, embedded in flash via PROGMEM)
@@ -3542,11 +3549,15 @@ static void handleWifiCommand(const char* key, const char* val) {
         Serial.printf("[NTFY] topic set: %s\n", ntfyTopic);
 
     } else if (strcmp(key, "ntfyTest") == 0) {
-        if (ntfyTopic[0]) {
+        if (ntfyTopic[0] && ntfyInFlight.load(std::memory_order_acquire) > 0) {
+            Serial.println("[NTFY] test skipped — a push is already in flight");
+        } else if (ntfyTopic[0]) {
             NtfyMsg* msg = new NtfyMsg{ String(ntfyTopic), "AutoFOV test" };
+            ntfyInFlight.fetch_add(1, std::memory_order_release);
             if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) == pdPASS)
                 Serial.println("[NTFY] test fired");
-            else { Serial.println("[NTFY] task create failed"); delete msg; }
+            else { Serial.println("[NTFY] task create failed"); delete msg;
+                   ntfyInFlight.fetch_sub(1, std::memory_order_release); }
         } else {
             Serial.println("[NTFY] test skipped — no topic set");
         }
@@ -4054,6 +4065,7 @@ static void ntfyTask(void* param) {
     Serial.printf("[NTFY] -> %d\n", code);
     http.end();
     delete msg;
+    ntfyInFlight.fetch_sub(1, std::memory_order_release);
     vTaskDelete(nullptr);
 }
 
@@ -4099,10 +4111,16 @@ void wifiNotifyStackComplete() {
         int errCentimm = (int)sensorErrInt.load(std::memory_order_acquire);
         char buf[64];
         snprintf(buf, sizeof(buf), "Stack finished \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
+        if (ntfyInFlight.load(std::memory_order_acquire) >= 3) {
+            Serial.println("[NTFY] 3 pushes already in flight — push dropped");
+            return;
+        }
         NtfyMsg* msg = new NtfyMsg{ String(ntfyTopic), String(buf) };
+        ntfyInFlight.fetch_add(1, std::memory_order_release);
         if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) != pdPASS) {
             Serial.println("[NTFY] task create failed — push dropped");
             delete msg;                                    // the task would have freed it
+            ntfyInFlight.fetch_sub(1, std::memory_order_release);
         }
     }
 }
