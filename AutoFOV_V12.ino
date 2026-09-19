@@ -1364,7 +1364,13 @@ bool tofTrendCheckpoint(const char* why) {
 // HTTP server is already registered and /tofdbg may read concurrently.
 void tofTrendRestore() {
   File f = LittleFS.open(TOF_TREND_CKPT, "r");
-  if (!f) return;
+  if (!f) {
+    // Power lost between the checkpoint's remove and rename: the .tmp is a
+    // complete file (it is only renamed after a full write + close).
+    f = LittleFS.open(TOF_TREND_CKPT_TMP, "r");
+    if (!f) return;
+    Serial.println("[trend] restoring from the .tmp checkpoint");
+  }
   TofTrendCkptHdr h;
   bool ok = f.read((uint8_t*)&h, sizeof h) == sizeof h &&
             h.magic == TOF_TREND_CKPT_MAGIC && h.rowSize == sizeof(TofTrendPt) &&
@@ -4804,6 +4810,7 @@ void sensorTask(void *pvParameters) {
     if (sensorSleeping.load(std::memory_order_acquire)) {
       sensorState.store(0, std::memory_order_release);
       sensorHealth.store(0xFF000000UL, std::memory_order_release);
+      sensorDistTenths.store(0, std::memory_order_release);   // the 2 s samplers read this one
       tofLastFrameMs = millis();             // sleep is intentional silence
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
@@ -8973,6 +8980,7 @@ void updateSensorAverages() {
   readIndex = (readIndex + 1) % numReadings;
   averageDist = (float)totalDist / numReadings;
   averageDist -= tofTempCorrMm();   // V12.6: model out the temp-dependent offset
+  if (averageDist < 0.0f) averageDist = 0.0f;   // negative float → uint32 is UB (updateDisplay clamps too)
   sensorAvgDist.store((uint32_t)roundf(averageDist * 10.0f), std::memory_order_release);
 
   float mult = (currentobj == 1)? mul_5x : (currentobj == 2)? mul_10x : mul_20x;
