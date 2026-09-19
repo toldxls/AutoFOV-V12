@@ -1088,8 +1088,13 @@ void wifiLoop() {
     }
 
     // ── Drain command queue ──────────────────────────────────────────────────
+    // At most 8 per pass. Some handlers block (an IR sendNEC is ~108 ms, a
+    // highRefl flip holds the I2C mutex), and the AsyncTCP task can refill the
+    // 16-deep queue faster than that drains — an uncapped loop under a command
+    // flood never returned to loop(), so touch/TFT froze and the 15 s task
+    // watchdog rebooted the device. The rest waits for the next pass.
     WifiCmd cmd;
-    while (xQueueReceive(wifiCmdQueue, &cmd, 0) == pdTRUE) {
+    for (int drained = 0; drained < 8 && xQueueReceive(wifiCmdQueue, &cmd, 0) == pdTRUE; drained++) {
         Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
 
         wifiCmdClientId = cmd.clientId;
