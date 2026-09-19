@@ -1713,38 +1713,40 @@
 
                 <div class="gfx-text" style="left:20px; top:46px; color: var(--text-disabled); font-size:11px;">Status:</div>
                 <div id="wi-status" class="gfx-text" style="right:15px; top:46px; color:#FF0000; font-size:11px;">DISCONNECTED</div>
+                <!-- Socket drops — WebSocket closes seen by THIS browser (a WiFi
+                     pause, a router hiccup, the device's stall watchdog…), which
+                     never show as STA drops on the device. Tap → SOCKET screen. -->
+                <div class="gfx-text" style="left:20px; top:66px; color: var(--text-disabled); font-size:11px;">Socket drops:</div>
+                <div id="wi-drops" class="gfx-text" style="right:26px; top:66px; color: var(--text-disabled); font-size:11px;">—</div>
+                <div class="gfx-text" style="right:15px; top:65px; color: var(--text-disabled); font-size:12px;">›</div>
+                <div style="position:absolute; left:10px; top:62px; width:220px; height:19px; cursor:pointer;"
+                     title="Socket drop history and close codes" onclick="switchScreen('screen-wsdiag')"></div>
+                <div class="gfx-text" style="left:20px; top:86px; color: var(--text-disabled); font-size:11px;">IP:</div>
+                <div id="wi-ip" class="gfx-text" style="right:15px; top:86px; color:var(--text-primary); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:20px; top:106px; color: var(--text-disabled); font-size:11px;">SSID:</div>
+                <div id="wi-ssid" class="gfx-text" style="right:15px; top:106px; color:var(--accent-green); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:20px; top:126px; color: var(--text-disabled); font-size:11px;">Signal (RSSI):</div>
+                <div id="wi-rssi" class="gfx-text" style="right:15px; top:126px; color:var(--text-disabled); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:20px; top:146px; color: var(--text-disabled); font-size:11px;">Latency:</div>
+                <div id="wi-latency" class="gfx-text" style="right:15px; top:146px; color:var(--text-disabled); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:20px; top:166px; color: var(--text-disabled); font-size:11px;">Packets/s:</div>
+                <div id="wi-pps" class="gfx-text" style="right:15px; top:166px; color:var(--text-disabled); font-size:11px;">—</div>
+                <div class="gfx-text" style="left:20px; top:186px; color: var(--text-disabled); font-size:11px;">Data rate:</div>
+                <div id="wi-rate" class="gfx-text" style="right:15px; top:186px; color:var(--text-disabled); font-size:11px;">—</div>
 
-                <div class="gfx-text" style="left:20px; top:68px; color: var(--text-disabled); font-size:11px;">IP:</div>
-                <div id="wi-ip" class="gfx-text" style="right:15px; top:68px; color: var(--text-primary); font-size:11px;">—</div>
-
-                <div class="gfx-text" style="left:20px; top:90px; color: var(--text-disabled); font-size:11px;">SSID:</div>
-                <div id="wi-ssid" class="gfx-text" style="right:15px; top:90px; color: var(--accent-green); font-size:11px;">—</div>
-
-                <div class="gfx-text" style="left:20px; top:112px; color: var(--text-disabled); font-size:11px;">Signal (RSSI):</div>
-                <div id="wi-rssi" class="gfx-text" style="right:15px; top:112px; color: var(--text-disabled); font-size:11px;">—</div>
-
-                <div class="gfx-text" style="left:20px; top:134px; color: var(--text-disabled); font-size:11px;">Latency:</div>
-                <div id="wi-latency" class="gfx-text" style="right:15px; top:134px; color: var(--text-disabled); font-size:11px;">—</div>
-
-                <div class="gfx-text" style="left:20px; top:156px; color: var(--text-disabled); font-size:11px;">Packets/s:</div>
-                <div id="wi-pps" class="gfx-text" style="right:15px; top:156px; color: var(--text-disabled); font-size:11px;">—</div>
-
-                <div class="gfx-text" style="left:20px; top:178px; color: var(--text-disabled); font-size:11px;">Data rate:</div>
-                <div id="wi-rate" class="gfx-text" style="right:15px; top:178px; color: var(--text-disabled); font-size:11px;">—</div>
-
-                <div style="position:absolute; left:10px; top:200px; width:220px; height:1px; background:#303030;"></div>
+                <div style="position:absolute; left:10px; top:206px; width:220px; height:1px; background:#303030;"></div>
 
                 <!-- Manual reconnect (override auto-reconnect timer immediately) -->
                 <div class="gfx-btn"
-                     style="left:10px; top:210px; width:68px; height:38px; background:#00968C; font-size:10px;"
+                     style="left:10px; top:214px; width:68px; height:38px; background:#00968C; font-size:10px;"
                      onclick="connectWifi()">RECONNECT</div>
                 <!-- Intentional disconnect (stops auto-reconnect) -->
                 <div class="gfx-btn"
-                     style="left:84px; top:210px; width:68px; height:38px; background:#780000; font-size:10px;"
+                     style="left:84px; top:214px; width:68px; height:38px; background:#780000; font-size:10px;"
                      onclick="disconnectWifi()">DISCONNECT</div>
                 <!-- Forget the remembered login token on this browser -->
                 <div class="gfx-btn"
-                     style="left:158px; top:210px; width:72px; height:38px; background:#3a2a1a; border:1px solid #7a5a2a; font-size:10px;"
+                     style="left:158px; top:214px; width:72px; height:38px; background:#3a2a1a; border:1px solid #7a5a2a; font-size:10px;"
                      onclick="signOut()">SIGN OUT</div>
 
                 <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
@@ -1754,6 +1756,45 @@
                 <div class="gfx-btn"
                      style="left:65px; top:266px; width:110px; height:30px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
                      onclick="switchScreen('screen-autoremote')">NOTIFY</div>
+            </div>
+
+            <!-- ===================== SOCKET (WS drop history) ===================== -->
+            <!-- Web-only (no TFT twin, like DIAGNOSTICS). Every WebSocket close this
+                 browser has seen, with the close code that says WHICH side let go:
+                 1006 = the TCP connection died underneath (a WiFi pause on this
+                 machine, the router), 1000/1005 = the device closed it (stall
+                 watchdog, reboot). Persisted in localStorage so a reload doesn't
+                 erase the evidence; CLEAR wipes it. -->
+            <div id="screen-wsdiag" class="screen">
+                <div class="title-stripe" style="left:5px; top:5px; width:80px; background:#00968C;">SOCKET</div>
+                <div class="gfx-btn btn-close-x" onclick="goBack('screen-wifiinfo')">X</div>
+
+                <div class="gfx-text" style="left:15px; top:44px; color:var(--text-disabled);">Drops:</div>
+                <div id="wsd-count" class="gfx-text" style="right:15px; top:44px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:62px; color:var(--text-disabled);">Last:</div>
+                <div id="wsd-last" class="gfx-text" style="right:15px; top:62px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:80px; color:var(--text-disabled);"
+                     title="How long the socket stayed down before it reopened — last / mean / worst">Outage:</div>
+                <div id="wsd-outage" class="gfx-text" style="right:15px; top:80px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:98px; color:var(--text-disabled);"
+                     title="1006 = connection died (WiFi pause / router) · device = closed by AutoFOV (stall watchdog, reboot)">By cause:</div>
+                <div id="wsd-codes" class="gfx-text" style="right:15px; top:98px; color:var(--text-primary);">—</div>
+                <div class="gfx-text" style="left:15px; top:116px; color:var(--text-disabled);"
+                     title="Device-side counters from /diag: sockets its stall watchdog closed, and real STA link drops">Device:</div>
+                <div id="wsd-device" class="gfx-text" style="right:15px; top:116px; color:var(--text-primary);">—</div>
+
+                <div style="position:absolute; left:10px; top:134px; width:220px; height:1px; background:#303030;"></div>
+                <div class="gfx-text" style="left:15px; top:138px; color:var(--text-disabled); font-size:9px;">time · code · cause · down for</div>
+                <!-- Last few drops, newest first -->
+                <div id="wsd-log" style="position:absolute; left:15px; top:150px; width:210px; height:104px;
+                     font-family:monospace; font-size:10px; line-height:13px; color:var(--text-primary); overflow:hidden; white-space:pre;"></div>
+
+                <div style="position:absolute; left:10px; top:258px; width:220px; height:1px; background:#303030;"></div>
+                <div class="gfx-btn" style="left:30px; top:266px; width:80px; height:30px; background:#3a2a1a; border:1px solid #7a5a2a; font-size:11px;"
+                     onclick="wsDiagClear()">CLEAR</div>
+                <div class="gfx-btn" style="left:130px; top:266px; width:80px; height:30px; background:#2a1a3a; border:1px solid #5a2a7a; font-size:11px;"
+                     onclick="wsDiagCopy()">COPY</div>
+                <div id="wsd-status" class="gfx-text" style="width:240px; text-align:center; top:300px; font-size:9px; color:var(--text-disabled);"></div>
             </div>
 
             <!-- ===================== AUTOREMOTE NOTIFY ====================== -->
@@ -4273,6 +4314,7 @@
         if (id === 'screen-settings')    updateSettingsUI();
         if (id === 'screen-timeout')     updateTimeoutUI();
         if (id === 'screen-wifiinfo')    updateWifiInfoUI();
+        if (id === 'screen-wsdiag')      updateWsDiagUI();
         if (id === 'screen-ota')         otaReset();
         if (id === 'screen-autoremote')  ntfyScreenInit();
         if (id === 'screen-sensorinfo')  { document.getElementById('sensorinfo-help').style.display='none'; refreshSensorInfoUI(); }
@@ -10176,8 +10218,8 @@
         lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
                    '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')' +
                    '  ws-stall-closes ' + (s.wsStallCloses || 0));
-        lines.push('browser socket drops (this page load): ' + wsDropCount +
-                   (wsLastDrop ? '  (last code ' + wsLastDrop.code + ' at ' + new Date(wsLastDrop.t).toLocaleTimeString() + ')' : ''));
+        lines.push('browser socket drops (persisted): ' + wsDrops.length +
+                   (wsDrops[0] ? '  (last code ' + wsDrops[0].code + ' ' + wsCodeCause(wsDrops[0].code) + ' at ' + fmtT(wsDrops[0].t) + ')' : ''));
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         if (s.crashPc) {
             lines.push('LAST CRASH: ' + (s.crashTask || '?') + ' @ pc ' + s.crashPc +
@@ -13913,7 +13955,47 @@
     // closed us (its stall watchdog, or a reboot), 1006 = the TCP connection
     // died underneath (WiFi pause, router). None of these are STA-level drops,
     // so the device's wifiDrops counter stays 0 — this is where they show.
-    let wsDropCount = 0, wsLastDrop = null;   // {code, clean, t}
+    // Persisted (localStorage 'afovWsDrops', newest first, capped) so a reload
+    // doesn't erase the evidence. Entry: {t: epoch ms, code, clean, down: ms the
+    // socket stayed closed before it reopened (null until it does)}.
+    let wsDrops = [];
+    try { wsDrops = JSON.parse(localStorage.getItem('afovWsDrops') || '[]'); if (!Array.isArray(wsDrops)) wsDrops = []; } catch (e) { wsDrops = []; }
+    function wsDropsSave() { try { localStorage.setItem('afovWsDrops', JSON.stringify(wsDrops.slice(0, 50))); } catch (e) {} }
+    function wsDropRecord(ev) {
+        wsDrops.unshift({ t: Date.now(), code: ev ? ev.code : 0, clean: !!(ev && ev.wasClean), down: null });
+        if (wsDrops.length > 50) wsDrops.length = 50;
+        wsDropsSave();
+    }
+    // onopen: close the outage on the newest entry (only if it is recent — a
+    // stale open entry from a page the user closed hours ago stays null).
+    function wsDropReopened() {
+        const d = wsDrops[0];
+        if (d && d.down === null && Date.now() - d.t < 3600000) { d.down = Date.now() - d.t; wsDropsSave(); }
+    }
+    function wsCodeCause(code) {
+        switch (code) {
+            case 1006: return 'link died';        // TCP died underneath: WiFi pause / router
+            case 1000:
+            case 1005: return 'device closed';    // stall watchdog, reboot, cleanupClients
+            case 1001: return 'going away';
+            case 1011: return 'device error';
+            case 1013: return 'try later';
+            default:   return 'code ' + code;
+        }
+    }
+    function wsCodeLong(code) {
+        switch (code) {
+            case 1006: return 'the connection died underneath (a WiFi pause on this machine, or the router)';
+            case 1000:
+            case 1005: return 'closed by the device (its stall watchdog, or a reboot)';
+            case 1001: return 'going away (page or device shutting down)';
+            case 1011: return 'the device hit an internal error';
+            default:   return 'close code ' + code;
+        }
+    }
+    const fmtDown = ms => ms === null ? '—' : ms < 10000 ? (ms / 1000).toFixed(1) + ' s' : Math.round(ms / 1000) + ' s';
+    const fmtT    = t  => new Date(t).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const fmtHM   = t  => new Date(t).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
     // Per-boot session token from POST /login (issued only after the device
     // password is verified). Required as ?tok=… on the WS upgrade and as
     // X-AutoFOV-Token on /cmd, /state, etc. Cached across WS reconnects; only
@@ -14770,15 +14852,14 @@
     function updateWifiInfoUI() {
         const connected = ws && ws.readyState === WebSocket.OPEN;
         const statusEl = document.getElementById('wi-status');
-        statusEl.innerText    = connected ? ('CONNECTED' + (wsDropCount ? ' · ' + wsDropCount + ' drop' + (wsDropCount > 1 ? 's' : '') : ''))
-                                          : (reconnectTimer ? 'RECONNECTING…' : 'DISCONNECTED');
+        statusEl.innerText    = connected ? 'CONNECTED' : (reconnectTimer ? 'RECONNECTING…' : 'DISCONNECTED');
         statusEl.style.color  = connected ? '#00FF00'   : (reconnectTimer ? '#FFA500' : '#FF0000');
-        statusEl.title = wsLastDrop
-            ? 'Socket drops this page load: ' + wsDropCount + '\nlast: code ' + wsLastDrop.code +
-              (wsLastDrop.code === 1006 ? ' (connection died — WiFi pause / router)' :
-               wsLastDrop.code === 1000 || wsLastDrop.code === 1005 ? ' (closed by the device — stall watchdog or reboot)' : '') +
-              ' at ' + new Date(wsLastDrop.t).toLocaleTimeString()
-            : 'No socket drops since this page loaded';
+        const dropsEl = document.getElementById('wi-drops');
+        if (dropsEl) {
+            const d = wsDrops[0];
+            dropsEl.innerText   = wsDrops.length ? wsDrops.length + ' · last ' + d.code + ' @ ' + fmtHM(d.t) : 'none';
+            dropsEl.style.color = wsDrops.length ? (d.code === 1006 ? '#FFA500' : 'var(--text-primary)') : 'var(--text-disabled)';
+        }
         document.getElementById('wi-ip').innerText   = wifiIP || '—';
         document.getElementById('wi-ssid').innerText = state.wifiSSID || '—';
         document.getElementById('wi-pps').innerText  = connected ? pktRateDisplay + ' pkt/s' : '—';
@@ -14811,6 +14892,67 @@
             if (latEl)  { latEl.innerText  = '—'; latEl.style.color  = '#787878'; }
             if (rateEl) { rateEl.innerText = '—'; rateEl.style.color = '#787878'; }
         }
+    }
+
+    // ── SOCKET screen: the drop log with close codes + device-side counters ──
+    let _wsdDiag = null;   // last /diag snapshot (wsStallCloses, wifiDrops, lastDropReason)
+    function updateWsDiagUI(skipFetch) {
+        const g = id => document.getElementById(id);
+        if (!g('wsd-count')) return;
+        const n = wsDrops.length, last = wsDrops[0];
+        const since = n ? fmtT(wsDrops[n - 1].t) : null;
+        g('wsd-count').innerText = n ? n + (since ? ' since ' + since : '') : 'none recorded';
+        g('wsd-count').style.color = n ? 'var(--text-primary)' : 'var(--accent-green)';
+        g('wsd-last').innerText  = last ? last.code + ' ' + wsCodeCause(last.code) + ' · ' + fmtT(last.t) : '—';
+        g('wsd-last').title      = last ? wsCodeLong(last.code) : '';
+        const downs = wsDrops.filter(d => d.down !== null).map(d => d.down);
+        if (downs.length) {
+            const mean = downs.reduce((a, b) => a + b, 0) / downs.length, worst = Math.max(...downs);
+            g('wsd-outage').innerText = fmtDown(last && last.down !== null ? last.down : downs[0]) + ' · mean ' + fmtDown(mean) + ' · worst ' + fmtDown(worst);
+        } else g('wsd-outage').innerText = '—';
+        const died = wsDrops.filter(d => d.code === 1006).length;
+        const dev  = wsDrops.filter(d => d.code === 1000 || d.code === 1005).length;
+        const oth  = n - died - dev;
+        g('wsd-codes').innerHTML = n
+            ? '<span style="color:#FFA500">1006 ' + died + '</span> · <span style="color:var(--accent-cyan)">device ' + dev + '</span>' + (oth ? ' · other ' + oth : '')
+            : '—';
+        // Log rows: newest first, as many as fit (8 × 13 px).
+        g('wsd-log').innerHTML = wsDrops.slice(0, 8).map(d =>
+            '<div title="' + wsCodeLong(d.code) + '">' + fmtT(d.t) + '  ' + String(d.code).padEnd(4) + ' ' +
+            wsCodeCause(d.code).padEnd(13) + ' ' + fmtDown(d.down) + '</div>').join('') ||
+            '<div style="color:var(--text-disabled)">no drops recorded — a WiFi pause on this machine, a router hiccup or a device reboot will show here</div>';
+        // Device-side counters — the other half of the story. wsStallCloses =
+        // sockets the device closed for a 15 s full queue; wifiDrops = real STA
+        // link drops (those DO land in DIAGNOSTICS).
+        const dv = g('wsd-device');
+        const paint = () => {
+            if (!_wsdDiag) { dv.innerText = '—'; return; }
+            dv.innerText = 'stall closes ' + (_wsdDiag.wsStallCloses || 0) + ' · wifi drops ' + (_wsdDiag.wifiDrops || 0) +
+                           ((_wsdDiag.wifiDrops || 0) ? ' (r' + (_wsdDiag.lastDropReason || 0) + ')' : '');
+        };
+        paint();
+        if (skipFetch) return;
+        const st = g('wsd-status'); if (st) st.innerText = '';
+        calioAuthedFetch('/diag', { cache: 'no-store' })
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(j => { _wsdDiag = j; if (state.screen === 'screen-wsdiag') paint(); })
+            .catch(e => { if (st && state.screen === 'screen-wsdiag') st.innerText = 'device counters unavailable (' + e.message + ')'; });
+    }
+    function wsDiagClear() {
+        wsDrops = []; wsDropsSave();
+        updateWsDiagUI(true);
+        const st = document.getElementById('wsd-status'); if (st) st.innerText = 'cleared';
+        if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
+    }
+    function wsDiagCopy() {
+        const lines = ['AutoFOV socket drops (' + wsDrops.length + ')'];
+        if (_wsdDiag) lines.push('device: ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
+        wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code) + '  down ' + fmtDown(d.down) + (d.clean ? '  clean' : '')));
+        const text = lines.join('\n');
+        const st = document.getElementById('wsd-status');
+        const done = () => { if (st) st.innerText = 'copied'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(() => { vibRepCopyFallback(text); done(); });
+        else { vibRepCopyFallback(text); done(); }
     }
 
     // Initial-connection retry. The ws.onclose backoff only covers sockets
@@ -15088,6 +15230,8 @@
 
         ws.onopen = () => {
             reconnectAttempts = 0;
+            wsDropReopened();
+            if (state.screen === 'screen-wsdiag') updateWsDiagUI(true);
             if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
             const status = document.getElementById('connection-status');
             status.innerText = 'WiFi: CONNECTED'; status.style.color = '#00FF00';
@@ -15108,8 +15252,8 @@
 
         ws.onclose = (ev) => {
             state.latency = null; rttSamples = [];   // stale once the link drops
-            wsDropCount++;
-            wsLastDrop = { code: ev ? ev.code : 0, clean: !!(ev && ev.wasClean), t: Date.now() };
+            wsDropRecord(ev);
+            if (state.screen === 'screen-wsdiag') updateWsDiagUI(true);
             updateWifiZone(false);
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
             // OTA / rollback reboot in flight: the reboot overlay's /ping poll
