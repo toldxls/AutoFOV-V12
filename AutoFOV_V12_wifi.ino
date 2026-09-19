@@ -168,11 +168,18 @@ static std::atomic<bool>    g_portalFallbackReq{false};
 // AFTER a successful connect (a flaky link), plus the reason of the most recent
 // runtime drop — the initial-connect reason above is separate (F5 portal logic).
 static std::atomic<uint32_t> wifiDropCount{0};
-// WebSocket client lifetime. A client whose TX queue stays full this long is
-// closed by the Core-1 push loop (wsClientReady), and the same figure is the
-// per-client AsyncTCP ACK timeout set on connect (see onWsEvent) — the two
-// windows must agree or the shorter one decides, as the 5 s library default did.
+// WebSocket client lifetime — two windows, and the SHORTER one decides (the 5 s
+// library ACK default used to). WS_STALL_CLOSE_MS: a client whose TX queue
+// stays full this long is closed by the Core-1 push loop (wsClientReady) — the
+// counted, labelled path. WS_ACK_TIMEOUT_MS: the per-client AsyncTCP ACK timeout
+// set on connect (see onWsEvent) — a raw close, no count. Their clocks start at
+// different moments: AsyncTCP's tx clock freezes when the TCP send buffer fills
+// (~0.4 s after the peer goes quiet), the stall clock only once the WS queue is
+// full too (~1 s later). With equal windows the ACK timeout always won by about
+// a second and wsStallCloses could never count; the 3 s margin makes the stall
+// watchdog the one that fires, with the ACK timeout as the backstop.
 static constexpr uint32_t WS_STALL_CLOSE_MS = 15000;
+static constexpr uint32_t WS_ACK_TIMEOUT_MS = WS_STALL_CLOSE_MS + 3000;
 static std::atomic<uint32_t> wsStallCloses{0};   // sockets closed by the stall watchdog (→ /diag)
 static std::atomic<uint32_t> wsDisconnects{0};   // every WS client disconnect, any cause (→ /diag)
 static volatile uint8_t      g_lastRuntimeDisconnReason = 0;
@@ -292,8 +299,13 @@ static char   ntfyTopic[65] = {0};   // validated: [A-Za-z0-9_-]{0,64}
 struct WifiCmd {
     char key[32];
     char val[64];
+    uint32_t clientId;   // WS client that sent it; 0 = HTTP /cmd or internal
 };
 static QueueHandle_t wifiCmdQueue = nullptr;
+// Sender of the command being dispatched — set by the wifiLoop() drain (Core 1)
+// just before handleWifiCommand(), so a reply meant for one client (the latency
+// pong) doesn't go to every dashboard.
+static uint32_t      wifiCmdClientId = 0;
 
 // V12.3: calibration-import staging. A full calibration (up to 20 point-pairs)
 // is far too big for WifiCmd's val[64], so POST /calib parses + range-checks the
@@ -714,9 +726,10 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // frame, so the browser logs a 1006 and the stall watchdog above never
         // gets its turn. A laptop's WiFi scan / power-save pause of several
         // seconds was ending every session that way (9/19/26: one 1006, zero
-        // stall closes, zero STA drops). Match the stall window instead; lwIP
-        // keeps retransmitting meanwhile and the per-client queue is bounded.
-        if (client->client()) client->client()->setAckTimeout(WS_STALL_CLOSE_MS);
+        // stall closes, zero STA drops). Sit just past the stall window instead
+        // (see WS_ACK_TIMEOUT_MS); lwIP keeps retransmitting meanwhile and the
+        // per-client queue is bounded.
+        if (client->client()) client->client()->setAckTimeout(WS_ACK_TIMEOUT_MS);
 
 
     } else if (type == WS_EVT_DATA) {
@@ -746,6 +759,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 
         for (JsonPair kv : doc.as<JsonObject>()) {
             WifiCmd cmd;
+            cmd.clientId = client->id();
             strncpy(cmd.key, kv.key().c_str(), sizeof(cmd.key) - 1);
             cmd.key[sizeof(cmd.key) - 1] = '\0';
 
@@ -873,8 +887,10 @@ void wifiSetup() {
 // xQueueTakeMutexRecursive(NULL) assert). wsServer.text(id)/binary(id)/
 // availableForWrite(id)/close(id) each take _ws_clients_lock for the lookup
 // AND the enqueue, and a stale id just returns false.
-// 15 s, not 5: the per-client queue is bounded (WS_MAX_QUEUED_MESSAGES), so a
-// stalled peer costs a few KB, while a laptop's WiFi scan / power-save pause
+// 15 s, not 5: the per-client queue is bounded (WS_MAX_QUEUED_MESSAGES — 16 via
+// build_opt.h, down from the library's 32: one ~0.5 KB buffer per queued fast
+// frame made a stalled peer ~15-20 KB of internal heap for the whole window),
+// so a stalled peer costs ~8-10 KB, while a laptop's WiFi scan / power-save pause
 // of several seconds used to get its socket closed under it — the dashboard
 // then showed a "drop" and reconnected, with no STA fault on the device side.
 // WS_STALL_CLOSE_MS / wsStallCloses / wsDisconnects are declared up by wifiDropCount
@@ -924,12 +940,31 @@ static bool wsClientReady(uint32_t id, uint32_t now) {
                       (unsigned)id, (unsigned)(WS_STALL_CLOSE_MS / 1000));
         slot->id = 0;
         wsStallCloses.fetch_add(1, std::memory_order_relaxed);
-        wsServer.close(id);              // frees its queue; cleanup runs on the event
+        // Queues a close frame only — with the peer's window shut it cannot
+        // leave, so the queued buffers live until WS_ACK_TIMEOUT_MS reaps the
+        // TCP connection a few seconds later. This is the COUNT, not the free.
+        wsServer.close(id);
     }
     return false;
 }
 
 void wifiLoop() {
+
+    // ── Say goodbye before a deliberate restart ──────────────────────────────
+    // ESP.restart() sends no FIN and no WebSocket close frame, so the browser
+    // only found out when its next packet drew an RST from the new boot — a
+    // 1006 "link died" in the dashboard's socket-drop log for what was really a
+    // planned reboot. Close every client with 1012 (service restart) the moment
+    // a restart is scheduled; the ~800 ms flush window below carries the frame
+    // out. closeAll() takes the library's client lock — safe from Core 1.
+    {
+        static bool wsByeSent = false;
+        if (!wsByeSent && wifiServerMode == WMODE_STA &&
+            ((restartPendingMs && !otaInProgress) || otaRestartPendingMs)) {
+            wsByeSent = true;
+            wsServer.closeAll(1012, "restart");
+        }
+    }
 
     // ── Generic deferred restart (set by /save, the reboot command, etc.) ──────────
     // Checked before the portal early-return so it fires in either mode.
@@ -1057,8 +1092,10 @@ void wifiLoop() {
     while (xQueueReceive(wifiCmdQueue, &cmd, 0) == pdTRUE) {
         Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
 
+        wifiCmdClientId = cmd.clientId;
         handleWifiCommand(cmd.key, cmd.val);
     }
+    wifiCmdClientId = 0;
 
     // ── OTA stall watchdog ───────────────────────────────────────────────────
     // If the browser closes the upload mid-flight, the upload handler never
@@ -2306,6 +2343,7 @@ static void startFullServer() {
                 bool dropped = false;
                 for (JsonPair kv : doc.as<JsonObject>()) {
                     WifiCmd cmd;
+                    cmd.clientId = 0;
                     strncpy(cmd.key, kv.key().c_str(), sizeof(cmd.key) - 1);
                     cmd.key[sizeof(cmd.key) - 1] = '\0';
 
@@ -2429,6 +2467,7 @@ static void startFullServer() {
             pendingCalibReady.store(true, std::memory_order_release);
 
             WifiCmd cmd;
+            cmd.clientId = 0;
             strncpy(cmd.key, "calApply", sizeof(cmd.key) - 1);
             cmd.key[sizeof(cmd.key) - 1] = '\0';
             cmd.val[0] = '\0';
@@ -3470,8 +3509,11 @@ static void handleWifiCommand(const char* key, const char* val) {
     //    {"pong":1} echo.  Routed through the normal command queue (same as
     //    every other command) so the measured value reflects real command
     //    responsiveness, not just raw network RTT.
+    //    Answered to the SENDER only: a broadcast pong landed in every other
+    //    open dashboard's outstanding probe and read as a too-short latency.
     } else if (strcmp(key, "ping") == 0) {
-        wsServer.textAll("{\"pong\":1}");
+        if (wifiCmdClientId) wsServer.text(wifiCmdClientId, "{\"pong\":1}");
+        else                 wsServer.textAll("{\"pong\":1}");
 
     // ── AutoRemote notify URL ─────────────────────────────────────────────────
     } else if (strcmp(key, "ntfyTopic") == 0) {
