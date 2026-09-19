@@ -4189,8 +4189,12 @@ void wifiNotifyStackAbort() {
 //   Clears saved credentials and reboots into captive-portal mode.
 // ─────────────────────────────────────────────────────────────────────────────
 void wifiForgetAndRestart() {
+    // NETWORK settings only. clear() also took the login passwords (custom and
+    // the auto-generated default — a new one was minted), the ntfy topic and the
+    // OTA-slot version stamps: forgetting a network silently changed how you
+    // sign in. "bssid"/"chan" are leftovers from older firmware.
     wifiPrefs.begin("wifi", false);
-    wifiPrefs.clear();
+    for (const char* k : { "ssid", "pass", "ip", "gw", "bssid", "chan" }) wifiPrefs.remove(k);
     wifiPrefs.end();
     Serial.println("[WiFi] Credentials cleared — restarting into setup portal");
     tofTrendCheckpoint("forget-wifi");
