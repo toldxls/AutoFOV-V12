@@ -608,7 +608,6 @@ uint32_t vibHistEnvShift   = 0;        // decimation level: hop period × 2^shif
 
 // ─── V12 Phase 3: signature library ─────────────────────────────────────────
 #define VIB_SIG_MAX      12         // max reference signatures listed
-#define VIB_SIG_CACHE    1          // signatures held decoded in RAM (the selected one)
 struct VibSignature {
   char     name[16];
   uint16_t mag[VIB_FFT_BINS];       // averaged spectrum, deci-mg
@@ -1131,11 +1130,6 @@ bool isRetakeMode = false;     // V17: true when CAL_RUN was entered to retake a
 float CTRLX = Config::DEFAULT_CTRL_X, CTRLY = Config::DEFAULT_CTRL_Y;
 float CALIB_ERROR = Config::DEFAULT_CALIB_ERROR; 
 float CALIB_R2 = 0.9991f;      // V17: factory-default R² (0.994 empirically verified)
-// V12.3: cached pixel-space fit statistics for the distance-dependent prediction
-// interval (recomputed from the cal points on load/finalize — no new persisted
-// fields). gCalSpx = pixel residual SD, gCalXbar = mean cal distance,
-// gCalSxx = Σ(dist-mean)², gCalN = point count.
-float gCalSpx = 0.0f, gCalXbar = 0.0f, gCalSxx = 0.0f; int gCalN = 0;
 float mul_5x = 4.0, mul_10x = 2.0, mul_20x = 1.0;
 int tempPixels = Config::DEFAULT_TEMP_PIXELS;
 
@@ -1709,15 +1703,6 @@ unsigned long lastActivityTime = 0;
 // Prevents rapid successive single taps from accumulating into the hold-acceleration
 // threshold (which only resets on a time-gap, not on an actual finger-up event).
 bool adjFingerLifted = false;
-
-const uint8_t keyboardReportMap[] = {
-    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x01, 
-    0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 
-    0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 
-    0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06, 
-    0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07, 
-    0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xC0                
-};
 
 const int numReadings = 5;
 int readings[numReadings] = {0};
@@ -5905,6 +5890,37 @@ void vibTask(void *pvParameters) {
       vibState.store(st);
     }
 
+    // ── Stack done / abort handlers — BEFORE the start consumer: a done (or
+    //    abort) and the NEXT stack's start can both be pending in one pass
+    //    when the controller fires frame 1 right at the silence expiry.
+    //    Causally the done always precedes the next start, so consuming it
+    //    first keeps the new stack's inStack/history from being closed.
+    uint32_t ds = vibStackDoneSeq.load();
+    if (ds != lastDoneSeen) {
+      lastDoneSeen = ds;
+      inStack      = false;
+      vibComputeAggregate();
+      // Blur atomics are already current from the last hop publish;
+      // no extra store needed here.
+      // V12.6: freeze the history — /vibhist reads are race-free from here
+      // until the next stack start.
+      if (vibHistState.load(std::memory_order_relaxed) == 1)
+        vibHistState.store(2, std::memory_order_release);
+      pendingBlurIdx = -1;
+    }
+    uint32_t as = vibStackAbortSeq.load();
+    if (as != lastAbortSeen) {
+      lastAbortSeen = as;
+      // Short/aborted sequence: resume the noise-floor EMA but skip the
+      // aggregate — a single shot's settle log isn't a stack's.
+      inStack = false;
+      // V12.6: keep the partial history but mark it aborted.
+      if (vibHistState.load(std::memory_order_relaxed) == 1)
+        vibHistState.store(3, std::memory_order_release);
+      pendingBlurIdx = -1;
+    }
+
+
     // ── Stack-start handler. V12.6: runs before the pulse handler — loop()
     //    bumps the start seq before frame 1's pulse seq, and the pulse handler
     //    re-checks via the same lambda to close the same-iteration race.
@@ -5958,31 +5974,6 @@ void vibTask(void *pvParameters) {
           pendingBlurIdx = (int)(fn - 1);
         }
       }
-    }
-
-    uint32_t ds = vibStackDoneSeq.load();
-    if (ds != lastDoneSeen) {
-      lastDoneSeen = ds;
-      inStack      = false;
-      vibComputeAggregate();
-      // Blur atomics are already current from the last hop publish;
-      // no extra store needed here.
-      // V12.6: freeze the history — /vibhist reads are race-free from here
-      // until the next stack start.
-      if (vibHistState.load(std::memory_order_relaxed) == 1)
-        vibHistState.store(2, std::memory_order_release);
-      pendingBlurIdx = -1;
-    }
-    uint32_t as = vibStackAbortSeq.load();
-    if (as != lastAbortSeen) {
-      lastAbortSeen = as;
-      // Short/aborted sequence: resume the noise-floor EMA but skip the
-      // aggregate — a single shot's settle log isn't a stack's.
-      inStack = false;
-      // V12.6: keep the partial history but mark it aborted.
-      if (vibHistState.load(std::memory_order_relaxed) == 1)
-        vibHistState.store(3, std::memory_order_release);
-      pendingBlurIdx = -1;
     }
 
     if (millis() - lastPrint >= 2000) {
@@ -6359,7 +6350,6 @@ void setup() {
     pointsCaptured = FACTORY_N;
   }
 
-  computeCalStats();   // prime prediction-interval stats from the loaded cal points
 
   analogWrite(LITE_PIN, currentBrightness);
 
@@ -7165,6 +7155,7 @@ void loop() {
   // finger lift. The adj strips (hold-to-repeat), sliders and the info-overlay
   // drag deliberately bypass it.
   static bool pressConsumed = false;
+  bool tintLifted = false;
   bool isTouched = false;
   TS_Point p;
   
@@ -7181,9 +7172,7 @@ void loop() {
         // everything consistently in the new shade. Doing it here (instead
         // of mid-drag) is what stops the flicker/banding.
         if (tintDragActive && currentMode == SCREEN_TIMEOUT) {
-          refreshCachedThemeBg();   // tint changed during drag; bake new bg
-          drawScreenTimeoutUI();
-          if (displayPrefsDirty) saveDisplayPrefs();
+          tintLifted = true;        // full repaint + NVS save happen below, outside the mutex
           tintDragActive = false;
         }
         // V12.3: finger lifted — end any info-overlay drag so the next press
@@ -7196,6 +7185,15 @@ void loop() {
       touchDetected = false;
       xSemaphoreGive(i2cMutex);
     }
+  }
+  if (tintLifted) {
+    // Deferred from the lift branch: a full-screen repaint plus an NVS write
+    // used to run while i2cMutex was held, stalling sensorTask (portMAX_DELAY
+    // take) and vibTask's FIFO drain for the whole redraw.
+    tintLifted = false;
+    refreshCachedThemeBg();   // tint changed during drag; bake new bg
+    drawScreenTimeoutUI();
+    if (displayPrefsDirty) saveDisplayPrefs();
   }
 
   if (isTouched && currentMode != CAL_SAMPLING) {
@@ -7817,28 +7815,6 @@ float fovAt(float distMm) {
   return (px > 1.0f) ? (calFitKPx() / px) : 0.0f;
 }
 
-// V12.3: recompute the cached fit statistics used by the live prediction
-// interval. Call after any change to the calibration points/coefficients.
-void computeCalStats() {
-  int nn = (pointsCaptured < 0) ? 0 : pointsCaptured;
-  gCalN = nn;
-  if (nn < 1) { gCalSpx = 0; gCalXbar = 0; gCalSxx = 0; return; }
-  float kPx = calFitKPx();   // fit-time product — see calFitKPx()
-  float sx = 0;
-  for (int i = 0; i < nn; i++) sx += distPoints[i];
-  gCalXbar = sx / nn;
-  float sxx = 0, sse = 0;
-  for (int i = 0; i < nn; i++) {
-    float dx = distPoints[i] - gCalXbar;
-    sxx += dx * dx;
-    float pxMeas = (fovPoints[i] > 1e-4f) ? (kPx / fovPoints[i]) : 0.0f;
-    float pxPred = CTRLX * distPoints[i] + CTRLY;
-    sse += (pxMeas - pxPred) * (pxMeas - pxPred);
-  }
-  gCalSxx = sxx;
-  gCalSpx = (nn > 2) ? sqrtf(sse / (nn - 2)) : 0.0f;   // pixel residual SD
-}
-
 // V12.5 (F4): mirror the current custom calibration into the "calibbak" NVS
 // namespace (its own Preferences handle — no collision with the "calib" one).
 // Stores exactly the points the fit used (fitN = min(pointsCaptured, nPoints)),
@@ -7961,7 +7937,6 @@ void finalizeCalibration(bool fromCapture) {
   else                 clearCalibBackup();
 
   isCustomCalib = !matchesDefault;
-  computeCalStats();            // refresh prediction-interval stats from the new fit
   drawSuccessScreen();
 }
 
@@ -8954,6 +8929,10 @@ void resetToFactory() {
   preferences.end();
   clearCalibBackup();   // V12.5 (F4): deliberate reset — drop the custom backup
 
+  // Same as boot and the web resetAll: leave the factory points in the plot
+  // arrays so the dashboard's calGraphPoints (bounded by pointsCaptured)
+  // shows the factory curve instead of "no data" until the next reboot.
+  seedFactoryPointsIfNeeded();
   refreshCalSettingsValues(true);
 }
 
