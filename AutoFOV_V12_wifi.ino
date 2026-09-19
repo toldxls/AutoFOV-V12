@@ -387,7 +387,8 @@ static const char PORTAL_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <input type=password name=devpw placeholder="Set a login password"
          autocomplete=new-password minlength=6 maxlength=63>
   <p class=hint>Required to open the dashboard and flash firmware. Leave blank to
-     use the random code shown on the device screen. Minimum 6 characters.</p>
+     use the random code shown on the device screen &mdash; this also clears a
+     password you set earlier. Minimum 6 characters.</p>
   <button type=submit>SAVE &amp; CONNECT</button>
 </form>
 <p class=tip>&#9888; For best security, power AutoFOV from a USB wall charger &mdash;
@@ -1441,7 +1442,10 @@ static void startPortalMode() {
             wifiPrefs.putString("ip",   ip);
             wifiPrefs.putString("gw",   gw);
             // Store or clear the custom login password (blank → fall back to the
-            // auto-generated default shown on the TFT).
+            // auto-generated default shown on the TFT). Blank-clears is deliberate
+            // and must stay: FORGET keeps the passwords now, so this form is the
+            // recovery path for a forgotten custom password (physical access —
+            // the setup code is on the device screen).
             if (devpw.length()) wifiPrefs.putString("devpw", devpw);
             else                wifiPrefs.remove("devpw");
             // Drop any cached BSSID/channel from older firmware revisions.
