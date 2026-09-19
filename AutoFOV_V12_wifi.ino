@@ -1689,7 +1689,7 @@ static bool hostAllowed(AsyncWebServerRequest* req) {
 // Per-boot session token, issued only by POST /login.
 static bool tokenOk(AsyncWebServerRequest* req) {
     return req->hasHeader("X-AutoFOV-Token") &&
-           req->header("X-AutoFOV-Token") == String(csrfToken);
+           secureEquals(req->header("X-AutoFOV-Token").c_str(), csrfToken);
 }
 // Standard gate for reading/state-changing endpoints: right Host + valid token +
 // the token presented from an IP that actually logged in (token-replay defense).
@@ -1846,7 +1846,7 @@ static void startFullServer() {
     // so unauthenticated clients never receive the full-state push.
     wsServer.setFilter([](AsyncWebServerRequest* req) {
         if (!hostAllowed(req) || !req->hasParam("tok")) return false;
-        if (req->getParam("tok")->value() != String(csrfToken)) return false;
+        if (!secureEquals(req->getParam("tok")->value().c_str(), csrfToken)) return false;
         // Same token-replay defense as apiAuthed: the upgrade must come from an
         // IP that completed /login this boot.
         return authIPKnown((uint32_t)req->client()->remoteIP());
