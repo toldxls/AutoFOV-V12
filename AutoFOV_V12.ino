@@ -1183,6 +1183,9 @@ std::atomic<uint32_t> sensorAvgDist{0};  // 5-sample rolling-avg distance × 10 
 // calibration capture to 1 mm; the calibration sampler averages THIS instead so
 // capture points keep sub-mm resolution. Bit 31 = valid (mirrors sensorState).
 std::atomic<uint32_t> sensorDistTenths{0};
+// Bumped by sensorTask once per published VALID frame (~5 Hz). loop()'s rolling
+// average advances only when this moves — see updateSensorAverages().
+std::atomic<uint32_t> sensorFrameSeq{0};
 std::atomic<bool>     sensorEmaReset{false}; // V17b: request EMA reset after wake
 
 // ── TOF target-list debug (V12.6) ────────────────────────────────────────────
@@ -5048,6 +5051,7 @@ void sensorTask(void *pvParameters) {
           // sensor's range) so the valid bit never collides with the payload.
           uint32_t tenths = (uint32_t)roundf(zAdj * 10.0f) & 0x7FFFFFFF;
           sensorDistTenths.store((1UL << 31) | tenths, std::memory_order_release);
+          sensorFrameSeq.fetch_add(1, std::memory_order_release);
         } else {
           sensorState.store(0, std::memory_order_release);
           sensorDistTenths.store(0, std::memory_order_release);
@@ -8944,19 +8948,29 @@ void resetToFactory() {
 // record a stale FOV. updateDisplay() now just renders these results.
 void updateSensorAverages() {
   uint32_t currentState = sensorState.load(std::memory_order_acquire);
-  if (!((currentState >> 31) & 0x1)) return;
+  // No valid range (asleep, no target): reseed on the next good frame rather
+  // than blend it with up to a second of pre-gap history.
+  if (!((currentState >> 31) & 0x1)) { bufferFilled = false; return; }
   int currentRange = currentState & 0x7FFFFFFF;
 
+  // The buffer advances once per SENSOR frame (~5 Hz), so its 5 slots are five
+  // different frames — a true ~1 s mean with 0.2 mm resolution. It used to
+  // advance on every 30 ms call: the sensor delivers a frame only every 200 ms,
+  // so all five slots held the same value and the "average" did nothing.
+  static uint32_t lastFrameSeq = 0;
+  uint32_t frameSeq = sensorFrameSeq.load(std::memory_order_acquire);
   if (!bufferFilled) {
     for(int i = 0; i < numReadings; i++) readings[i] = currentRange;
     totalDist = currentRange * numReadings;
     bufferFilled = true;
+    lastFrameSeq = frameSeq;
+  } else if (frameSeq != lastFrameSeq) {
+    lastFrameSeq = frameSeq;
+    totalDist -= readings[readIndex];
+    readings[readIndex] = currentRange;
+    totalDist += readings[readIndex];
+    readIndex = (readIndex + 1) % numReadings;
   }
-
-  totalDist -= readings[readIndex];
-  readings[readIndex] = currentRange;
-  totalDist += readings[readIndex];
-  readIndex = (readIndex + 1) % numReadings;
   averageDist = (float)totalDist / numReadings;
   averageDist -= tofTempCorrMm();   // V12.6: model out the temp-dependent offset
   if (averageDist < 0.0f) averageDist = 0.0f;   // negative float → uint32 is UB (updateDisplay clamps too)
