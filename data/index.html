@@ -14868,6 +14868,11 @@
         // non-200). One dropped poll during a still-running flush must not be
         // read as "never rebooted" — see the idle/unknown branch below.
         let statusMisses = 0;
+        // Consecutive /ping misses. ONE 1.5 s timeout is not "rebooting": a busy
+        // flush or a WiFi blip can eat a single ping while the old firmware is
+        // still running, and the next success then reloaded the page mid-flash
+        // (the real reboot seconds later dropped the fresh page into a login box).
+        let pingMisses = 0;
         function otaPollDeviceBack() {
             if (otaPollAbort) return;
             // Bounded per-attempt timeout: a fetch to the mid-reboot (dead) IP
@@ -14879,6 +14884,7 @@
                 .then(r => r.ok ? r.text() : Promise.reject(r.status))
                 .then(() => {
                     if (otaPollAbort) return;
+                    pingMisses = 0;
                     if (sawDown) { location.reload(); return; }
                     // Device still up (hasn't rebooted). The buffered flash acks
                     // 200 BEFORE flashing, so ask /ota-status for the real outcome
@@ -14936,12 +14942,12 @@
                 })
                 .catch(() => {
                     if (otaPollAbort) return;
-                    sawDown = true;   // unreachable = the reboot is happening
-                    // 120 s budget: a device whose first WiFi connect attempt
-                    // fails retries every 30 s, so 60 s could give up just
-                    // before it came back. Manual button is up from 20 s.
-                    if (Date.now() - start > 120000) return;
-                    setTimeout(otaPollDeviceBack, 800);
+                    if (++pingMisses >= 2) sawDown = true;   // unreachable twice running = the reboot is happening
+                    // Past 120 s keep looking, just slowly — a device that comes
+                    // back at 130 s (its WiFi retries every 30 s) used to be
+                    // missed for good, the socket parked and controls locked
+                    // until REFRESH NOW. Manual button is up from 20 s.
+                    setTimeout(otaPollDeviceBack, Date.now() - start > 120000 ? 5000 : 800);
                 });
         }
     }
