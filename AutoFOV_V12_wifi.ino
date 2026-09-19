@@ -1119,7 +1119,8 @@ void wifiLoop() {
     // watchdog rebooted the device. The rest waits for the next pass.
     WifiCmd cmd;
     for (int drained = 0; drained < 8 && xQueueReceive(wifiCmdQueue, &cmd, 0) == pdTRUE; drained++) {
-        Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
+        Serial.printf("[CMD] dispatch %s = %s\n", cmd.key,
+                      strcmp(cmd.key, "ntfyTopic") == 0 ? "(hidden)" : cmd.val);
 
         wifiCmdClientId = cmd.clientId;
         handleWifiCommand(cmd.key, cmd.val);
