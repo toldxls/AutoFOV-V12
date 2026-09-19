@@ -10101,14 +10101,18 @@
         // non-zero count flips that one segment to bold warning-red so a real
         // fault still stands out. Hues are theme accent vars (daylight-safe).
         if (g('diag-faults')) {
-            const a = s.allocFails || 0, ii = s.i2cErrs || 0, w = s.wifiDrops || 0;
+            const a = s.allocFails || 0, ii = s.i2cErrs || 0, w = s.wifiDrops || 0, wsc = s.wsStallCloses || 0;
             const seg = (label, n, col) =>
                 '<span style="color:' + (n ? 'var(--accent-red-dark)' : col) +
                 (n ? '; font-weight:bold' : '') + '">' + label + ' ' + n + '</span>';
             g('diag-faults').innerHTML =
                 seg('alloc', a, 'var(--accent-cyan)') + '·' +
                 seg('i2c', ii, 'var(--accent-magenta)') + '·' +
-                seg('wifi', w, 'var(--accent-yellow)');
+                seg('wifi', w, 'var(--accent-yellow)') +
+                // ws = sockets the stall watchdog closed. Informational, never
+                // red (a laptop that slept mid-session lands here, not a fault),
+                // and only shown when non-zero — the 240 px row is full.
+                (wsc ? '·<span style="color:var(--accent-green)" title="WebSocket clients closed for a TX queue full 15 s (a peer that stopped reading)">ws ' + wsc + '</span>' : '');
             g('diag-faults').style.color = '';   // per-segment spans own the color now
         }
         // Last crash location (from the flash coredump) — the smoking gun for a PANIC.
@@ -10170,7 +10174,10 @@
                    stkB(s.stackVib) + '/' + stkB(s.stackLoop) + '  (min ' + (s.minStack || 0) + 'B)');
         lines.push('largest free block (min): ' + (s.maxAllocKB || 0) + 'K');
         lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
-                   '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')');
+                   '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')' +
+                   '  ws-stall-closes ' + (s.wsStallCloses || 0));
+        lines.push('browser socket drops (this page load): ' + wsDropCount +
+                   (wsLastDrop ? '  (last code ' + wsLastDrop.code + ' at ' + new Date(wsLastDrop.t).toLocaleTimeString() + ')' : ''));
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         if (s.crashPc) {
             lines.push('LAST CRASH: ' + (s.crashTask || '?') + ' @ pc ' + s.crashPc +
@@ -13901,6 +13908,12 @@
     let wifiBase = '';
     let wifiIP = '';
     let reconnectAttempts = 0;
+    // Socket-drop bookkeeping for the WiFi Info status line + DIAG copy. The
+    // close code tells the two failure modes apart: 1000/1005 = the device
+    // closed us (its stall watchdog, or a reboot), 1006 = the TCP connection
+    // died underneath (WiFi pause, router). None of these are STA-level drops,
+    // so the device's wifiDrops counter stays 0 — this is where they show.
+    let wsDropCount = 0, wsLastDrop = null;   // {code, clean, t}
     // Per-boot session token from POST /login (issued only after the device
     // password is verified). Required as ?tok=… on the WS upgrade and as
     // X-AutoFOV-Token on /cmd, /state, etc. Cached across WS reconnects; only
@@ -14757,8 +14770,15 @@
     function updateWifiInfoUI() {
         const connected = ws && ws.readyState === WebSocket.OPEN;
         const statusEl = document.getElementById('wi-status');
-        statusEl.innerText    = connected ? 'CONNECTED' : (reconnectTimer ? 'RECONNECTING…' : 'DISCONNECTED');
+        statusEl.innerText    = connected ? ('CONNECTED' + (wsDropCount ? ' · ' + wsDropCount + ' drop' + (wsDropCount > 1 ? 's' : '') : ''))
+                                          : (reconnectTimer ? 'RECONNECTING…' : 'DISCONNECTED');
         statusEl.style.color  = connected ? '#00FF00'   : (reconnectTimer ? '#FFA500' : '#FF0000');
+        statusEl.title = wsLastDrop
+            ? 'Socket drops this page load: ' + wsDropCount + '\nlast: code ' + wsLastDrop.code +
+              (wsLastDrop.code === 1006 ? ' (connection died — WiFi pause / router)' :
+               wsLastDrop.code === 1000 || wsLastDrop.code === 1005 ? ' (closed by the device — stall watchdog or reboot)' : '') +
+              ' at ' + new Date(wsLastDrop.t).toLocaleTimeString()
+            : 'No socket drops since this page loaded';
         document.getElementById('wi-ip').innerText   = wifiIP || '—';
         document.getElementById('wi-ssid').innerText = state.wifiSSID || '—';
         document.getElementById('wi-pps').innerText  = connected ? pktRateDisplay + ' pkt/s' : '—';
@@ -15086,8 +15106,10 @@
             try { applyFullState(JSON.parse(e.data)); } catch {}
         };
 
-        ws.onclose = () => {
+        ws.onclose = (ev) => {
             state.latency = null; rttSamples = [];   // stale once the link drops
+            wsDropCount++;
+            wsLastDrop = { code: ev ? ev.code : 0, clean: !!(ev && ev.wasClean), t: Date.now() };
             updateWifiZone(false);
             if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
             // OTA / rollback reboot in flight: the reboot overlay's /ping poll

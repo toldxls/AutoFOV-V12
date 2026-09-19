@@ -857,7 +857,12 @@ void wifiSetup() {
 // xQueueTakeMutexRecursive(NULL) assert). wsServer.text(id)/binary(id)/
 // availableForWrite(id)/close(id) each take _ws_clients_lock for the lookup
 // AND the enqueue, and a stale id just returns false.
-static constexpr uint32_t WS_STALL_CLOSE_MS = 5000;
+// 15 s, not 5: the per-client queue is bounded (WS_MAX_QUEUED_MESSAGES), so a
+// stalled peer costs a few KB, while a laptop's WiFi scan / power-save pause
+// of several seconds used to get its socket closed under it — the dashboard
+// then showed a "drop" and reconnected, with no STA fault on the device side.
+static constexpr uint32_t WS_STALL_CLOSE_MS = 15000;
+static std::atomic<uint32_t> wsStallCloses{0};   // sockets closed by the stall watchdog (→ /diag)
 struct WsStallEntry { uint32_t id; uint32_t sinceMs; };   // id 0 = free slot
 static WsStallEntry wsStalls[8] = {};   // DEFAULT_MAX_WS_CLIENTS on ESP32
 
@@ -902,6 +907,7 @@ static bool wsClientReady(uint32_t id, uint32_t now) {
         Serial.printf("[WS] client #%u stalled %us — closing\n",
                       (unsigned)id, (unsigned)(WS_STALL_CLOSE_MS / 1000));
         slot->id = 0;
+        wsStallCloses.fetch_add(1, std::memory_order_relaxed);
         wsServer.close(id);              // frees its queue; cleanup runs on the event
     }
     return false;
@@ -1916,6 +1922,7 @@ static void startFullServer() {
         doc["i2cErrs"]     = i2cErrCount.load(std::memory_order_relaxed);
         doc["wifiDrops"]   = wifiDropCount.load(std::memory_order_relaxed);
         doc["lastDropReason"] = g_lastRuntimeDisconnReason;       // wifi_err_reason_t code
+        doc["wsStallCloses"]  = wsStallCloses.load(std::memory_order_relaxed);   // WS clients closed for a full TX queue
         // Last panic's location, from the flash coredump (ELF). Parsed once and
         // cached — a crashPc + crashTask here pins where the device last crashed;
         // decode with: xtensa-esp32s3-elf-addr2line -e <build>.elf <crashPc>.
