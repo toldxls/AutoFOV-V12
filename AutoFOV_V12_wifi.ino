@@ -116,7 +116,7 @@ static char            otaPassword[13]     = {0};            // auto-generated o
 // default". The effective password is never displayed or sent over the wire.
 static char            devPassword[64]     = {0};
 // Per-boot session token. Issued only by POST /login after the device password
-// is verified; required as X-AutoFOV-Token on /cmd, /state, /forget-wifi,
+// is verified; required as X-AutoFOV-Token on /cmd, /state, /calib,
 // /vibsig and as ?tok= on the WebSocket upgrade. Because /login gates issuance,
 // a client without the password never obtains a token — this is the real auth
 // boundary, not just an anti-CSRF measure. See startFullServer().
@@ -237,7 +237,7 @@ static void otaBufFree() {
 // browser sees a connection drop instead of the 200 OK.  We stash a timestamp
 // and let wifiLoop() (Core 1) restart after the response has had time to flush.
 static uint32_t                otaRestartPendingMs = 0;
-// Same problem outside OTA: /save (captive portal) and /forget-wifi reboot the
+// Same problem outside OTA: /save (captive portal) and the reboot command reboot the
 // device, and inline ESP.restart() on Core 0 cuts the response short. Stash a
 // deadline and let wifiLoop() (Core 1) do the actual restart once the queued
 // HTML/JSON has had time to leave the wire.
@@ -904,13 +904,28 @@ static bool wsClientReady(uint32_t id, uint32_t now) {
 
 void wifiLoop() {
 
-    // ── Generic deferred restart (set by /save, /forget-wifi, etc.) ──────────
+    // ── Generic deferred restart (set by /save, the reboot command, etc.) ──────────
     // Checked before the portal early-return so it fires in either mode.
     // 800 ms matches the OTA restart window — enough for AsyncTCP to flush
     // the queued response and FIN to the client at LAN latency.
     if (restartPendingMs && !otaInProgress && (millis() - restartPendingMs) > 800UL) {
         Serial.println("[WiFi] deferred restart firing");
         tofTrendCheckpoint("restart");
+
+        ESP.restart();
+    }
+
+    // ── OTA deferred restart ─────────────────────────────────────────────────
+    // The completion handler / flush task queued a 200 response and asked us to
+    // reboot. 800 ms is enough for AsyncTCP to flush the response + FIN to the
+    // client (typical wire time well under 50 ms); pushing it further only
+    // delays the UX without buying reliability. Sits up here with the generic
+    // restart, ABOVE the !wifiConnected early-return below — the image is
+    // already committed, so a link drop inside the window must not leave the
+    // device running the old firmware until WiFi happens to come back.
+    if (otaRestartPendingMs && (millis() - otaRestartPendingMs) > 800UL) {
+        Serial.println("[OTA] response flushed, restarting");
+        tofTrendCheckpoint("ota");
 
         ESP.restart();
     }
@@ -1010,18 +1025,6 @@ void wifiLoop() {
         Serial.printf("[CMD] dispatch %s = %s\n", cmd.key, cmd.val);
 
         handleWifiCommand(cmd.key, cmd.val);
-    }
-
-    // ── OTA deferred restart ─────────────────────────────────────────────────
-    // The completion handler queued a 200 response and asked us to reboot.
-    // 800 ms is enough for AsyncTCP to flush the response + FIN to the client
-    // (typical wire time well under 50 ms); pushing it further only delays the
-    // UX without buying reliability.
-    if (otaRestartPendingMs && (millis() - otaRestartPendingMs) > 800UL) {
-        Serial.println("[OTA] response flushed, restarting");
-        tofTrendCheckpoint("ota");
-
-        ESP.restart();
     }
 
     // ── OTA stall watchdog ───────────────────────────────────────────────────
@@ -1613,6 +1616,7 @@ static int otaAuthCheck(AsyncWebServerRequest* req) {
     uint32_t ip  = (uint32_t)req->client()->remoteIP();
     LoginFailEntry& fe = loginFails[loginFailSlot(ip)];
     if (fe.lockoutUntilMs && (int32_t)(fe.lockoutUntilMs - now) > 0) return 429;
+    fe.lockoutUntilMs = 0;   // expired — clear it, or it re-arms ~24.8 days on at the millis wrap
     if (!req->hasHeader("X-Login-Nonce") || !req->hasHeader("X-OTA-Response"))
         return 409;
     switch (checkChallenge(req->header("X-Login-Nonce"), req->header("X-OTA-Response"))) {
@@ -1726,7 +1730,7 @@ static void startFullServer() {
     // Endpoint gates:
     //   * /login-challenge: hostAllowed → issues a single-use 30 s nonce
     //   * /login:       hostAllowed + valid HMAC over the nonce → returns the token
-    //   * /state /cmd /forget-wifi /vibsig: apiAuthed (host + token)
+    //   * /state /cmd /calib /vibsig: apiAuthed (host + token)
     //   * /ota:         apiAuthed + valid HMAC over a nonce (X-Login-Nonce/X-OTA-Response)
     //   * /ota-verify:  same gates as /ota, no body — pre-flight so a wrong
     //                   password fails before the .bin uploads
@@ -1774,6 +1778,7 @@ static void startFullServer() {
             req->send(r);
             return;
         }
+        fe.lockoutUntilMs = 0;   // expired — see otaAuthCheck
         // Both custom headers required. A browser can't attach them cross-origin
         // without a (failing) preflight, so a drive-by page can't reach the
         // lockout path; missing headers are a 400 that never counts.
@@ -2263,6 +2268,7 @@ static void startFullServer() {
             buf[total] = '\0';
             StaticJsonDocument<512> doc;   // sized to the 512-byte payload cap above
             if (deserializeJson(doc, buf) == DeserializationError::Ok) {
+                bool dropped = false;
                 for (JsonPair kv : doc.as<JsonObject>()) {
                     WifiCmd cmd;
                     strncpy(cmd.key, kv.key().c_str(), sizeof(cmd.key) - 1);
@@ -2277,9 +2283,13 @@ static void startFullServer() {
 
                     strncpy(cmd.val, vStr.c_str(), sizeof(cmd.val) - 1);
                     cmd.val[sizeof(cmd.val) - 1] = '\0';
-                    xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0);
+                    if (xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0) != pdTRUE) dropped = true;
                 }
-                req->send(200, "application/json", "{\"ok\":1}");
+                // A full queue (16 deep, drained once per loop() pass) drops the
+                // command silently on the device — tell the dashboard so it
+                // doesn't believe a value that never landed.
+                if (dropped) req->send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}");
+                else         req->send(200, "application/json", "{\"ok\":1}");
             } else {
                 // Bad JSON used to be silently dropped with a 200 {"ok":1}
                 req->send(400, "application/json", "{\"ok\":0}");
@@ -2371,8 +2381,11 @@ static void startFullServer() {
             for (JsonObject p : pts) {
                 float d = p["dist"] | NAN;
                 float f = p["fov"]  | NAN;
-                if (!isfinite(d) || !isfinite(f)) {
-                    req->send(400, "text/plain", "Non-finite point"); return;
+                // Bounded, not just finite: a 1e30 distance overflows the fit's
+                // sum of squares to inf and the NaN slope would be saved.
+                if (!isfinite(d) || !isfinite(f) || d < 0.0f || d > 4000.0f ||
+                    f < 0.001f || f > 200.0f) {
+                    req->send(400, "text/plain", "Out-of-range point"); return;
                 }
                 pendingCalib.dist[pendingCalib.n] = d;
                 pendingCalib.fov[pendingCalib.n]  = f;
@@ -2384,26 +2397,19 @@ static void startFullServer() {
             strncpy(cmd.key, "calApply", sizeof(cmd.key) - 1);
             cmd.key[sizeof(cmd.key) - 1] = '\0';
             cmd.val[0] = '\0';
-            xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0);
+            if (xQueueSend(wifiCmdQueue, &cmd, (TickType_t)0) != pdTRUE) {
+                pendingCalibReady.store(false, std::memory_order_release);   // nothing will consume it
+                req->send(503, "application/json", "{\"ok\":0,\"err\":\"busy\"}");
+                return;
+            }
             req->send(200, "application/json", "{\"ok\":1}");
         }
     );
 
-    // POST /forget-wifi — clear credentials and return to portal on next restart.
-    // Safe to run on Core 0: only NVS write (Preferences is internally serialised)
-    // and ESP.restart() (core-agnostic). The delay() blocks the async task but
-    // we're about to reboot, so request servicing is irrelevant.
-    httpServer.on("/forget-wifi", HTTP_POST, [](AsyncWebServerRequest* req) {
-        if (!apiAuthed(req)) {
-            req->send(403, "text/plain", "Forbidden");
-            return;
-        }
-        wifiPrefs.begin("wifi", false);
-        wifiPrefs.clear();
-        wifiPrefs.end();
-        req->send(200, "text/plain", "WiFi credentials cleared. Restarting into setup portal…");
-        restartPendingMs = millis();   // wifiLoop() reboots once flushed
-    });
+    // (POST /forget-wifi was removed: the dashboard never called it, and it did
+    // its NVS wipe on the AsyncTCP task against the same wifiPrefs object the
+    // Core-1 ntfyTopic command uses. FORGET lives on the device's WiFi Info
+    // screen — wifiForgetAndRestart(), Core 1.)
 
     // Serve individual signature .bin files — the web dashboard fetches these
     // to overlay a saved spectrum in the panel.  URL: /vibsig/<name>.bin
@@ -2795,6 +2801,9 @@ static void vibSigWebChanged() {
 static void handleWifiCommand(const char* key, const char* val) {
     float fVal = atof(val);
     int   iVal = atoi(val);
+    // atof("nan"/"inf") sails through constrain() (every comparison is false)
+    // and would land in settings + NVS; treat it as 0 so the clamps apply.
+    if (!isfinite(fVal)) fVal = 0.0f;
 
     // Any genuine web interaction (menu nav, settings change, button) counts as
     // activity and resets the idle clock that drives screen + sensor timeouts.
@@ -3452,8 +3461,9 @@ static void handleWifiCommand(const char* key, const char* val) {
     } else if (strcmp(key, "ntfyTest") == 0) {
         if (ntfyTopic.length() > 0) {
             NtfyMsg* msg = new NtfyMsg{ ntfyTopic, "AutoFOV test" };
-            xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr);
-            Serial.println("[NTFY] test fired");
+            if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) == pdPASS)
+                Serial.println("[NTFY] test fired");
+            else { Serial.println("[NTFY] task create failed"); delete msg; }
         } else {
             Serial.println("[NTFY] test skipped — no topic set");
         }
@@ -4007,7 +4017,10 @@ void wifiNotifyStackComplete() {
         char buf[64];
         snprintf(buf, sizeof(buf), "Stack finished \xe2\x80\x94 FOV %.2f(%d) mm", fov, errCentimm);
         NtfyMsg* msg = new NtfyMsg{ ntfyTopic, String(buf) };
-        xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr);
+        if (xTaskCreate(ntfyTask, "ntfy", 4096, msg, 1, nullptr) != pdPASS) {
+            Serial.println("[NTFY] task create failed — push dropped");
+            delete msg;                                    // the task would have freed it
+        }
     }
 }
 
