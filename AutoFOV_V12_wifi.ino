@@ -168,6 +168,13 @@ static std::atomic<bool>    g_portalFallbackReq{false};
 // AFTER a successful connect (a flaky link), plus the reason of the most recent
 // runtime drop — the initial-connect reason above is separate (F5 portal logic).
 static std::atomic<uint32_t> wifiDropCount{0};
+// WebSocket client lifetime. A client whose TX queue stays full this long is
+// closed by the Core-1 push loop (wsClientReady), and the same figure is the
+// per-client AsyncTCP ACK timeout set on connect (see onWsEvent) — the two
+// windows must agree or the shorter one decides, as the 5 s library default did.
+static constexpr uint32_t WS_STALL_CLOSE_MS = 15000;
+static std::atomic<uint32_t> wsStallCloses{0};   // sockets closed by the stall watchdog (→ /diag)
+static std::atomic<uint32_t> wsDisconnects{0};   // every WS client disconnect, any cause (→ /diag)
 static volatile uint8_t      g_lastRuntimeDisconnReason = 0;
 // True while staConnectTask (Core 0) owns the WiFi association during its
 // connect attempts. wifiLoop's reconnect logic (Core 1) checks it so the two
@@ -702,6 +709,14 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         client->text(out);
         Serial.printf("[WS] full-state push: %u bytes\n", out.length());
         wsLiveAdd(client->id());         // Core-1 fan-out sees it from here on
+        // AsyncTCP closes a connection whose last packet went 5 s without a TCP
+        // ACK (CONFIG_ASYNC_TCP_MAX_ACK_TIME) — a raw close, no WebSocket close
+        // frame, so the browser logs a 1006 and the stall watchdog above never
+        // gets its turn. A laptop's WiFi scan / power-save pause of several
+        // seconds was ending every session that way (9/19/26: one 1006, zero
+        // stall closes, zero STA drops). Match the stall window instead; lwIP
+        // keeps retransmitting meanwhile and the per-client queue is bounded.
+        if (client->client()) client->client()->setAckTimeout(WS_STALL_CLOSE_MS);
 
 
     } else if (type == WS_EVT_DATA) {
@@ -749,6 +764,7 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 
     } else if (type == WS_EVT_DISCONNECT) {
         Serial.printf("[WS] client #%u disconnected\n", client->id());
+        wsDisconnects.fetch_add(1, std::memory_order_relaxed);   // any cause (→ /diag)
         wsLiveRemove(client->id());      // before the object is torn down
 
         wsServer.cleanupClients();
@@ -861,8 +877,8 @@ void wifiSetup() {
 // stalled peer costs a few KB, while a laptop's WiFi scan / power-save pause
 // of several seconds used to get its socket closed under it — the dashboard
 // then showed a "drop" and reconnected, with no STA fault on the device side.
-static constexpr uint32_t WS_STALL_CLOSE_MS = 15000;
-static std::atomic<uint32_t> wsStallCloses{0};   // sockets closed by the stall watchdog (→ /diag)
+// WS_STALL_CLOSE_MS / wsStallCloses / wsDisconnects are declared up by wifiDropCount
+// (onWsEvent, defined earlier in this tab, uses them too).
 struct WsStallEntry { uint32_t id; uint32_t sinceMs; };   // id 0 = free slot
 static WsStallEntry wsStalls[8] = {};   // DEFAULT_MAX_WS_CLIENTS on ESP32
 
@@ -1923,6 +1939,7 @@ static void startFullServer() {
         doc["wifiDrops"]   = wifiDropCount.load(std::memory_order_relaxed);
         doc["lastDropReason"] = g_lastRuntimeDisconnReason;       // wifi_err_reason_t code
         doc["wsStallCloses"]  = wsStallCloses.load(std::memory_order_relaxed);   // WS clients closed for a full TX queue
+        doc["wsDisconnects"]  = wsDisconnects.load(std::memory_order_relaxed);   // WS client disconnects, any cause
         // Last panic's location, from the flash coredump (ELF). Parsed once and
         // cached — a crashPc + crashTask here pins where the device last crashed;
         // decode with: xtensa-esp32s3-elf-addr2line -e <build>.elf <crashPc>.

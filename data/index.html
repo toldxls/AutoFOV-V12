@@ -1780,7 +1780,7 @@
                      title="1006 = connection died (WiFi pause / router) · device = closed by AutoFOV (stall watchdog, reboot)">By cause:</div>
                 <div id="wsd-codes" class="gfx-text" style="right:15px; top:98px; color:var(--text-primary);">—</div>
                 <div class="gfx-text" style="left:15px; top:116px; color:var(--text-disabled);"
-                     title="Device-side counters from /diag: sockets its stall watchdog closed, and real STA link drops">Device:</div>
+                     title="Device-side counters from /diag: WebSocket disconnects (any cause), sockets its stall watchdog closed, real STA link drops">Device:</div>
                 <div id="wsd-device" class="gfx-text" style="right:15px; top:116px; color:var(--text-primary);">—</div>
 
                 <div style="position:absolute; left:10px; top:134px; width:220px; height:1px; background:#303030;"></div>
@@ -13985,7 +13985,7 @@
     }
     function wsCodeLong(code) {
         switch (code) {
-            case 1006: return 'the connection died underneath (a WiFi pause on this machine, or the router)';
+            case 1006: return 'the connection died without a close frame — the device\'s TCP layer gave up after 15 s with no ACK (a WiFi pause on this machine, or the router), or the link vanished';
             case 1000:
             case 1005: return 'closed by the device (its stall watchdog, or a reboot)';
             case 1001: return 'going away (page or device shutting down)';
@@ -14927,8 +14927,11 @@
         const dv = g('wsd-device');
         const paint = () => {
             if (!_wsdDiag) { dv.innerText = '—'; return; }
-            dv.innerText = 'stall closes ' + (_wsdDiag.wsStallCloses || 0) + ' · wifi drops ' + (_wsdDiag.wifiDrops || 0) +
+            dv.innerText = 'dc ' + (_wsdDiag.wsDisconnects || 0) + ' · stall ' + (_wsdDiag.wsStallCloses || 0) + ' · wifi ' + (_wsdDiag.wifiDrops || 0) +
                            ((_wsdDiag.wifiDrops || 0) ? ' (r' + (_wsdDiag.lastDropReason || 0) + ')' : '');
+            dv.title = 'dc = WebSocket client disconnects this boot, any cause (every browser reload counts)\n' +
+                       'stall = sockets the device closed for a 15 s full queue\n' +
+                       'wifi = real STA link drops (these also land in DIAGNOSTICS)';
         };
         paint();
         if (skipFetch) return;
@@ -14946,7 +14949,7 @@
     }
     function wsDiagCopy() {
         const lines = ['AutoFOV socket drops (' + wsDrops.length + ')'];
-        if (_wsdDiag) lines.push('device: ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
+        if (_wsdDiag) lines.push('device: ws disconnects ' + (_wsdDiag.wsDisconnects || 0) + ', ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
         wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code) + '  down ' + fmtDown(d.down) + (d.clean ? '  clean' : '')));
         const text = lines.join('\n');
         const st = document.getElementById('wsd-status');
