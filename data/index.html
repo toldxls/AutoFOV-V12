@@ -14026,6 +14026,7 @@
                 t: +d.t, code: (d.code | 0), clean: !!d.clean,
                 down: (d.down === null || d.down === undefined || !isFinite(d.down)) ? null : +d.down,
                 gap: isFinite(d.gap) && d.gap > 0 ? +d.gap : 0,
+                bg: !!d.bg,
                 why: WS_WHYS.includes(d.why) ? d.why : '' }));
         } catch (e) { return []; }
     }
@@ -14057,7 +14058,12 @@
     function wsDropRecord(ev, forced) {
         const now = Date.now();
         wsDrops.unshift({ t: now, code: ev ? (ev.code | 0) : 0, clean: !!(ev && ev.wasClean), down: null,
-                          gap: wsLastMsgMs ? Math.max(0, now - wsLastMsgMs) : 0, why: wsDropWhy(ev, forced) });
+                          gap: wsLastMsgMs ? Math.max(0, now - wsLastMsgMs) : 0,
+                          // Tab in the background? Its timers are throttled (to once a
+                          // minute after 5 min hidden), so the 6 s dead-link check can't
+                          // run and the DEVICE's 16-18 s close gets there first — that
+                          // reads 'link died' for what a visible tab calls 'went silent'.
+                          bg: document.hidden, why: wsDropWhy(ev, forced) });
         if (wsDrops.length > 50) wsDrops.length = 50;
         wsDropsSave();
     }
@@ -15080,7 +15086,7 @@
             : '—';
         // Log rows: newest first, as many as fit (8 × 13 px).
         g('wsd-log').innerHTML = wsDrops.slice(0, 8).map(d =>
-            '<div title="' + wsCodeLong(d.code, d.why) + (d.gap ? ' · silent ' + fmtDown(d.gap) + ' first' : '') + '"' +
+            '<div title="' + wsCodeLong(d.code, d.why) + (d.gap ? ' · silent ' + fmtDown(d.gap) + ' first' : '') + (d.bg ? ' · tab was in the background' : '') + '"' +
             (wsIsBenign(d) || wsIsPause(d) ? ' style="color:var(--text-disabled)"' : '') + '>' +
             fmtT(d.t) + '  ' + String(d.code || '—').padEnd(4) + ' ' +
             // paused: the whole blackout as the page saw it (silence + reconnect)
@@ -15116,7 +15122,7 @@
         const lines = ['AutoFOV socket drops (' + wsDrops.filter(wsIsDrop).length + ', + ' + wsDrops.filter(d => !wsIsDrop(d)).length + ' ridden-out freezes)'];
         if (_wsdDiag) lines.push('device: ws disconnects ' + (_wsdDiag.wsDisconnects || 0) + ', ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
         wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code, d.why) +
-            (d.why === 'freeze' ? '  for ' + fmtDown(d.down) : '  down ' + fmtDown(d.down) + (d.gap ? '  after ' + fmtDown(d.gap) + ' silent' : '')) + (d.clean ? '  clean' : '')));
+            (d.why === 'freeze' ? '  for ' + fmtDown(d.down) : '  down ' + fmtDown(d.down) + (d.gap ? '  after ' + fmtDown(d.gap) + ' silent' : '')) + (d.bg ? '  [tab hidden]' : '') + (d.clean ? '  clean' : '')));
         const text = lines.join('\n');
         const st = document.getElementById('wsd-status');
         const done = () => { if (st) st.innerText = 'copied'; };
