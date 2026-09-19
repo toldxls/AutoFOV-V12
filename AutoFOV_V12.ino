@@ -3606,7 +3606,18 @@ static void vibSigFinishCapture() {
     Serial.printf("[vib] save failed: %s\n", path);
   }
   vibSigCapturing = false;
+  // The rescan can shift every index (a new file sorts anywhere), so re-find
+  // the selected entry by NAME — otherwise the highlight, the loaded overlay
+  // and DELETE all disagree about which signature is "selected".
+  char selName[24] = {0};
+  if (vibSigSel >= 0 && vibSigSel < vibSigCount) strncpy(selName, vibSigList[vibSigSel], 23);
   vibSigScan();
+  if (selName[0]) {
+    vibSigSel = -1;
+    for (int i = 0; i < vibSigCount; i++)
+      if (strcmp(vibSigList[i], selName) == 0) { vibSigSel = i; break; }
+    if (vibSigSel < 0) vibSigLoadedValid = false;
+  }
   vibSigUiDirty = true;
 }
 
@@ -6584,7 +6595,10 @@ static void vibTestTick() {
         s.tMs = vibTestFireMs - vibTestStartMs;
         if (got) {
           uint32_t sm = vibSettleMs.load(), tk = vibSettleTauMs.load(), dm = vibDominant.load();
-          long pk = lroundf(vibEnvPeak * 10.0f);
+          // vibGoertzelBlock() returns HALF the tone amplitude in raw LSB
+          // (sqrt(power)/N = A/2) — convert to mg before the ×10 pack, or the
+          // dashboard's "peak mg" column reads ~8x high.
+          long pk = lroundf(vibEnvPeak * 2.0f * VIB_MG_PER_LSB * 10.0f);
           s.settleMs     = sm > 65535 ? 65535 : (uint16_t)sm;
           s.tauMs        = tk > 65535 ? 65535 : (uint16_t)tk;
           s.peakMg10     = (pk < 0) ? 0 : (pk > 65535 ? 65535 : (uint16_t)pk);
