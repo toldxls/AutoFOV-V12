@@ -1780,8 +1780,8 @@
                      title="How long the socket stayed down before it reopened — last / mean / worst">Outage:</div>
                 <div id="wsd-outage" class="gfx-text" style="right:15px; top:80px; color:var(--text-primary);">—</div>
                 <div class="gfx-text" style="left:15px; top:98px; color:var(--text-disabled);"
-                     title="link = connection died or went silent (WiFi pause / router / power) · device = closed by AutoFOV's stall watchdog · expected = a reboot you asked for, or this machine slept">By cause:</div>
-                <div id="wsd-codes" class="gfx-text" style="right:15px; top:98px; color:var(--text-primary);">—</div>
+                     title="link = connection died or stayed silent (router / power) · pause = telemetry stopped briefly and came straight back (incl. freezes the socket rode out) · dev = closed by AutoFOV's stall watchdog · exp = a reboot you asked for, or this machine slept">Cause:</div>
+                <div id="wsd-codes" class="gfx-text" style="right:15px; top:99px; color:var(--text-primary); font-size:10px;">—</div>
                 <div class="gfx-text" style="left:15px; top:116px; color:var(--text-disabled);"
                      title="Device-side counters from /diag: WebSocket disconnects (any cause), sockets its stall watchdog closed, real STA link drops">Device:</div>
                 <div id="wsd-device" class="gfx-text" style="right:15px; top:116px; color:var(--text-primary);">—</div>
@@ -10232,8 +10232,9 @@
         lines.push('faults: alloc ' + (s.allocFails || 0) + '  i2c ' + (s.i2cErrs || 0) +
                    '  wifi-drops ' + (s.wifiDrops || 0) + '  (last drop reason ' + (s.lastDropReason || 0) + ')' +
                    '  ws-stall-closes ' + (s.wsStallCloses || 0));
-        lines.push('browser socket drops (persisted): ' + wsDrops.length +
-                   (wsDrops[0] ? '  (last code ' + wsDrops[0].code + ' ' + wsCodeCause(wsDrops[0].code, wsDrops[0].why) + ' at ' + fmtT(wsDrops[0].t) + ')' : ''));
+        const _wd = wsDrops.filter(wsIsDrop);
+        lines.push('browser socket drops (persisted): ' + _wd.length + '  (+ ' + (wsDrops.length - _wd.length) + ' ridden-out freezes)' +
+                   (_wd[0] ? '  (last code ' + _wd[0].code + ' ' + wsCodeCause(_wd[0].code, _wd[0].why) + ' at ' + fmtT(_wd[0].t) + ')' : ''));
         lines.push('max sensor stall: ' + ((s.maxSensorStallMs || 0) / 1000).toFixed(1) + 's');
         if (s.crashPc) {
             lines.push('LAST CRASH: ' + (s.crashTask || '?') + ' @ pc ' + s.crashPc +
@@ -13978,7 +13979,17 @@
     // Only sockets that actually OPENED are recorded: a retry that never
     // connects also fires onclose(1006), and logging those turned one outage
     // into a dozen "drops" and measured the outage from the last failed retry.
-    const WS_WHYS = ['reboot', 'sleep', 'stale'];
+    //   'pause'  — a 'stale' close whose reconnect then succeeded within 5 s: the
+    //              path was only briefly deaf (a WiFi radio off-channel, a router
+    //              hiccup), not dead. Relabelled at reopen (wsDropReopened).
+    //   'freeze' — NOT a drop: telemetry stopped for 3 s+ and resumed on the same
+    //              socket (the device rides out ~15 s). Logged so these are
+    //              measurable instead of invisible; never counted as a drop.
+    // gap = ms of silence that preceded the entry (freeze: its whole length).
+    const WS_WHYS = ['reboot', 'sleep', 'stale', 'pause', 'freeze'];
+    const wsIsDrop   = d => d.why !== 'freeze';
+    const wsIsBenign = d => d.why === 'reboot' || d.why === 'sleep';
+    const wsIsPause  = d => d.why === 'pause' || d.why === 'freeze';
     function wsDropsLoad() {
         // Everything here reaches innerHTML, and storage is only as trustworthy
         // as whatever last served this origin — coerce to the known shape.
@@ -13988,6 +13999,7 @@
             return a.filter(d => d && typeof d === 'object' && isFinite(d.t)).slice(0, 50).map(d => ({
                 t: +d.t, code: (d.code | 0), clean: !!d.clean,
                 down: (d.down === null || d.down === undefined || !isFinite(d.down)) ? null : +d.down,
+                gap: isFinite(d.gap) && d.gap > 0 ? +d.gap : 0,
                 why: WS_WHYS.includes(d.why) ? d.why : '' }));
         } catch (e) { return []; }
     }
@@ -14017,7 +14029,9 @@
         return '';
     }
     function wsDropRecord(ev, forced) {
-        wsDrops.unshift({ t: Date.now(), code: ev ? (ev.code | 0) : 0, clean: !!(ev && ev.wasClean), down: null, why: wsDropWhy(ev, forced) });
+        const now = Date.now();
+        wsDrops.unshift({ t: now, code: ev ? (ev.code | 0) : 0, clean: !!(ev && ev.wasClean), down: null,
+                          gap: wsLastMsgMs ? Math.max(0, now - wsLastMsgMs) : 0, why: wsDropWhy(ev, forced) });
         if (wsDrops.length > 50) wsDrops.length = 50;
         wsDropsSave();
     }
@@ -14025,12 +14039,25 @@
     // stale open entry from a page the user closed hours ago stays null).
     function wsDropReopened() {
         const d = wsDrops[0];
-        if (d && d.down === null && Date.now() - d.t < 3600000) { d.down = Date.now() - d.t; wsDropsSave(); }
+        if (d && d.down === null && Date.now() - d.t < 3600000) {
+            d.down = Date.now() - d.t;
+            if (d.why === 'stale' && d.down < 5000) d.why = 'pause';   // came straight back — it was never dead
+            wsDropsSave();
+        }
+    }
+    // A ridden-out freeze: messages resumed on the SAME socket after `gap` ms.
+    function wsFreezeRecord(gap) {
+        wsDrops.unshift({ t: Date.now() - gap, code: 0, clean: false, down: gap, gap: gap, why: 'freeze' });
+        if (wsDrops.length > 50) wsDrops.length = 50;
+        wsDropsSave();
+        if (state.screen === 'screen-wsdiag') updateWsDiagUI(true);
     }
     function wsCodeCause(code, why) {
         if (why === 'reboot') return 'reboot';          // asked for, or the device's 1012 goodbye
         if (why === 'sleep')  return 'slept';           // this machine was suspended
         if (why === 'stale')  return 'went silent';     // dead-link check: OPEN but no data
+        if (why === 'pause')  return 'paused';          // went silent, back within 5 s
+        if (why === 'freeze') return 'froze';           // silent 3 s+, resumed on the same socket
         switch (code) {
             case 1006: return 'link died';        // TCP died underneath: WiFi pause / router
             case 1000:
@@ -14045,6 +14072,8 @@
     function wsCodeLong(code, why) {
         if (why === 'reboot') return 'the device restarted (REBOOT, a firmware flash or a rollback) — expected';
         if (why === 'sleep')  return 'this machine was suspended; the socket was gone when it woke — expected';
+        if (why === 'pause')  return 'telemetry stopped for 6 s, this page reconnected, and the device answered at once — the path was briefly deaf (a WiFi radio off-channel, a router hiccup), not dead';
+        if (why === 'freeze') return 'telemetry stopped and then resumed on the same socket — a short pause the link rode out; not a drop';
         if (why === 'stale')  return 'the socket was still open but nothing had arrived for 6 s (device lost power, or the link died silently) — this page closed it and reconnected';
         switch (code) {
             case 1006: return 'the connection died without a close frame — the device gave up after ~15 s of no ACKs (a WiFi pause on this machine, or the router), or the link vanished';
@@ -14935,9 +14964,12 @@
         statusEl.style.color  = connected ? '#00FF00'   : (reconnectTimer ? '#FFA500' : '#FF0000');
         const dropsEl = document.getElementById('wi-drops');
         if (dropsEl) {
-            const d = wsDrops[0];
-            dropsEl.innerText   = wsDrops.length ? wsDrops.length + ' · last ' + (d.why ? wsCodeCause(d.code, d.why) : d.code) + ' @ ' + fmtHM(d.t) : 'none';
-            dropsEl.style.color = wsDrops.length ? (d.code === 1006 && !d.why ? '#FFA500' : 'var(--text-primary)') : 'var(--text-disabled)';
+            const drops = wsDrops.filter(wsIsDrop), d = drops[0];
+            // Short form — the row has ~20 characters next to its label (the full
+            // cause text lives on the SOCKET screen): "6 · silent 12:48".
+            const brief = { reboot: 'reboot', sleep: 'slept', stale: 'silent', pause: 'paused' }[d && d.why] || (d ? d.code : '');
+            dropsEl.innerText   = drops.length ? drops.length + ' · ' + brief + ' ' + fmtHM(d.t) : 'none';
+            dropsEl.style.color = drops.length ? (d.code === 1006 && !d.why ? '#FFA500' : 'var(--text-primary)') : 'var(--text-disabled)';
         }
         document.getElementById('wi-ip').innerText   = wifiIP || '—';
         document.getElementById('wi-ssid').innerText = state.wifiSSID || '—';
@@ -14978,32 +15010,39 @@
     function updateWsDiagUI(skipFetch) {
         const g = id => document.getElementById(id);
         if (!g('wsd-count')) return;
-        const n = wsDrops.length, last = wsDrops[0];
-        const since = n ? fmtT(wsDrops[n - 1].t) : null;
-        g('wsd-count').innerText = n ? n + (since ? ' since ' + since : '') : 'none recorded';
+        const drops = wsDrops.filter(wsIsDrop), frz = wsDrops.length - drops.length;
+        const n = drops.length, last = drops[0];
+        const since = wsDrops.length ? fmtT(wsDrops[wsDrops.length - 1].t) : null;
+        g('wsd-count').innerText = wsDrops.length ? n + (frz ? ' + ' + frz + ' froze' : '') + (since ? ' since ' + since : '') : 'none recorded';
         g('wsd-count').style.color = n ? 'var(--text-primary)' : 'var(--accent-green)';
         g('wsd-last').innerText  = last ? last.code + ' ' + wsCodeCause(last.code, last.why) + ' · ' + fmtT(last.t) : '—';
         g('wsd-last').title      = last ? wsCodeLong(last.code, last.why) : '';
-        const downs = wsDrops.filter(d => d.down !== null).map(d => d.down);
+        const downs = drops.filter(d => d.down !== null).map(d => d.down);
         if (downs.length) {
             const mean = downs.reduce((a, b) => a + b, 0) / downs.length, worst = Math.max(...downs);
             g('wsd-outage').innerText = fmtDown(last && last.down !== null ? last.down : downs[0]) + ' · mean ' + fmtDown(mean) + ' · worst ' + fmtDown(worst);
         } else g('wsd-outage').innerText = '—';
         // Explained drops (reboot / slept) are split out so the amber 1006
         // count is only the ones worth chasing.
-        const exp  = wsDrops.filter(d => d.why === 'reboot' || d.why === 'sleep').length;
-        const died = wsDrops.filter(d => d.why !== 'reboot' && d.why !== 'sleep' && (d.code === 1006 || d.why === 'stale')).length;
+        // pause = brief deafness (quick-recovery closes + ridden-out freezes).
+        const exp  = wsDrops.filter(wsIsBenign).length;
+        const pau  = wsDrops.filter(wsIsPause).length;
+        const died = wsDrops.filter(d => !wsIsBenign(d) && !wsIsPause(d) && (d.code === 1006 || d.why === 'stale')).length;
         const dev  = wsDrops.filter(d => !d.why && (d.code === 1000 || d.code === 1005)).length;
-        const oth  = n - exp - died - dev;
-        g('wsd-codes').innerHTML = n
-            ? '<span style="color:#FFA500">link ' + died + '</span> · <span style="color:var(--accent-cyan)">device ' + dev + '</span>' +
-              ' · <span style="color:var(--text-disabled)">expected ' + exp + '</span>' + (oth ? ' · other ' + oth : '')
+        const oth  = wsDrops.length - exp - pau - died - dev;
+        g('wsd-codes').innerHTML = wsDrops.length
+            // 4 groups in a ~150 px cell: tight separators, or it runs into the label
+            ? '<span style="color:#FFA500">link ' + died + '</span>·<span style="color:var(--text-primary)">pause ' + pau + '</span>' +
+              '·<span style="color:var(--accent-cyan)">dev ' + dev + '</span>' +
+              '·<span style="color:var(--text-disabled)">exp ' + exp + '</span>' + (oth ? '·+' + oth : '')
             : '—';
         // Log rows: newest first, as many as fit (8 × 13 px).
         g('wsd-log').innerHTML = wsDrops.slice(0, 8).map(d =>
-            '<div title="' + wsCodeLong(d.code, d.why) + '"' + (d.why === 'reboot' || d.why === 'sleep' ? ' style="color:var(--text-disabled)"' : '') + '>' +
-            fmtT(d.t) + '  ' + String(d.code).padEnd(4) + ' ' +
-            wsCodeCause(d.code, d.why).padEnd(13) + ' ' + fmtDown(d.down) + '</div>').join('') ||
+            '<div title="' + wsCodeLong(d.code, d.why) + (d.gap ? ' · silent ' + fmtDown(d.gap) + ' first' : '') + '"' +
+            (wsIsBenign(d) || wsIsPause(d) ? ' style="color:var(--text-disabled)"' : '') + '>' +
+            fmtT(d.t) + '  ' + String(d.code || '—').padEnd(4) + ' ' +
+            // paused: the whole blackout as the page saw it (silence + reconnect)
+            wsCodeCause(d.code, d.why).padEnd(13) + ' ' + fmtDown(d.why === 'pause' && d.down !== null ? d.gap + d.down : d.down) + '</div>').join('') ||
             '<div style="color:var(--text-disabled)">no drops recorded — a WiFi pause on this machine, a router hiccup or a device reboot will show here</div>';
         // Device-side counters — the other half of the story. wsStallCloses =
         // sockets the device closed for a 15 s full queue; wifiDrops = real STA
@@ -15032,9 +15071,10 @@
         if (state.screen === 'screen-wifiinfo') updateWifiInfoUI();
     }
     function wsDiagCopy() {
-        const lines = ['AutoFOV socket drops (' + wsDrops.length + ')'];
+        const lines = ['AutoFOV socket drops (' + wsDrops.filter(wsIsDrop).length + ', + ' + wsDrops.filter(d => !wsIsDrop(d)).length + ' ridden-out freezes)'];
         if (_wsdDiag) lines.push('device: ws disconnects ' + (_wsdDiag.wsDisconnects || 0) + ', ws stall closes ' + (_wsdDiag.wsStallCloses || 0) + ', wifi drops ' + (_wsdDiag.wifiDrops || 0) + ' (last reason ' + (_wsdDiag.lastDropReason || 0) + ')');
-        wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code, d.why) + '  down ' + fmtDown(d.down) + (d.clean ? '  clean' : '')));
+        wsDrops.forEach(d => lines.push(new Date(d.t).toLocaleString() + '  ' + d.code + '  ' + wsCodeCause(d.code, d.why) +
+            (d.why === 'freeze' ? '  for ' + fmtDown(d.down) : '  down ' + fmtDown(d.down) + (d.gap ? '  after ' + fmtDown(d.gap) + ' silent' : '')) + (d.clean ? '  clean' : '')));
         const text = lines.join('\n');
         const st = document.getElementById('wsd-status');
         const done = () => { if (st) st.innerText = 'copied'; };
@@ -15350,7 +15390,12 @@
             // one-shot events it sent meanwhile were dropped at its full queue.
             // Pull a fresh snapshot so the dashboard isn't left on old state.
             const rxNow = Date.now();
-            if (wsLastMsgMs && rxNow - wsLastMsgMs > 2000) wsResync();
+            if (wsLastMsgMs && rxNow - wsLastMsgMs > 2000) {
+                wsResync();
+                // 3 s+ and the machine was awake (the 1 s tick kept running) → log it.
+                if (rxNow - wsLastMsgMs >= 3000 && !document.hidden && rxNow - wsTickMs < 3000 &&
+                    rxNow - wsSleepSeenMs > 30000) wsFreezeRecord(rxNow - wsLastMsgMs);
+            }
             wsLastMsgMs = rxNow;
             pktCount++;
             if (e.data instanceof ArrayBuffer) {

@@ -19,6 +19,7 @@ V12.6 makes the distance **trustworthy across a day and a reboot**. The sensor's
 * **Stack Calculator:** Automatically calculates image overlap % and total depth from step size, and required image count based on objective NA and depth of field.
 * **Stack-Complete Notifications:** Pushes a `stackDone` WebSocket event to every connected dashboard (browser Notification + audible alert beeps) and, optionally, an ntfy.sh push so a phone away from the bench can hear the stack finish. A dashboard toast also offers a one-click **Save PNG** summary card with run stats, vibration RMS, and per-axis estimated pixel blur.
 * **Web Dashboard & Telemetry:** Connects to WiFi to provide a ~30 Hz live data stream (distance, FOV, ToF signal rate, vibration) and full remote control of settings.
+* **Connection Diagnostics (V12.7):** WiFi Info → **Socket drops** opens a SOCKET screen that logs every dashboard disconnect with its close code, cause (link died, paused, device closed, reboot, this machine slept), how long it stayed down, and the device-side counters — plus the short telemetry freezes the link rode out. The dashboard reconnects on its own within seconds of a silent link and re-syncs state afterwards.
 * **Captive Portal Setup:** First-time WiFi setup via a built-in access point (AutoFOV-Setup).
 * **PSRAM-Backed UI:** Fluid, flicker-free UI using off-screen 16-bit sprites buffered in PSRAM.
 * **Customization:** Adjustable screen brightness, sleep timeouts, and multiple color themes (Classic, Midnight, Forest, Daylight) with adjustable tint.
@@ -119,6 +120,8 @@ firmware while keeping calibration and WiFi settings.
 2. **Connect:** Join the `AutoFOV-Setup` network; the setup page appears automatically.
 3. **Configure:** Enter your WiFi credentials. The device saves them, restarts, and connects. Assign a static high IP (e.g. 192.168.1.250) via your router for easy access.
 4. **Dashboard:** Enter the device IP in any browser. The full remote-control UI is served straight from the firmware binary (gzip-embedded — no LittleFS upload).
+
+**Reading the SOCKET log.** Greyed rows are benign: `reboot` (a restart you asked for — the device says goodbye with close code 1012), `slept` (this computer was suspended), `paused` (telemetry stopped, the page reconnected and the device answered at once) and `froze` (a 3 s+ gap the same socket survived; not counted as a drop). Rows left in white are the ones worth chasing: `link died` / `went silent` (router, power, range) and `device closed` (the device's stall watchdog — this page stopped reading for 15 s). `wifi` in the Device row counts real station drops; if it stays 0 while the log fills, the device never left the network. Run the dashboard on a second machine to tell a deaf laptop from a deaf device: only shared timestamps implicate the device or router.
 
 ### Stack-Complete Notification
 
