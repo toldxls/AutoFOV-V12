@@ -760,7 +760,8 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         char buf[513];
         memcpy(buf, data, len);
         buf[len] = '\0';
-        Serial.printf("[WS] data rx: %s\n", buf);
+        if (!strstr(buf, "ntfyTopic"))            // the topic is a capability — not for the UART
+            Serial.printf("[WS] data rx: %s\n", buf);
 
 
         StaticJsonDocument<512> doc;   // sized to the 512-byte payload cap above
@@ -3599,7 +3600,9 @@ static void handleWifiCommand(const char* key, const char* val) {
         wifiPrefs.begin("wifi", false);
         wifiPrefs.putString("ntfy", candidate);
         wifiPrefs.end();
-        Serial.printf("[NTFY] topic set: %s\n", ntfyTopic);
+        // Length only — the topic is a capability (anyone holding it can
+        // subscribe and publish), same rule as the device password.
+        Serial.printf("[NTFY] topic set (%u chars)\n", (unsigned)strlen(ntfyTopic));
 
     } else if (strcmp(key, "ntfyTest") == 0) {
         if (ntfyTopic[0] && ntfyInFlight.load(std::memory_order_acquire) > 0) {
