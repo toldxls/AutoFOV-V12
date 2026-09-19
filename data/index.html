@@ -5041,10 +5041,12 @@
         const list = vibRepSavedList();
         let html = '<option value="">SAVED (' + list.length + ')</option>';
         list.forEach((e, i) => {
-            const when = new Date(e.ts).toLocaleString([], {
+            // Numbers only: storage is as trustworthy as whatever last served
+            // this origin (same rule as wsDropsLoad).
+            const when = new Date(+e.ts || 0).toLocaleString([], {
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-            html += '<option value="' + i + '">' + when + ' · ' + e.n + 'f · ' +
-                    vibRepFmtT(e.durMs) + '</option>';
+            html += '<option value="' + i + '">' + when + ' · ' + (e.n | 0) + 'f · ' +
+                    vibRepFmtT(+e.durMs || 0) + '</option>';
         });
         sel.innerHTML = html;
     }
