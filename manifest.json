@@ -1,1 +1,1 @@
-{ "version": "12.7.20", "sha256": "b9cefe7b9005c95d490df5fe0d6748b52e4b9737d1cd18d045017c427588aec6", "bin": "firmware.bin", "commit": "cf9637d0e9910f4e8d8bf64c2a23d86363214f46" }
+{ "version": "12.7.21", "sha256": "c6dcaa15dc574a77aae893a908fece17d478f7c20bbcb7b58a85c83fa14d355f", "bin": "firmware.bin", "commit": "aff264e1e6aec28ed28dce4b0fce9a8bdb1f8915" }
