@@ -6,14 +6,17 @@ here never bump the version.
 
 ## Investigating
 
-- **Periodic 6–8 s telemetry blackouts, every ~10–16 min** (first logged
-  9/19/26, v12.7.20). Device stays associated (`wifi drops 0`), reconnect
-  succeeds at once, the device's old socket then stall-closes because lwIP's
-  retransmit timer has backed off. Which end goes deaf is unknown. **Next step:**
-  run the dashboard on a phone alongside the laptop for an hour and compare the
-  two SOCKET logs — shared timestamps implicate the device/router, laptop-only
-  implicates the Mac (WiFi scans, AirDrop/AWDL). Also note DIAGNOSTICS →
-  max sensor stall at the same moments.
+- **Socket drops — believed solved 9/20/26, confirm on hardware.** The "periodic
+  blackouts" were the BROWSER: a hidden (or fully covered) dashboard tab is
+  throttled and then frozen (Chrome wakes a frozen tab ~10 s every 15 min), stops
+  reading its socket, the device's queue fills and its stall watchdog closes the
+  client. An overnight forgotten tab logged 40 drops / 33 stall closes; "link died
+  after 0.0 s silent" rows were buffered frames delivered just before the close
+  event on a wake. Fix: background mode (`{"bg":1}` after 30 s hidden — no fast
+  telemetry or vib spectrum for that client) + drops from a long-hidden tab are
+  labelled `tab idle`. **To confirm:** leave a tab hidden overnight on the new
+  build — expect few or no rows, all greyed, and `stall closes` near 0. Still
+  unexplained: the 18-drop burst at 17:41–17:45 on 9/19 had `stall closes 0`.
 - **sensorTask heartbeat stalls > 6 s** (I²C stall that self-recovers). The
   self-heal reboot is disabled for this reason (`loop()` F3 block); only the
   worst stall is recorded in `/diag`. Root cause unknown.

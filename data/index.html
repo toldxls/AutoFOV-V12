@@ -14014,9 +14014,13 @@
     //              socket (the device rides out ~15 s). Logged so these are
     //              measurable instead of invisible; never counted as a drop.
     // gap = ms of silence that preceded the entry (freeze: its whole length).
-    const WS_WHYS = ['reboot', 'sleep', 'stale', 'pause', 'freeze'];
+    //   'idle'   — the tab had been in the background for a minute or more. Browsers
+    //              throttle and then freeze hidden tabs (Chrome wakes a frozen tab
+    //              ~10 s every 15 min); what such a page logs says nothing about
+    //              the link. See wsBgEnter() for what we do about it.
+    const WS_WHYS = ['reboot', 'sleep', 'stale', 'pause', 'freeze', 'idle'];
     const wsIsDrop   = d => d.why !== 'freeze';
-    const wsIsBenign = d => d.why === 'reboot' || d.why === 'sleep';
+    const wsIsBenign = d => d.why === 'reboot' || d.why === 'sleep' || d.why === 'idle';
     const wsIsPause  = d => d.why === 'pause' || d.why === 'freeze';
     function wsDropsLoad() {
         // Everything here reaches innerHTML, and storage is only as trustworthy
@@ -14051,15 +14055,48 @@
     let wsVisChangeMs    = 0;      // last visibilitychange (either direction)
     let wsLastCmd        = '-', wsLastCmdMs = 0;   // last sendCommand key other than the 1 Hz ping
     let wsFetchInFlight  = 0;      // calioAuthedFetch requests outstanding
-    document.addEventListener('visibilitychange', () => { wsVisChangeMs = Date.now(); });
+    let wsHiddenForMs    = 0;      // length of the hidden spell that just ended (0 while hidden)
+    // ── Background mode ──────────────────────────────────────────────────────
+    // Hidden for 30 s → ask the device to stop the 30 Hz stream for THIS client
+    // ({"bg":1}: events, settings and the 5 s slow frame still arrive, so a
+    // stack-done alert still fires). A throttled or frozen tab can't drain 35
+    // frames a second; the device's queue filled and its stall watchdog closed
+    // the socket, over and over. Visible again → {"bg":0} + a fresh snapshot.
+    let wsBgMode = false, wsBgTimer = null;
+    function wsBgEnter() {
+        wsBgTimer = null;
+        if (!document.hidden || wsBgMode || !ws || ws.readyState !== WebSocket.OPEN) return;
+        wsBgMode = true;
+        ws.send(JSON.stringify({ bg: 1 }));      // WS only — the device keys it to this socket
+    }
+    document.addEventListener('visibilitychange', () => {
+        const now = Date.now();
+        wsHiddenForMs = document.hidden ? 0 : (wsVisChangeMs ? now - wsVisChangeMs : 0);
+        wsVisChangeMs = now;
+        if (wsBgTimer) { clearTimeout(wsBgTimer); wsBgTimer = null; }
+        if (document.hidden) { wsBgTimer = setTimeout(wsBgEnter, 30000); return; }
+        wsTickMs = now;                          // late timers after a hidden spell are not a suspend
+        if (wsBgMode) {
+            wsBgMode = false;
+            wsLastMsgMs = now;                   // give the fast stream a fresh window to restart
+            if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ bg: 0 })); wsResyncMs = 0; wsResync(); }
+        }
+    });
     let wsWakeOnOpen     = false;  // next onopen sends the activity beacon (user-initiated connects only)
     function wsDropWhy(ev, forced) {
-        if (forced) return forced;
         const ov = document.getElementById('ota-reboot-overlay');
         if ((ev && ev.code === 1012) || (ov && ov.classList.contains('open')) ||
             Date.now() - wsExpectRebootMs < 30000) return 'reboot';
+        // Background tab — outranks the dead-link check's own verdict (`forced`):
+        // a frozen tab's first tick after a wake always finds a "silent" socket.
+        // (Hidden now, or back for under 10 s after a long spell):
+        // checked BEFORE sleep — a throttled tab's late timers look like a suspend.
+        const nowW = Date.now();
+        if ((document.hidden && nowW - wsVisChangeMs > 60000) ||
+            (!document.hidden && wsHiddenForMs > 60000 && nowW - wsVisChangeMs < 10000)) return 'idle';
+        if (forced) return forced;
         // Suspended: the tick saw the gap already, or hasn't run yet since wake.
-        if (Date.now() - wsSleepSeenMs < 30000 || (!document.hidden && Date.now() - wsTickMs > 5000)) return 'sleep';
+        if (nowW - wsSleepSeenMs < 30000 || (!document.hidden && nowW - wsTickMs > 5000)) return 'sleep';
         return '';
     }
     function wsDropRecord(ev, forced) {
@@ -14103,6 +14140,7 @@
         if (why === 'reboot') return 'reboot';          // asked for, or the device's 1012 goodbye
         if (why === 'sleep')  return 'slept';           // this machine was suspended
         if (why === 'stale')  return 'went silent';     // dead-link check: OPEN but no data
+        if (why === 'idle')   return 'tab idle';        // page was in the background (throttled / frozen)
         if (why === 'pause')  return 'paused';          // went silent, back within 5 s
         if (why === 'freeze') return 'froze';           // silent 3 s+, resumed on the same socket
         switch (code) {
@@ -14119,6 +14157,7 @@
     function wsCodeLong(code, why) {
         if (why === 'reboot') return 'the device restarted (REBOOT, a firmware flash or a rollback) — expected';
         if (why === 'sleep')  return 'this machine was suspended; the socket was gone when it woke — expected';
+        if (why === 'idle')   return 'this tab was in the background — the browser throttles and then freezes hidden tabs, so the page stopped reading its socket and the device closed it. Says nothing about the link';
         if (why === 'pause')  return 'telemetry stopped for 6 s, this page reconnected, and the device answered at once — the path was briefly deaf (a WiFi radio off-channel, a router hiccup), not dead';
         if (why === 'freeze') return 'telemetry stopped and then resumed on the same socket — a short pause the link rode out; not a drop';
         if (why === 'stale')  return 'the socket was still open but nothing had arrived for 6 s (device lost power, or the link died silently) — this page closed it and reconnected';
@@ -14171,7 +14210,8 @@
         // pulled, AP vanished) — the OS would take minutes to notice and the
         // header said CONNECTED at 0 pkt/s meanwhile. Close it ourselves and
         // let the normal backoff loop take over.
-        if (connected && wsForceClose && wsLastMsgMs && tickNow - wsLastMsgMs > 6000) {
+        // (Background mode: only the 5 s slow frame arrives — allow four of them.)
+        if (connected && wsForceClose && wsLastMsgMs && tickNow - wsLastMsgMs > (wsBgMode ? 20000 : 6000)) {
             wsForceClose(tickNow - wsSleepSeenMs < 30000 ? 'sleep' : 'stale');
             return;
         }
@@ -15030,7 +15070,7 @@
             const drops = wsDrops.filter(wsIsDrop), d = drops[0];
             // Short form — the row has ~20 characters next to its label (the full
             // cause text lives on the SOCKET screen): "6 · silent 12:48".
-            const brief = { reboot: 'reboot', sleep: 'slept', stale: 'silent', pause: 'paused' }[d && d.why] || (d ? d.code : '');
+            const brief = { reboot: 'reboot', sleep: 'slept', stale: 'silent', pause: 'paused', idle: 'tab idle' }[d && d.why] || (d ? d.code : '');
             dropsEl.innerText   = drops.length ? drops.length + ' · ' + brief + ' ' + fmtHM(d.t) : 'none';
             dropsEl.style.color = drops.length ? (d.code === 1006 && !d.why ? '#FFA500' : 'var(--text-primary)') : 'var(--text-disabled)';
         }
@@ -15438,6 +15478,8 @@
             opened = true;
             wsLastMsgMs = Date.now();
             if (wsWakeOnOpen) { wsWakeOnOpen = false; _lastActivityBeacon = 0; activityBeacon(); }
+            wsBgMode = false;                    // bg is per socket on the device
+            if (document.hidden && Date.now() - wsVisChangeMs > 30000) wsBgEnter();
             reconnectAttempts = 0;
             wsDropReopened();
             if (state.screen === 'screen-wsdiag') updateWsDiagUI(true);
@@ -15453,7 +15495,7 @@
             // one-shot events it sent meanwhile were dropped at its full queue.
             // Pull a fresh snapshot so the dashboard isn't left on old state.
             const rxNow = Date.now();
-            if (wsLastMsgMs && rxNow - wsLastMsgMs > 2000) {
+            if (wsLastMsgMs && rxNow - wsLastMsgMs > 2000 && !wsBgMode && !document.hidden) {
                 wsResync();
                 // 3 s+ and the machine was awake (the 1 s tick kept running) → log it.
                 if (rxNow - wsLastMsgMs >= 3000 && !document.hidden && rxNow - wsTickMs < 3000 &&
