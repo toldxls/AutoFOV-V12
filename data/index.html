@@ -1780,7 +1780,7 @@
                      title="How long the socket stayed down before it reopened — last / mean / worst">Outage:</div>
                 <div id="wsd-outage" class="gfx-text" style="right:15px; top:80px; color:var(--text-primary);">—</div>
                 <div class="gfx-text" style="left:15px; top:98px; color:var(--text-disabled);"
-                     title="link = connection died or stayed silent (router / power) · pause = telemetry stopped briefly and came straight back (incl. freezes the socket rode out) · dev = closed by AutoFOV's stall watchdog · exp = a reboot you asked for, or this machine slept">Cause:</div>
+                     title="link = connection died or stayed silent (router / power) · pause = telemetry stopped briefly and came straight back (incl. freezes the socket rode out) · dev = closed by AutoFOV's stall watchdog. Reboots you asked for, this machine sleeping and a backgrounded tab are not logged.">Cause:</div>
                 <div id="wsd-codes" class="gfx-text" style="right:15px; top:99px; color:var(--text-primary); font-size:10px;">—</div>
                 <div class="gfx-text" style="left:15px; top:116px; color:var(--text-disabled);"
                      title="Device-side counters from /diag: WebSocket disconnects (any cause), sockets its stall watchdog closed, real STA link drops">Device:</div>
@@ -14028,7 +14028,9 @@
         try {
             const a = JSON.parse(localStorage.getItem('afovWsDrops') || '[]');
             if (!Array.isArray(a)) return [];
-            return a.filter(d => d && typeof d === 'object' && isFinite(d.t)).slice(0, 50).map(d => ({
+            return a.filter(d => d && typeof d === 'object' && isFinite(d.t) &&
+                                 !['reboot', 'sleep', 'idle'].includes(d.why))      // rows from before they stopped being recorded
+                    .slice(0, 50).map(d => ({
                 t: +d.t, code: (d.code | 0), clean: !!d.clean,
                 down: (d.down === null || d.down === undefined || !isFinite(d.down)) ? null : +d.down,
                 gap: isFinite(d.gap) && d.gap > 0 ? +d.gap : 0,
@@ -14101,6 +14103,11 @@
     }
     function wsDropRecord(ev, forced) {
         const now = Date.now();
+        // Only link problems are worth a row. A reboot that was asked for, this
+        // machine sleeping and a backgrounded tab are the page's own doing — they
+        // drowned the log (a forgotten tab: 40 rows a night) — so they are
+        // classified and then NOT recorded.
+        if (wsIsBenign({ why: wsDropWhy(ev, forced) })) return;
         wsDrops.unshift({ t: now, code: ev ? (ev.code | 0) : 0, clean: !!(ev && ev.wasClean), down: null,
                           gap: wsLastMsgMs ? Math.max(0, now - wsLastMsgMs) : 0,
                           // Tab in the background? Its timers are throttled (to once a
@@ -15141,8 +15148,7 @@
         g('wsd-codes').innerHTML = wsDrops.length
             // 4 groups in a ~150 px cell: tight separators, or it runs into the label
             ? '<span style="color:#FFA500">link ' + died + '</span>·<span style="color:var(--text-primary)">pause ' + pau + '</span>' +
-              '·<span style="color:var(--accent-cyan)">dev ' + dev + '</span>' +
-              '·<span style="color:var(--text-disabled)">exp ' + exp + '</span>' + (oth ? '·+' + oth : '')
+              '·<span style="color:var(--accent-cyan)">dev ' + dev + '</span>' + (oth ? '·+' + oth : '')
             : '—';
         // Log rows: newest first, as many as fit (8 × 13 px).
         g('wsd-log').innerHTML = wsDrops.slice(0, 8).map(d =>
@@ -15151,7 +15157,7 @@
             fmtT(d.t) + '  ' + String(d.code || '—').padEnd(4) + ' ' +
             // paused: the whole blackout as the page saw it (silence + reconnect)
             wsCodeCause(d.code, d.why).padEnd(13) + ' ' + fmtDown(d.why === 'pause' && d.down !== null ? d.gap + d.down : d.down) + '</div>').join('') ||
-            '<div style="color:var(--text-disabled)">no drops recorded — a WiFi pause on this machine, a router hiccup or a device reboot will show here</div>';
+            '<div style="color:var(--text-disabled)">no link problems recorded — a WiFi pause, a router hiccup or a lost device will show here (reboots, sleep and background tabs are not logged)</div>';
         // Device-side counters — the other half of the story. wsStallCloses =
         // sockets the device closed for a 15 s full queue; wifiDrops = real STA
         // link drops (those DO land in DIAGNOSTICS).
