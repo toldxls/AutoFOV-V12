@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<!-- AutoFOV V12 — USB recovery flasher.
+     Published to GitHub Pages by tools/release.sh.  Loaded from a computer
+     (not the device) when the firmware is too broken to update over WiFi.
+     Re-flashes bootloader + partition table + otadata + app over USB; the
+     NVS region is left untouched, so calibration and WiFi settings survive.
+     ESP Web Tools needs an HTTPS origin (Pages provides it) and a
+     Chromium-based browser (WebSerial). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoFOV V12 — USB Recovery Flash</title>
+  <!-- Pinned major version. ESP Web Tools drives esptool-js over WebSerial. -->
+  <script type="module"
+          src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body  { margin: 0; background: #0e1418; color: #c8d4da;
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            line-height: 1.55; }
+    main  { max-width: 560px; margin: 0 auto; padding: 32px 22px 64px; }
+    h1    { font-size: 21px; color: #6fb6d8; margin: 0 0 4px; }
+    .sub  { color: #6a8290; font-size: 13px; margin: 0 0 26px; }
+    h2    { font-size: 14px; color: #8fc9e0; margin: 28px 0 8px;
+            border-bottom: 1px solid #223038; padding-bottom: 5px; }
+    ol, ul { padding-left: 22px; } li { margin: 6px 0; }
+    code  { background: #1a242a; padding: 1px 5px; border-radius: 3px;
+            font-size: 12px; }
+    .flash-box { text-align: center; margin: 26px 0; }
+    .note { background: #14201a; border: 1px solid #2a4a36; border-radius: 6px;
+            padding: 12px 14px; font-size: 13px; margin: 18px 0; }
+    .warn { background: #241a14; border: 1px solid #5a3a1a; border-radius: 6px;
+            padding: 12px 14px; font-size: 13px; margin: 18px 0; }
+    .bad  { color: #e88; }
+    esp-web-install-button { --esp-tools-button-color: #0a5a2a; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>AutoFOV V12 — USB Recovery Flash</h1>
+  <p class="sub">Use this only if the device won't start or its web dashboard
+     is unreachable. For a normal update, use <em>Update from GitHub</em> on the
+     dashboard instead.</p>
+
+  <h2>You need</h2>
+  <ul>
+    <li>A computer running <strong>Google Chrome</strong> or <strong>Microsoft
+        Edge</strong> (Safari and Firefox can't flash over USB).</li>
+    <li>A <strong>data-capable USB-C cable</strong> — some cables are
+        charge-only and will not work.</li>
+  </ul>
+
+  <h2>Steps</h2>
+  <ol>
+    <li>Plug the device into the computer with the USB-C cable.</li>
+    <li>Click <strong>Recovery Flash</strong> below.</li>
+    <li>In the popup, pick the device's serial port and click
+        <em>Connect</em>.</li>
+    <li>Click <em>Install</em> and wait — do not unplug until it finishes.</li>
+    <li>The device reboots into working firmware on its own.</li>
+  </ol>
+
+  <div class="flash-box">
+    <esp-web-install-button manifest="./recovery-manifest.json">
+      <button slot="activate"
+              style="background:#0a5a2a; color:#fff; border:0; cursor:pointer;
+                     font-size:15px; font-weight:bold; padding:13px 26px;
+                     border-radius:7px;">
+        Recovery Flash
+      </button>
+      <span slot="unsupported" class="bad">
+        This browser can't flash over USB — open this page in Chrome or Edge.
+      </span>
+      <span slot="not-allowed" class="bad">
+        Flashing needs a secure (https) connection — open the published
+        GitHub&nbsp;Pages link, not a local file.
+      </span>
+    </esp-web-install-button>
+  </div>
+
+  <div class="note">
+    Recovery keeps your calibration and WiFi settings — it rewrites the
+    bootloader, partition table and firmware but leaves the saved-settings
+    region alone.
+  </div>
+
+  <h2>If the device isn't listed in the popup</h2>
+  <p>The ESP32-S3 normally enters flashing mode by itself. If no port appears,
+     put it in flashing mode by hand:</p>
+  <ol>
+    <li>Hold the <code>BOOT</code> button down.</li>
+    <li>Briefly press and release <code>RESET</code>.</li>
+    <li>Release <code>BOOT</code>.</li>
+    <li>Click <em>Recovery Flash</em> again — the port should now appear.</li>
+  </ol>
+
+  <div class="warn">
+    Do not use the Arduino IDE's <em>Upload</em> button to recover — it can
+    overwrite the partition layout. This page (or
+    <code>tools/flash_firmware_only.sh</code>) is the safe route.
+  </div>
+</main>
+</body>
+</html>
