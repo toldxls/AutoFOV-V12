@@ -14203,7 +14203,12 @@
         // once a minute, so it proves nothing there). Give the link a fresh
         // window to show it survived before the dead-link check judges it.
         const tickNow = Date.now();
-        if (!document.hidden && tickNow - wsTickMs > 5000) { wsSleepSeenMs = tickNow; wsLastMsgMs = tickNow; }
+        // A long gap on a HIDDEN tab is the browser's doing (timers throttled to
+        // once a minute, or the tab frozen and woken every ~15 min) — not a suspend,
+        // but the same rule applies: this tick ran BEFORE the messages buffered
+        // during the gap were delivered, so wsLastMsgMs is stale, not the link.
+        // Judging it here closed a healthy socket on every wake of a frozen tab.
+        if (tickNow - wsTickMs > 5000) { if (!document.hidden) wsSleepSeenMs = tickNow; wsLastMsgMs = tickNow; }
         wsTickMs = tickNow;
         // Dead-link check. The device streams ~30 frames/s whenever a socket is
         // open, so 6 s of silence on an OPEN socket means it is gone (power

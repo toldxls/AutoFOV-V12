@@ -15,8 +15,15 @@ here never bump the version.
   event on a wake. Fix: background mode (`{"bg":1}` after 30 s hidden — no fast
   telemetry or vib spectrum for that client) + drops from a long-hidden tab are
   labelled `tab idle`. **To confirm:** leave a tab hidden overnight on the new
-  build — expect few or no rows, all greyed, and `stall closes` near 0. Still
-  unexplained: the 18-drop burst at 17:41–17:45 on 9/19 had `stall closes 0`.
+  build — expect few or no rows, all greyed, and `stall closes` near 0.
+  9/20 daytime on v12.7.42: `stall closes 0` (was 33) — confirmed. The remaining
+  `tab idle` rows were the page's own dead-link check firing on a frozen tab's
+  wake, before the buffered frames were delivered (fixed: a long timer gap now
+  refreshes the window on hidden tabs too).
+  **Not chasing:** an instant `1006 … after 0.0 s silent` on a live socket, 1–2 a
+  day (plus one 18-drop burst on 9/19, 17:41–17:45), reconnects in ~2 s, nothing
+  lost, device healthy. Only Chrome's DevTools console can say why; reopen only
+  if the rate climbs.
 - **sensorTask heartbeat stalls > 6 s** (I²C stall that self-recovers). The
   self-heal reboot is disabled for this reason (`loop()` F3 block); only the
   worst stall is recorded in `/diag`. Root cause unknown.
