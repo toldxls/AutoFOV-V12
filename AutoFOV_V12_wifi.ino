@@ -916,8 +916,28 @@ static void wsLiveAdd(uint32_t id) {
     for (auto& s : wsLiveIds) { uint32_t z = 0; if (s.compare_exchange_strong(z, id)) return; }
     Serial.printf("[WS] live-id table full — client #%u gets no telemetry\n", (unsigned)id);
 }
+// Clients that asked for BACKGROUND mode ({"bg":1}) — a dashboard whose tab is
+// hidden. Browsers throttle and then FREEZE hidden tabs (Chrome: frozen after
+// ~5 min, woken ~10 s every 15 min); a frozen page stops reading its socket, so
+// the 30 Hz stream backed up, the queue filled and the stall watchdog closed the
+// client — every 15 min, all night (9/20/26: 33 stall closes, 40 "drops" from one
+// forgotten tab; the covered-window case was the daytime "blackouts" too). A
+// background client gets no fast telemetry and no vib spectrum — only events,
+// settings and the 5 s slow frame, which a frozen tab's socket buffers easily —
+// so stack-done alerts still reach it. Same atomic-table pattern as wsLiveIds.
+static std::atomic<uint32_t> wsBgIds[8];
+static void wsBgSet(uint32_t id, bool on) {
+    if (!id) return;
+    for (auto& s : wsBgIds) { uint32_t v = id; if (s.compare_exchange_strong(v, on ? id : 0)) return; }   // already listed (or cleared)
+    if (on) for (auto& s : wsBgIds) { uint32_t z = 0; if (s.compare_exchange_strong(z, id)) return; }
+}
+static bool wsIsBg(uint32_t id) {
+    for (auto& s : wsBgIds) if (s.load(std::memory_order_acquire) == id) return true;
+    return false;
+}
 static void wsLiveRemove(uint32_t id) {
     for (auto& s : wsLiveIds) { uint32_t v = id; s.compare_exchange_strong(v, 0); }
+    wsBgSet(id, false);
 }
 static bool wsLiveHas(uint32_t id) {
     for (auto& s : wsLiveIds) if (s.load(std::memory_order_acquire) == id) return true;
@@ -1224,7 +1244,7 @@ void wifiLoop() {
         AsyncWebSocketSharedBuffer sb;
         for (auto& slot : wsLiveIds) {
             const uint32_t id = slot.load(std::memory_order_acquire);
-            if (!id || !wsClientReady(id, now)) continue;
+            if (!id || wsIsBg(id) || !wsClientReady(id, now)) continue;   // bg: events + slow frame only
             if (!sb) {
                 char frame[640];   // 512 + headroom (vtp added 9/16/26; TOF target list shares the frame)
                 size_t n = buildFastTelemFrame(frame, sizeof frame);
@@ -2943,10 +2963,15 @@ static void handleWifiCommand(const char* key, const char* val) {
     // activity and resets the idle clock that drives screen + sensor timeouts.
     // The 1 Hz latency "ping" is excluded — the dashboard merely being open must
     // not keep the sensors awake. Runs on Core 1 (wifiLoop), same as the timer.
-    if (strcmp(key, "ping") != 0) lastActivityTime = millis();
+    // "bg" is excluded too: it is the page reporting that nobody is looking at it.
+    if (strcmp(key, "ping") != 0 && strcmp(key, "bg") != 0) lastActivityTime = millis();
+
+    // ── Background mode for the SENDING client (see wsBgIds) ─────────────────
+    if (strcmp(key, "bg") == 0) {
+        wsBgSet(wifiCmdClientId, iVal != 0);
 
     // ── Objective ────────────────────────────────────────────────────────────
-    if (strcmp(key, "obj") == 0) {
+    } else if (strcmp(key, "obj") == 0) {
         if (iVal >= 1 && iVal <= 3) currentobj = iVal;
         // patched3: redraw the objective-buttons strip on the device so the
         // highlight follows the HTML change immediately.  Cheap (sprite blit).
@@ -4003,7 +4028,7 @@ static void pushVibSpectrumBinary() {
     AsyncWebSocketSharedBuffer sb;
     for (auto& slot : wsLiveIds) {
         const uint32_t id = slot.load(std::memory_order_acquire);
-        if (!id || !wsClientReady(id, now)) continue;
+        if (!id || wsIsBg(id) || !wsClientReady(id, now)) continue;
         if (!sb) sb = std::make_shared<std::vector<uint8_t>>(buf, buf + FRAME);
         wsServer.binary(id, sb);
     }
