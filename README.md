@@ -2,6 +2,8 @@
 
 AutoFOV is a specialized photomicroscopy field-of-view (FOV) calculator and automated focus stacking assistant with wireless camera trigger. Powered by an ESP32-S3, it uses a Time-of-Flight (ToF) sensor to measure bellows separation distance and calculates a real-time FOV based on a calibrated linear regression model for any bellows/magnification.
 
+📖 **Article:** [AutoFOV V12 on Mindat](https://www.mindat.org/article.php/5825/AutoFOV+V12)
+
 V12 adds a full real-time vibration monitoring and analysis system using the onboard LSM6DSOX IMU, with per-axis FFT spectral analysis, a settle-time estimator, and a high-resolution web analyzer panel.
 
 V12.3 adds **photo-assisted calibration** — drop a stage-micrometer JPEG on the web dashboard and it measures the pixel count across the demarcation window automatically (periodic tick detection, sub-pixel centroids, and image deskew), then auto-fills the calibration point. Calibrations can also be exported/imported and shared as `.json`/`.txt`.
