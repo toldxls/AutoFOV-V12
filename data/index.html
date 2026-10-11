@@ -14995,7 +14995,12 @@
         const manual = document.getElementById('ota-reboot-manual');
         if (manual) manual.style.display = 'none';
     }
-    function otaShowRebootOverlay() {
+    // pingOnly: the rollback path. It flips the boot slot and restarts without
+    // flashing, so /ota-status has nothing to say about it — and after a flash
+    // the device REJECTED it still answers "failed" (cleared only by the next
+    // /ota pre-flight), which the status branch would read as this reboot's
+    // outcome and unlock the page mid-restart. Rollback relies on sawDown alone.
+    function otaShowRebootOverlay(pingOnly) {
         otaPollAbort = false;
         const overlay = document.getElementById('ota-reboot-overlay');
         if (!overlay) { setTimeout(() => location.reload(), 6000); return; }
@@ -15039,6 +15044,21 @@
                     if (otaPollAbort) return;
                     pingMisses = 0;
                     if (sawDown) { location.reload(); return; }
+                    if (pingOnly) {
+                        // Still up after 15 s: the rollback was refused (the
+                        // inactive slot has no valid image) or the command
+                        // never arrived. Restore the page instead of waiting.
+                        if (Date.now() - start > 15000) {
+                            const msg = document.getElementById('ota-reboot-msg');
+                            if (msg) msg.textContent =
+                                'Device never went offline \u2014 the rollback may have ' +
+                                'been refused (no valid image in the other slot).';
+                            if (manual) manual.style.display = 'inline-block';
+                            otaResumeWs(); otaUnlockControls(); ghRestoreButton();
+                            return;
+                        }
+                        setTimeout(otaPollDeviceBack, 400); return;
+                    }
                     // Device still up (hasn't rebooted). The buffered flash acks
                     // 200 BEFORE flashing, so ask /ota-status for the real outcome
                     // instead of guessing from ping timing.
@@ -15114,8 +15134,9 @@
             () => {
                 sendCommand('otaRollback', 1);
                 // The rollback path mirrors the flash path: device reboots,
-                // page should reload onto the previous firmware.
-                otaShowRebootOverlay();
+                // page should reload onto the previous firmware. Ping-only —
+                // no flash ran, so /ota-status must not be consulted.
+                otaShowRebootOverlay(true);
             }
         );
     }

@@ -3424,6 +3424,11 @@ static void handleWifiCommand(const char* key, const char* val) {
             return;
         }
 
+        // Clear the last flash result: it is otherwise only reset in the next
+        // /ota pre-flight, so after a REJECTED flash the dashboard's reboot
+        // overlay could read a stale "failed" here and unlock the page while
+        // the device was already rebooting into the other slot.
+        otaFlashState = 0; otaFlashMsg[0] = '\0';
         tofTrendCheckpoint("rollback");
         delay(200);
         ESP.restart();
