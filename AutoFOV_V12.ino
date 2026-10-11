@@ -1656,6 +1656,11 @@ int samplingCount = 0;
 const unsigned long MIN_ACTIVE_DURATION = 20000;
 const unsigned long SILENCE_DURATION = 5000;
 bool isSequenceActive = false;
+// True while the running sequence contains a vibration RUN TEST shot. The test
+// fires the real shutter, so the optocoupler sees it like any stack pulse; a
+// sub-5 s test interval with a >= 20 s span would otherwise complete as a real
+// stack (STACK DONE, ntfy push, suggested wait, Sec/Step auto-apply).
+bool sequenceIsVibTest = false;
 // patched3: file-scope so the wifi tab can push it to fast-telemetry JSON.
 // Was previously a function-local `static bool lastCircleState` inside the
 // trigger-watcher; semantics identical — true while the optocoupler reads
@@ -7089,6 +7094,7 @@ void loop() {
     // stored, not the previous stack's count.
     if (!isSequenceActive) {
       isSequenceActive = true;
+      sequenceIsVibTest = vibTestActive;
       firstPulseTime  = millis();
       stackPulseCount = 1;   // V12.3: this first shot; later edges add to it
       vibStackStartMs.store(millis(), std::memory_order_relaxed);
@@ -7106,6 +7112,7 @@ void loop() {
     } else {
       // V12.3: count each shot after the first (seeded to 1 above).
       stackPulseCount++;
+      if (vibTestActive) sequenceIsVibTest = true;   // test shots joined a sequence
     }
     if (currentMode == MAIN) drawStackShotCount();
     // V12: note the shutter-pulse edge for passive settle-time analysis.
@@ -7135,7 +7142,7 @@ void loop() {
   if (isSequenceActive && ((unsigned long)(millis() - lastPulseTime) >= SILENCE_DURATION)) {
     mjkzzStackActive = false;   // V12.3: pulses stopped → stack ended; sync web buttons
     unsigned long totalActiveTime = (unsigned long)(lastPulseTime - firstPulseTime);
-    if (totalActiveTime >= MIN_ACTIVE_DURATION) {
+    if (totalActiveTime >= MIN_ACTIVE_DURATION && !sequenceIsVibTest) {
       wifiNotifyStackComplete();
       // TFT: banner (MAIN) + 3 backlight blinks (any screen). The pulses only
       // UNDIM (registerActivity); if the panel went to sleep during a long
@@ -7173,12 +7180,14 @@ void loop() {
         if (currentMode == STACK_TIME) drawStackTimeUI();
       }
     } else {
-      // Too short to be a stack (single shot / aborted run) — tell vibTask to
-      // leave in-stack mode without folding this into the suggested wait.
+      // Too short to be a stack (single shot / aborted run), or a vibration
+      // RUN TEST burst — tell vibTask to leave in-stack mode without folding
+      // this into the suggested wait.
       vibStackAbortSeq.fetch_add(1, std::memory_order_relaxed);
       wifiNotifyStackAbort();   // V12.6: dashboard clears its live progress
     }
     isSequenceActive = false;
+    sequenceIsVibTest = false;
     if (currentMode == MAIN) drawStackShotCount();   // isSequenceActive is false → clears the count
   }
 
