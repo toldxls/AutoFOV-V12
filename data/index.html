@@ -1316,7 +1316,7 @@
 
                 <div class="gfx-btn" style="left: 20px; top: 90px; width: 200px; height: 24px;
                      background: #08140f; border: 1px solid #2a7a6a; color: #7fd8c0; font-size: 11px;"
-                     onclick="openCalPhoto()" title="Measure the pixel count from a micrometer photo">&#128247; MEASURE FROM PHOTO</div>
+                     onclick="openCalPhoto()" title="Measure the pixel count from a micrometer photo"><svg width="18" height="14" style="vertical-align:-2px; margin-right:5px;"><use href="#ico-camera"/></svg>MEASURE FROM PHOTO</div>
 
                 <div class="adj-row" style="top: 122px;">
                     <div class="gfx-btn btn-adj" style="left: 10px; background-color: #FF0000;" onclick="adjCalRun(-2)">◄◄</div>
@@ -1355,7 +1355,7 @@
                     position:<br><br>
                     <b>1.</b> Set the bellows &mdash; start at one end of its travel.<br>
                     <b>2.</b> Enter the <b>pixel count</b> for one Demarc-Dist width: tap the box to type it,
-                    or <b>&#128247;&nbsp;MEASURE&nbsp;FROM&nbsp;PHOTO</b> and drop a micrometer JPEG
+                    or <b><svg width="13" height="10" style="vertical-align:-1px; margin-right:2px;"><use href="#ico-camera"/></svg>MEASURE&nbsp;FROM&nbsp;PHOTO</b> and drop a micrometer JPEG
                     (&#9668;&#9658; nudge).<br>
                     <b>3.</b> Let <b>LIVE&nbsp;DIST</b> settle.<br>
                     <b>4.</b> Tap <b>CAPTURE&nbsp;&amp;&nbsp;SAVE</b> &mdash; stores this pixel&harr;distance
@@ -2009,7 +2009,7 @@
                 <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
                      text-align:center; color:#00e0cc; font-size:12px; font-weight:bold;
                      letter-spacing:0.6px; border-bottom:1px solid #1c3a37;">
-                    &#128274; SECURITY TIPS
+                    <svg width="13" height="15" style="vertical-align:-2px; margin-right:4px;"><use href="#ico-lock"/></svg>SECURITY TIPS
                     <div class="gfx-btn"
                          onclick="closeInfoOverlay()"
                          style="top:3px; left:205px; width:30px; height:26px;
@@ -2085,6 +2085,31 @@
                     <path d="M18.8 10h2.4c2.6 0 2.6 7 5.8 7" fill="none" stroke="#ADFF2F"
                           stroke-width="1.6" stroke-linecap="round"/>
                 </symbol>
+                <!-- Padlock: shackle + body with keyhole (SECURITY TIPS). -->
+                <symbol id="ico-lock" viewBox="0 0 20 24">
+                    <path d="M5 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="#ADFF2F"
+                          stroke-width="1.8" stroke-linecap="round"/>
+                    <rect x="1.6" y="9.6" width="16.8" height="13.4" rx="2.6"
+                          fill="#0c2b2e" stroke="#ADFF2F" stroke-width="1.3"/>
+                    <circle cx="10" cy="15" r="2" fill="#e3f7c9"/>
+                    <rect x="9" y="15.5" width="2" height="4" rx="0.8" fill="#e3f7c9"/>
+                </symbol>
+                <!-- Floppy disk: clipped corner, label slot, shutter window (CALIBRATION I/O). -->
+                <symbol id="ico-floppy" viewBox="0 0 22 22">
+                    <path d="M0.7 3.2a2.5 2.5 0 0 1 2.5-2.5h13.6l4.5 4.5v13.6a2.5 2.5 0 0 1-2.5 2.5H3.2a2.5 2.5 0 0 1-2.5-2.5z"
+                          fill="#0c2b2e" stroke="#ADFF2F" stroke-width="1.3" stroke-linejoin="round"/>
+                    <rect x="5" y="2.2" width="10" height="5.6" rx="0.8" fill="#ADFF2F"/>
+                    <rect x="11.2" y="3.2" width="2.2" height="3.6" rx="0.5" fill="#0c2b2e"/>
+                    <rect x="4.2" y="12.4" width="13.6" height="7.6" rx="1" fill="#e3f7c9"/>
+                </symbol>
+                <!-- Camera: body, viewfinder bump, lens, shutter dot (MEASURE FROM PHOTO / CAPTURE). -->
+                <symbol id="ico-camera" viewBox="0 0 26 20">
+                    <path d="M3 5h4.2l1.6-2.6h8.4L18.8 5H23a2.3 2.3 0 0 1 2.3 2.3v9.4A2.3 2.3 0 0 1 23 19H3a2.3 2.3 0 0 1-2.3-2.3V7.3A2.3 2.3 0 0 1 3 5z"
+                          fill="#0c2b2e" stroke="#ADFF2F" stroke-width="1.3" stroke-linejoin="round"/>
+                    <circle cx="13" cy="11.8" r="4.6" fill="#e3f7c9" stroke="#ADFF2F" stroke-width="1.3"/>
+                    <circle cx="13" cy="11.8" r="1.8" fill="#0c2b2e"/>
+                    <rect x="20" y="7" width="2.6" height="2" rx="0.6" fill="#ADFF2F"/>
+                </symbol>
             </svg>
 
             <!-- ===== RECOVERY FLASH help overlay =====
@@ -2154,7 +2179,7 @@
                 <div style="position:relative; flex:0 0 auto; padding:9px 0 8px;
                      text-align:center; color:#5ad6ff; font-size:12px; font-weight:bold;
                      letter-spacing:0.6px; border-bottom:1px solid #1c3a4a;">
-                    &#128190; CALIBRATION I/O
+                    <svg width="15" height="15" style="vertical-align:-2px; margin-right:4px;"><use href="#ico-floppy"/></svg>CALIBRATION I/O
                     <div class="gfx-btn" onclick="calioClose()"
                          style="top:3px; left:205px; width:30px; height:26px;
                                 background:#404040; color:#FF0000; font-size:15px;">X</div>
@@ -2271,7 +2296,7 @@
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Steps</div>
                     1. Set Photo Width, Demarc Dist &amp; Tick Pitch, then <b>START CAL</b>.<br>
                     2. At each bellows distance, fill in the pixel count — either type it, or tap
-                    <b>&#128247; MEASURE FROM PHOTO</b> and drop a micrometer JPEG to measure it automatically.<br>
+                    <b><svg width="13" height="10" style="vertical-align:-1px; margin-right:2px;"><use href="#ico-camera"/></svg>MEASURE FROM PHOTO</b> and drop a micrometer JPEG to measure it automatically.<br>
                     3. Tap <b>CAPTURE &amp; SAVE</b> (pairs your pixels with the live ToF distance).<br>
                     4. Move the bellows ~10 mm and repeat across its full range.
                     <div style="color:#5ad6ff; font-weight:bold; margin-top:7px;">Measure from photo</div>
@@ -2374,7 +2399,7 @@
                      style="width: 110px; height: 32px; font-size: 12px;
                             letter-spacing: 0.6px; background-color: #A800F8;"
                      onclick="sendCommand('ir','capture')" title="MJKZZ capture photo">
-                    &#128247; CAPTURE
+                    <svg width="19" height="15" style="vertical-align:-2px; margin-right:5px;"><use href="#ico-camera"/></svg>CAPTURE
                 </div>
             </div>
             <div id="connection-status" style="display:none;"></div>
@@ -3797,7 +3822,7 @@
     <div id="calphoto">
       <div id="cph-head">
         <div style="display:flex; align-items:center; gap:10px;">
-          <div id="cph-title">&#128247; MEASURE FROM PHOTO</div>
+          <div id="cph-title"><svg width="24" height="18" style="vertical-align:-3px; margin-right:8px;"><use href="#ico-camera"/></svg>MEASURE FROM PHOTO</div>
           <div id="cph-info" class="help-btn lg" onclick="calPhotoToggleHelp()"
                title="How to read this">?</div>
         </div>
