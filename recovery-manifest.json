@@ -1,6 +1,6 @@
 {
   "name": "AutoFOV V12",
-  "version": "12.7.45",
+  "version": "12.7.47",
   "builds": [
     {
       "chipFamily": "ESP32-S3",
