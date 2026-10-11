@@ -1041,6 +1041,15 @@
                             style="position:absolute; left:0; top:0; width:200px; height:241px; display:block;"></canvas>
                 </div>
 
+                <!-- Axis tick labels. DOM text, not canvas fillText: the canvas
+                     is composited through the frame's scale(2) at whatever
+                     fractional device-pixel offset the window happens to give
+                     it, so its glyphs came out visibly softer than the
+                     surrounding HTML text, and a 4-digit pixel label could run
+                     off the canvas's left edge. drawCalGraph fills this. -->
+                <div id="calgraph-ticks" style="position:absolute; left:0; top:0; width:240px; height:320px;
+                     pointer-events:none; color:#909090; font-size:8px; line-height:1;"></div>
+
                 <!-- Legend (sits over the graph, top-right) -->
                 <div id="legend-box">
                     <div class="leg-row"><span style="color: var(--text-disabled)">R²:</span><span id="calgraph-r2" style="color:#00FF00">—</span></div>
@@ -1062,7 +1071,8 @@
                      background:#0a3344; border:1px solid #2a7a9a; font-size:9px;" onclick="openCalPoints()"
                      title="Calibration point list">&#9776; POINTS</div>
                 <!-- Tap-a-point readout. Positioned over the graph by drawCalGraph
-                     when state.calGraphSel is set; tapping empty space hides it. -->
+                     when state.calGraphSel is set; tapping empty space or the same
+                     point again hides it. -->
                 <div id="calgraph-tip" style="position:absolute; display:none; pointer-events:none;
                      background:rgba(8,8,8,0.92); border:1px solid #2a5e58; border-radius:3px;
                      padding:3px 5px; font-size:8px; line-height:1.4; color:#cfcfcf;
@@ -10457,8 +10467,10 @@
             const d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; best = i; }
         });
-        // Hit radius ~16 logical px (≈8 CSS px). Miss → clear selection.
-        state.calGraphSel = (best >= 0 && bestD <= 16 * 16) ? best : null;
+        // Hit radius ~16 logical px (≈8 CSS px). Miss → clear selection;
+        // a second tap on the selected point toggles its readout off.
+        const hit = (best >= 0 && bestD <= 16 * 16) ? best : null;
+        state.calGraphSel = (hit !== null && hit === state.calGraphSel) ? null : hit;
         drawCalGraph();
     }
 
@@ -10551,14 +10563,15 @@
         if (!pts || pts.length < 2) {
             ctx.fillStyle = '#787878'; ctx.font = 'bold 22px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText('No data', CW / 2, CH / 2); return;
+            ctx.fillText('No data', CW / 2, CH / 2);
+            const t = document.getElementById('calgraph-ticks'); if (t) t.innerHTML = '';
+            return;
         }
 
         // ── Plot margins (logical px) ──
-        // ML needs to be wide enough that the right-aligned y-tick labels
-        // (e.g. "1.57" at 16px ≈ 30 logical px wide) don't run off the
-        // canvas left edge. Plot stays left-shifted by moving the canvas
-        // itself, not by squeezing ML.
+        // ML is the y-tick gutter. The labels themselves are DOM text that
+        // may extend left past the canvas edge (down to screen x≈23 CSS px
+        // for a 4-digit pixel count, clear of the rotated axis label).
         const ML = 44, MR = 12, MT = 10, MB = 38;
         const PW = CW - ML - MR;
         const PH = CH - MT - MB;
@@ -10596,37 +10609,44 @@
         ctx.moveTo(ML, MT + PH); ctx.lineTo(ML + PW, MT + PH); // X-axis
         ctx.stroke();
 
-        // ── Tick marks + labels ──
-        // System-ui at this size renders cleaner per-glyph than Courier — the
-        // monospace was a leftover from the device-TFT look but added nothing
-        // on the web side.
+        // ── Tick marks (canvas) + labels (DOM, #calgraph-ticks) ──
+        // Labels are positioned spans in screen CSS px: plot-area sits at
+        // left:25/top:40 and the canvas's logical 400×482 shows at half scale,
+        // the same mapping updateCalGraphTip uses. Positions are rounded to
+        // whole CSS px and no transforms are used so Chrome rasterises the
+        // text crisply instead of resampling it.
         const N_TICKS = 4;
-        ctx.fillStyle  = '#909090';
         ctx.strokeStyle= '#787878';
         ctx.lineWidth  = 1;
-        ctx.font       = '16px system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
+        const sx = v => Math.round(25 + v / 2), sy = v => Math.round(40 + v / 2);
+        let ticksHtml = '';
 
         // X ticks — edge-anchor the leftmost/rightmost labels so the longest
-        // tick value (e.g. "129") sits inside the canvas instead of getting
-        // clipped at the right margin.
-        ctx.textBaseline = 'top';
+        // tick value (e.g. "129") stays inside the plot's extent.
+        const xTop = sy(MT + PH + 9);
         for (let i = 0; i <= N_TICKS; i++) {
             const xv = xa + (xb - xa) * i / N_TICKS;
             const px = toX(xv);
             ctx.beginPath(); ctx.moveTo(px, MT + PH); ctx.lineTo(px, MT + PH + 7); ctx.stroke();
-            ctx.textAlign = i === 0 ? 'left' : i === N_TICKS ? 'right' : 'center';
-            ctx.fillText(xv.toFixed(0), px, MT + PH + 9);
+            const cx = sx(px), txt = xv.toFixed(0);
+            const pos = i === 0        ? 'left:' + cx + 'px;'
+                      : i === N_TICKS  ? 'right:' + (240 - cx) + 'px;'
+                      : 'left:' + (cx - 20) + 'px; width:40px; text-align:center;';
+            ticksHtml += '<span style="position:absolute; top:' + xTop + 'px; ' + pos + '">' + txt + '</span>';
         }
 
-        // Y ticks — gutter shrunk to match the tighter ML.
-        ctx.textAlign   = 'right';
-        ctx.textBaseline = 'middle';
+        // Y ticks — right-aligned 7 logical px left of the axis, vertically
+        // centred on the tick (font-size 8 → top = centre − 4).
+        const yRight = 240 - sx(ML - 7);
         for (let i = 0; i <= N_TICKS; i++) {
             const yv = ya + (yb - ya) * i / N_TICKS;
             const py = toY(yv);
             ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML - 5, py); ctx.stroke();
-            ctx.fillText(yFmt(yv), ML - 7, py);
+            ticksHtml += '<span style="position:absolute; right:' + yRight + 'px; top:' + (sy(py) - 4) + 'px;">'
+                       + yFmt(yv) + '</span>';
         }
+        const ticksEl = document.getElementById('calgraph-ticks');
+        if (ticksEl && ticksEl.innerHTML !== ticksHtml) ticksEl.innerHTML = ticksHtml;
 
         // ── Regression line (clipped to plot area) ──
         ctx.save();
