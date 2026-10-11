@@ -13873,6 +13873,18 @@
     window.addEventListener('drop',     e=>e.preventDefault());
 
     // POST a calibration to the device (it re-fits + saves + pushes fresh state).
+    // Bumped by the WS dispatcher on every full-state frame carrying the fit
+    // (fovSlope). POST /calib only ENQUEUES the import; the Core-1 dispatcher
+    // copies the points, re-fits and then pushes full state. A readback before
+    // that push answers from the live globals mid-apply (old fit, or new points
+    // with the old slope), so the success panel waits for the push first.
+    let calStatePushSeq = 0;
+    async function calioAwaitRefit(seqBefore, maxMs) {
+        const t0 = Date.now();
+        while (calStatePushSeq === seqBefore && Date.now() - t0 < maxMs)
+            await new Promise(r => setTimeout(r, 100));
+        return calStatePushSeq !== seqBefore;
+    }
     async function calioApply(cal) {
         const r = await calioAuthedFetch('/calib', {
             method: 'POST',
@@ -13953,8 +13965,9 @@
             const isTxt = /\.txt$/i.test(f.name) || !/^\s*[{[]/.test(raw);
             const cal = isTxt ? parseCalTxt(raw, f.name.replace(/\.[^.]+$/, '')) : JSON.parse(raw);
             if (cal.fmt !== 'autofov-calib') throw new Error('not an AutoFOV calibration file');
+            const seq0 = calStatePushSeq;
             await calioApply(cal);
-            await calioShowSuccess(cal.name || f.name.replace(/\.(json|txt)$/i, ''));
+            await calioShowSuccess(cal.name || f.name.replace(/\.(json|txt)$/i, ''), seq0);
         } catch (e) { calioStatus('Import failed: ' + e.message, '#ff6a6a'); }
     }
     async function calioLoadGithub() {
@@ -14001,15 +14014,20 @@
             calioStatus('Cancelled.'); return;
         }
         cal.name = name;   // so the device CAL_SUCCESS screen shows the profile name
-        try { await calioApply(cal); await calioShowSuccess(name); }
+        try { const seq0 = calStatePushSeq; await calioApply(cal); await calioShowSuccess(name, seq0); }
         catch (e) { calioStatus('Apply failed: ' + e.message, '#ff6a6a'); }
     }
     // After a successful import, read the device's re-fit back and show it so the
     // numbers can be validated. DONE dismisses the device's CAL_SUCCESS screen
     // (nav is allowed out of it) and shows the CAL GRAPH on both sides.
-    async function calioShowSuccess(name) {
+    async function calioShowSuccess(name, seqBefore) {
         const el = document.getElementById('calio-status');
         document.getElementById('calio-gh-list').style.display = 'none';
+        el.style.color = '';
+        el.textContent = 'Applying\u2026';
+        // Wait for the device's post-fit state push (4 s cap: a parked socket
+        // still gets a readback, just a possibly-stale one), then read back.
+        if (seqBefore !== undefined) await calioAwaitRefit(seqBefore, 4000);
         let cal = null;
         try { cal = await calioGetCalib(); } catch (e) { /* fall back to no readback */ }
         const f = (cal && cal.fit) || {};
@@ -16186,7 +16204,7 @@
 
         // ── Calibration fit results (FOV info screen) ──
         let fovInfoDirty = false;
-        if (data.fovSlope     !== undefined) { state.fovSlope     = data.fovSlope;     fovInfoDirty = true; }
+        if (data.fovSlope     !== undefined) { state.fovSlope     = data.fovSlope;     fovInfoDirty = true; calStatePushSeq++; }
         if (data.fovIntercept !== undefined) { state.fovIntercept = data.fovIntercept; fovInfoDirty = true; }
         if (data.calibError   !== undefined) { state.calibError   = data.calibError;   fovInfoDirty = true; }
         if (data.calibR2      !== undefined) { state.calibR2      = data.calibR2;      fovInfoDirty = true; }
