@@ -6818,8 +6818,31 @@ void loop() {
     // menu/settings change). The IMU is a pure power/heat saving with no
     // measurement consequence — unlike the TOF, which is deliberately never
     // auto-slept any more (see the sensorsAutoOff declaration).
-    if (tofHealRelockReq.exchange(false, std::memory_order_acq_rel)) {
-      armTofRelock();       // self-heal restarted ranging — treat like a wake
+    if (tofHealRelockReq.load(std::memory_order_acquire)) {
+      // Self-heal restarted ranging — treat like a wake. If it landed inside a
+      // re-lock DWELL the sensor is ranging in the OPPOSITE ROI/timing, and
+      // armTofRelock() alone would cancel the dwell without flipping it back,
+      // leaving that config live (and its readings published) for the 45 s
+      // until the re-armed cycle runs. Restore the user's mode first; the
+      // dwell exit below is the only other place that does this.
+      bool ready = true;
+      if (tofRelockPhase == TOF_RELOCK_DWELL &&
+          !sensorSleeping.load(std::memory_order_acquire)) {
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+          sensor.VL53L4CX_StopMeasurement();
+          applyHighReflConfig();
+          sensor.VL53L4CX_StartMeasurement();
+          xSemaphoreGive(i2cMutex);
+          sensorEmaReset.store(true, std::memory_order_release);
+          Serial.println("[tof] self-heal during re-lock dwell: user config restored");
+        } else {
+          ready = false;    // mutex busy → leave the request set, retry next pass
+        }
+      }
+      if (ready) {
+        tofHealRelockReq.store(false, std::memory_order_release);
+        armTofRelock();
+      }
     }
     if (!sensorsAutoOff && idle > SENSOR_IDLE_OFF_MS) {
       vibAutoOff.store(true, std::memory_order_release);   // vibTask powers the IMU down
