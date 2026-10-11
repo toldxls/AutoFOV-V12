@@ -373,7 +373,7 @@ static const char PORTAL_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <label>Network SSID</label>
   <input type=text name=ssid placeholder="Your WiFi name" required autocomplete=off spellcheck=false>
   <label>Password</label>
-  <input type=password name=pass placeholder="WiFi password" autocomplete=off>
+  <input type=password name=pass placeholder="WiFi password (blank for an open network)" autocomplete=off minlength=8 maxlength=63>
   <hr class=sep>
   <label>Static IP <small style=color:#555>(optional — blank = DHCP)</small></label>
   <input type=text name=ip placeholder="192.168.1.200"
@@ -1444,6 +1444,15 @@ static void startPortalMode() {
             if (ssid.length() > 32 || pass.length() > 63 ||
                 ip.length() > 15   || gw.length()   > 15) {
                 req->send(400, "text/plain", "Input too long");
+                return;
+            }
+            // A 1–7 char WPA passphrase is rejected by the IDF inside
+            // WiFi.begin() (ESP_ERR_WIFI_PASSWORD) before any association, so
+            // no STA_DISCONNECTED event ever fires: the reason stays 0, the
+            // wrong-password portal fallback never opens, and the device loops
+            // on reconnect until a BOOT-held boot. Refuse it here instead.
+            if (pass.length() && pass.length() < 8) {
+                req->send(400, "text/plain", "WiFi password must be 8â63 characters (blank for an open network)");
                 return;
             }
             // Device password: blank (use default) or 6–63 chars.
